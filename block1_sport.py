@@ -2,6 +2,7 @@ import logging
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, InputMediaPhoto
 from aiogram.exceptions import TelegramBadRequest
+from datetime import datetime
 import config
 import database
 import menu_texts
@@ -10,10 +11,10 @@ import inline_kb
 router = Router()
 
 NEWS_HEADER_TEXTS = {
-    "ru": "📰 *Главное на сегодня:*",
-    "en": "📰 *Today's headlines:*",
-    "fr": "📰 *À la une aujourd'hui :*",
-    "he": "📰 *הכותרות של היום:*"
+    "ru": "📰 *Главное на {date}:*",
+    "en": "📰 *Today's headlines ({date}):*",
+    "fr": "📰 *À la une du {date} :*",
+    "he": "📰 *הכותרות מתאריך {date}:*"
 }
 NEWS_EMPTY_TEXTS = {
     "ru": "Свежие новости появятся здесь в течение суток после запуска бота.",
@@ -229,9 +230,13 @@ async def open_news_sub(call: CallbackQuery):
 
         # Живые заголовки за сегодня (обновляются фоновой задачей раз в сутки)
         if sub in {"ru", "il", "fr", "us"}:
-            content, _ = await database.get_daily_news(sub)
-            header = NEWS_HEADER_TEXTS.get(user_lang, NEWS_HEADER_TEXTS["en"])
-            if content:
+            content, fetched_at = await database.get_daily_news(sub)
+            if content and fetched_at:
+                try:
+                    date_str = datetime.fromisoformat(fetched_at).strftime("%d.%m.%Y")
+                except ValueError:
+                    date_str = ""
+                header = NEWS_HEADER_TEXTS.get(user_lang, NEWS_HEADER_TEXTS["en"]).format(date=date_str)
                 news_message = f"{header}\n\n{content}"
             else:
                 news_message = NEWS_EMPTY_TEXTS.get(user_lang, NEWS_EMPTY_TEXTS["en"])
