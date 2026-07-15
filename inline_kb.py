@@ -222,6 +222,14 @@ def get_tennis_shop_action_menu(lang):
         [InlineKeyboardButton(text="⇦ Назад", callback_data="sport_tennis")]
     ])
 
+def get_tennis_live_action_menu(lang):
+    channel_text = "📺 Канал с трансляциями" if lang == "ru" else "📺 Live Streams Channel"
+    back_text = "⇦ Назад" if lang == "ru" else "⇦ Back"
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=channel_text, url="https://t.me/playintennisagain")],
+        [InlineKeyboardButton(text=back_text, callback_data="sport_tennis")]
+    ])
+
 def get_tennis_pay_action_menu(lang):
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💳 Оформить подписку", callback_data="tennis_buy_subscription")],
