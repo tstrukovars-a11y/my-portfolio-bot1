@@ -142,26 +142,50 @@
             const sectionKeys = Object.keys(data.sections || {});
             const sectionValues = Object.values(data.sections || {});
 
-            new ApexCharts(document.querySelector("#sectionsChart"), {
-                chart: { type: 'bar', height: 250, toolbar: { show: false } },
-                series: [{ name: 'Clicks', data: sectionValues }],
-                xaxis: { categories: sectionKeys },
-                title: { text: t.chart1, align: 'center', style: { fontSize: '13px' } },
-                colors: ['#0366d6']
-            }).render();
+            const noDataTexts = {
+                "ru": "Пока нет данных — соберутся по мере использования бота",
+                "en": "No data yet — will populate as the bot is used",
+                "fr": "Pas encore de données — se rempliront à l'usage",
+                "he": "עדיין אין נתונים — יצטברו עם השימוש בבוט"
+            };
+            const noDataText = noDataTexts[lang] || noDataTexts["en"];
+
+            if (sectionValues.length > 0) {
+                new ApexCharts(document.querySelector("#sectionsChart"), {
+                    chart: { type: 'bar', height: 250, toolbar: { show: false } },
+                    series: [{ name: 'Clicks', data: sectionValues }],
+                    xaxis: { categories: sectionKeys },
+                    title: { text: t.chart1, align: 'center', style: { fontSize: '13px' } },
+                    colors: ['#0366d6']
+                }).render();
+            } else {
+                document.querySelector("#sectionsChart").innerHTML =
+                    `<div style="text-align:center;padding:20px 10px;">
+                        <div style="font-weight:bold;font-size:13px;margin-bottom:10px;">${t.chart1}</div>
+                        <div style="color:#8a94a6;font-size:13px;">${noDataText}</div>
+                    </div>`;
+            }
 
             // 2. Рендерим график языков (Pie/Donut Chart)
             const langKeys = Object.keys(data.languages || {}).map(l => l.toUpperCase());
             const langValues = Object.values(data.languages || {});
 
-            new ApexCharts(document.querySelector("#langsChart"), {
-                chart: { type: 'donut', height: 280, width: '100%' },
-                series: langValues,
-                labels: langKeys,
-                title: { text: t.chart2, align: 'center', style: { fontSize: '13px' } },
-                legend: { position: 'bottom' },
-                responsive: [{ breakpoint: 480, options: { legend: { position: 'bottom' }, title: { style: { fontSize: '12px' } } } }]
-            }).render();
+            if (langValues.length > 0) {
+                new ApexCharts(document.querySelector("#langsChart"), {
+                    chart: { type: 'donut', height: 280, width: '100%' },
+                    series: langValues,
+                    labels: langKeys,
+                    title: { text: t.chart2, align: 'center', style: { fontSize: '13px' } },
+                    legend: { position: 'bottom' },
+                    responsive: [{ breakpoint: 480, options: { legend: { position: 'bottom' }, title: { style: { fontSize: '12px' } } } }]
+                }).render();
+            } else {
+                document.querySelector("#langsChart").innerHTML =
+                    `<div style="text-align:center;padding:20px 10px;">
+                        <div style="font-weight:bold;font-size:13px;margin-bottom:10px;">${t.chart2}</div>
+                        <div style="color:#8a94a6;font-size:13px;">${noDataText}</div>
+                    </div>`;
+            }
 
         } catch (error) {
             document.getElementById("loading-block").innerText = "Error loading metrics: " + error;
