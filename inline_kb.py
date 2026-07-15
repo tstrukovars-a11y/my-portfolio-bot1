@@ -142,19 +142,23 @@ def get_profiles_menu(lang):
     b2 = "📦 Логистика" if lang == "ru" else "📦 Logistics"
     b3 = "🚜 АПК" if lang == "ru" else "🚜 Agriculture"
     b4 = "✈ Машиностроение" if lang == "ru" else "✈ Manufacturing"
-    
+    short_cv = "📄 Краткая версия резюме" if lang == "ru" else "📄 Resume (Short Version)"
+    full_info = "🌐 Подробнее обо мне и проектах" if lang == "ru" else "🌐 Full Portfolio & Projects"
+
     ck = [
         [InlineKeyboardButton(text=b0, callback_data="p_universal")],
         [InlineKeyboardButton(text=b1, callback_data="sub_bank")],
         [InlineKeyboardButton(text=b2, callback_data="sub_logistics")],
         [InlineKeyboardButton(text=b3, callback_data="sub_agro")],
         [InlineKeyboardButton(text=b4, callback_data="sub_production")],
-        [InlineKeyboardButton(text="🌐 LinkedIn", url="https://linkedin.com")]
+        [InlineKeyboardButton(text="🌐 LinkedIn", url="https://www.linkedin.com/in/tatiana-malakhova-017a9b256/")],
+        [InlineKeyboardButton(text=short_cv, url="https://drive.google.com/file/d/1m8z9MlA8g-NT1yP9KAhGbrKDymY4HpLN/view")],
+        [InlineKeyboardButton(text=full_info, url="https://project7216905.tilda.ws/page74075639html")]
     ]
     if lang == "ru":
-        ck.append([InlineKeyboardButton(text="💼 HeadHunter", url="https://hh.ru")])
+        ck.append([InlineKeyboardButton(text="💼 HeadHunter", url="https://hh.ru/resume/6d545f57ff100284c10039ed1f4d624f737135")])
     else:
-        ck.append([InlineKeyboardButton(text="📄 Download CV", url="https://google.com")])
+        ck.append([InlineKeyboardButton(text="📄 Download CV", url="https://drive.google.com/file/d/1m8z9MlA8g-NT1yP9KAhGbrKDymY4HpLN/view")])
     ck.append([InlineKeyboardButton(text="⇦ Назад", callback_data="go_home")])
     return InlineKeyboardMarkup(inline_keyboard=ck)
 
