@@ -146,7 +146,7 @@
                 chart: { type: 'bar', height: 250, toolbar: { show: false } },
                 series: [{ name: 'Clicks', data: sectionValues }],
                 xaxis: { categories: sectionKeys },
-                title: { text: t.chart1, align: 'center' },
+                title: { text: t.chart1, align: 'center', style: { fontSize: '13px' } },
                 colors: ['#0366d6']
             }).render();
 
@@ -155,11 +155,12 @@
             const langValues = Object.values(data.languages || {});
 
             new ApexCharts(document.querySelector("#langsChart"), {
-                chart: { type: 'donut', height: 250 },
+                chart: { type: 'donut', height: 280, width: '100%' },
                 series: langValues,
                 labels: langKeys,
-                title: { text: t.chart2, align: 'center' },
-                responsive: [{ breakpoint: 480, options: { chart: { width: 200 }, legend: { position: 'bottom' } } }]
+                title: { text: t.chart2, align: 'center', style: { fontSize: '13px' } },
+                legend: { position: 'bottom' },
+                responsive: [{ breakpoint: 480, options: { legend: { position: 'bottom' }, title: { style: { fontSize: '12px' } } } }]
             }).render();
 
         } catch (error) {
