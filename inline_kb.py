@@ -235,9 +235,11 @@ def get_horse_bot_action_menu(lang):
     ])
 
 def get_golf_join_action_menu(lang):
+    join_text = "⛳ Вступить в канал" if lang == "ru" else "⛳ Join the channel"
+    back_text = "⇦ Назад" if lang == "ru" else "⇦ Back"
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🤝 Подать заявку", callback_data="golf_submit_form_click")],
-        [InlineKeyboardButton(text="⇦ Назад", callback_data="sport_golf")]
+        [InlineKeyboardButton(text=join_text, url="https://t.me/+AGWQbLuC4bg0OTE6")],
+        [InlineKeyboardButton(text=back_text, callback_data="sport_golf")]
     ])
 
 def get_game_menu(lang):
