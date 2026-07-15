@@ -84,7 +84,7 @@ async def show_analytics_dashboard(call: CallbackQuery):
     # Финальная чистая и стабильная ссылка на веб-графики GitHub Pages
     # RENDER_EXTERNAL_URL создаётся автоматически на Render, вручную задавать не нужно
     render_url = os.environ.get("RENDER_EXTERNAL_URL", "")
-    web_app_url = "https://tstrukovars-a11y.github.io"
+    web_app_url = "https://tstrukovars-a11y.github.io/my-portfolio-bot1/analytics.html"
     if render_url:
         web_app_url = f"{web_app_url}?api={render_url}/api/metrics"
     
