@@ -396,21 +396,21 @@ reply_exit_he = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="🛑 צา �
 
 # КНОПКИ ПОДТВЕРЖДЕНИЯ ДВУХЭТАПНОГО ВЫХОДА (REPLY)
 confirm_exit_ru = ReplyKeyboardMarkup(keyboard=[
-    [KeyboardButton(text="! Да, выйти в главное меню")],
+    [KeyboardButton(text="⚠ Да, выйти в главное меню")],
     [KeyboardButton(text="🔙 Продолжить общение с Claude")]
 ], resize_keyboard=True)
 
 confirm_exit_en = ReplyKeyboardMarkup(keyboard=[
-    [KeyboardButton(text="! Yes, return to main menu")],
+    [KeyboardButton(text="⚠ Yes, return to main menu")],
     [KeyboardButton(text="🔙 Continue chatting with Claude")]
 ], resize_keyboard=True)
 
 confirm_exit_fr = ReplyKeyboardMarkup(keyboard=[
-    [KeyboardButton(text="! Oui, retourner au menu")],
+    [KeyboardButton(text="⚠ Oui, retourner au menu")],
     [KeyboardButton(text="🔙 Continuer à discuter avec Claude")]
 ], resize_keyboard=True)
 
 confirm_exit_he = ReplyKeyboardMarkup(keyboard=[
-    [KeyboardButton(text="כן, לחזור לתפריט הראשי !")],
-    [KeyboardButton(text="המשך לשוחח עם קלוד 🔙")]
+    [KeyboardButton(text="⚠ כן, לחזור לתפריט הראשי")],
+    [KeyboardButton(text="🔙 המשך לשוחח עם קלוד")]
 ], resize_keyboard=True)

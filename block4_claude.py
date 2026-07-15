@@ -67,7 +67,7 @@ async def open_claude(call: CallbackQuery, state: FSMContext):
 # 🛑 ДВУХЭТАПНАЯ ЗАЩИТА И ПОДТВЕРЖДЕНИЕ ВЫХОДА
 # ==========================================================
 @router.message(ClaudeStates.is_talking, F.text.in_([
-    "🛑 Покинуть чат с ИИ", "🛑 Exit AI Chat", "🛑 Quitter le chat IA", "🛑 צа אט'מצ AI"
+    "🛑 Покинуть чат с ИИ", "🛑 Exit AI Chat", "🛑 Quitter le chat IA", "🛑 צא מצ'אט AI"
 ]))
 async def initiate_exit_protection(message: Message, state: FSMContext):
     lang = await database.get_user_language(message.from_user.id)

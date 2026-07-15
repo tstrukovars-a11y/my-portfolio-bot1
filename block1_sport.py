@@ -107,7 +107,11 @@ async def open_tennis_sub(call: CallbackQuery):
         user_lang = await database.get_user_language(call.from_user.id)
         txt_source = menu_texts.TENNIS_GEO_TEXTS if call.data == "tennis_geography" else menu_texts.TENNIS_LIVE_TEXTS
         caption_text = txt_source.get(user_lang, txt_source["en"])
-        await call.message.edit_media(media=InputMediaPhoto(media=config.TENNIS_BANNER, caption=caption_text, parse_mode="Markdown"), reply_markup=inline_kb.get_music_back_button(user_lang, "sport_tennis"))
+        if call.data == "tennis_live_matches":
+            markup = inline_kb.get_tennis_live_action_menu(user_lang)
+        else:
+            markup = inline_kb.get_music_back_button(user_lang, "sport_tennis")
+        await call.message.edit_media(media=InputMediaPhoto(media=config.TENNIS_BANNER, caption=caption_text, parse_mode="Markdown"), reply_markup=markup)
     except TelegramBadRequest as e: logging.error(f"ОШИБКА БЛОКА 1: {e}")
 
 @router.callback_query(F.data == "tennis_shop_referral")
