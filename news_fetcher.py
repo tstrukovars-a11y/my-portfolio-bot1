@@ -9,14 +9,25 @@ import httpx
 import feedparser
 
 FEEDS = {
-    "ru": "https://ria.ru/export/rss2/index.xml",
-    "il": "https://www.timesofisrael.com/feed/",
-    "fr": "https://www.lemonde.fr/rss/une.xml",
-    "us": "https://rss.nytimes.com/services/xml/rss/nyt/Politics.xml",
+    "ru": "https://www.vedomosti.ru/rss/rubric/economics",
+    "il": "https://www.timesofisrael.com/topic/business/feed/",
+    "fr": "https://www.lemonde.fr/economie/rss_full.xml",
+    "us": "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml",
 }
+
+# Темы, которые всегда исключаются из подборки, даже если попали в экономический раздел ленты
+EXCLUDE_KEYWORDS = [
+    "сво", "спецоперация", "специальная военная операция",
+    "материнск", "маткапитал", "материнский капитал",
+]
 
 MAX_ITEMS = 4
 MAX_TITLE_LEN = 110
+
+
+def _is_excluded(title: str) -> bool:
+    lowered = title.lower()
+    return any(keyword in lowered for keyword in EXCLUDE_KEYWORDS)
 
 
 def _escape_markdown(text: str) -> str:
@@ -28,10 +39,12 @@ def _escape_markdown(text: str) -> str:
 
 def _format_entries(entries) -> str:
     lines = []
-    for entry in entries[:MAX_ITEMS]:
+    for entry in entries[:20]:
+        if len(lines) >= MAX_ITEMS:
+            break
         title = getattr(entry, "title", "").strip()
         link = getattr(entry, "link", "").strip()
-        if not title:
+        if not title or _is_excluded(title):
             continue
         if len(title) > MAX_TITLE_LEN:
             title = title[:MAX_TITLE_LEN].rstrip() + "…"
