@@ -9,6 +9,19 @@ import inline_kb
 
 router = Router()
 
+NEWS_HEADER_TEXTS = {
+    "ru": "📰 *Главное на сегодня:*",
+    "en": "📰 *Today's headlines:*",
+    "fr": "📰 *À la une aujourd'hui :*",
+    "he": "📰 *הכותרות של היום:*"
+}
+NEWS_EMPTY_TEXTS = {
+    "ru": "Свежие новости появятся здесь в течение суток после запуска бота.",
+    "en": "Fresh headlines will appear here within a day of the bot going live.",
+    "fr": "Les dernières actualités apparaîtront ici dans les 24h suivant le démarrage du bot.",
+    "he": "כותרות טריות יופיעו כאן תוך יממה מהפעלת הבוט."
+}
+
 @router.callback_query(F.data == "menu_sport")
 async def open_sport(call: CallbackQuery):
     await call.answer()
@@ -213,4 +226,14 @@ async def open_news_sub(call: CallbackQuery):
         txt_source = keys.get(sub, menu_texts.NEWS_US_TEXTS)
         caption_text = txt_source.get(user_lang, txt_source["en"])
         await call.message.edit_media(media=InputMediaPhoto(media=config.NEWS_BANNER, caption=caption_text, parse_mode="Markdown"), reply_markup=inline_kb.get_music_back_button(user_lang, "sport_news"))
+
+        # Живые заголовки за сегодня (обновляются фоновой задачей раз в сутки)
+        if sub in {"ru", "il", "fr", "us"}:
+            content, _ = await database.get_daily_news(sub)
+            header = NEWS_HEADER_TEXTS.get(user_lang, NEWS_HEADER_TEXTS["en"])
+            if content:
+                news_message = f"{header}\n\n{content}"
+            else:
+                news_message = NEWS_EMPTY_TEXTS.get(user_lang, NEWS_EMPTY_TEXTS["en"])
+            await call.message.answer(news_message, parse_mode="Markdown", disable_web_page_preview=True)
     except TelegramBadRequest as e: logging.error(f"ОШИБКА БЛОКА 1: {e}")

@@ -83,6 +83,14 @@ async def init_db():
             lang TEXT,
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
         )""")
+
+        # 8. НОВАЯ ТАБЛИЦА: Ежедневные новости по странам (обновляется фоновой задачей раз в сутки)
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS daily_news (
+            country TEXT PRIMARY KEY,
+            content TEXT,
+            fetched_at TEXT
+        )""")
         
         await db.commit()
 
@@ -184,3 +192,23 @@ async def log_action(user_id: int, section: str, lang: str):
     except Exception as e:
         import logging
         logging.error(f"Ошибка логирования продуктовой аналитики: {e}")
+
+# --- ФУНКЦИИ ДЛЯ ЕЖЕДНЕВНЫХ НОВОСТЕЙ ---
+
+async def save_daily_news(country: str, content: str):
+    """Сохраняет свежую подборку заголовков по стране (перезаписывает предыдущую)"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO daily_news (country, content, fetched_at) VALUES (?, ?, ?)",
+            (country, content, datetime.now().isoformat())
+        )
+        await db.commit()
+
+async def get_daily_news(country: str):
+    """Возвращает (content, fetched_at) для страны или (None, None), если новостей ещё нет"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT content, fetched_at FROM daily_news WHERE country = ?", (country,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            return (row[0], row[1]) if row else (None, None)

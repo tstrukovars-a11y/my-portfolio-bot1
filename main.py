@@ -10,6 +10,7 @@ from aiogram.enums import ParseMode
 
 import config
 import database
+import news_fetcher
 import common, block1_sport, block2_creative, block3_intellect, block4_claude, profiles, block5_game, block6_vpn, block7_analytics
 
 async def handle_ping(reader, writer):
@@ -78,6 +79,9 @@ logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 
 async def main():
     await database.init_db()
+
+    # Фоновая задача: подтягивает свежие заголовки при старте, затем каждые 24 часа
+    asyncio.create_task(news_fetcher.news_scheduler(database))
 
     bot = Bot(
         token=config.TOKEN, 
