@@ -1,0 +1,29 @@
+# locales/sport_golf.py
+
+GOLF_MAIN_TEXTS = {
+    "ru": "⛳ **Мир гольфа: Стратегия, Фокус и Сообщество**\n\nГольф для меня — это идеальное сочетание геометрии удара, железной выдержки и высокоуровневого нетворкинга. В этом разделе вы можете изучить правила игры, посмотреть географию полей, где я играю, или присоединиться к моему закрытому сообществу любителей гольфа.",
+    "en": "⛳ **World of Golf: Strategy, Focus & Community**\n\nFor me, golf is the perfect integration of swing geometry, absolute composure, and high-tier networking. Here you can explore the rules, browse the courses I play, or join my private golf community.",
+    "fr": "⛳ **Monde du Golf : Stratégie, Focus & Communauté**\n\nPour moi, le golf est l'intégration parfaite de la géométrie du swing, du sang-froid et du réseautage haut de gamme. Explorez les règles, découvrez mes parcours ou rejoignez mon club.",
+    "he": "⛳ **עולם הגולף: אסטרטגיה, מיקוד וקהילה**\n\nעבורי, גולף הוא השילוב המושלם של גיאומטריית החבטה, קור רוח מוחלט ונטוורקינג ברמה גבוהה. כאן תוכלו לחקור את הכללים, לעיין במסלולים שבהם אני משחקת או להצטר프 לקהילת הגולף הסגורה שלי."
+}
+
+GOLF_RULES_TEXTS = {
+    "ru": "📖 **Правила игры и Гольф-этикет**\n\nГольф строится на строгом регламенте и честности перед самим собой:\n\n• **Суть игры:** Пройти дистанцию из 9 или 18 лунок за минимальное количество ударов (пар).\n• **Ключевой этикет:** Соблюдение тишины во время свинга соперника, забота о поле (восстановление дивотов, разравнивание песка в бункере) и строгий дресс-код (поло, брюки/шорты для гольфа).\n• **Стек клюшек:** Разбор применения от драйвера (для дальних ударов) до паттера (для заката мяча в лунку на грине).",
+    "en": "📖 **Game Rules & Golf Etiquette**\n\nGolf is rooted in strict regulations and absolute self-honesty:\n\n• **The Core:** Completing a course of 9 or 18 holes in the fewest possible strokes (Par).\n• **Key Etiquette:** Maintaining total silence during an opponent's swing, course preservation (repairing divots, raking bunkers), and a strict dress code (polo shirts, tailored golf pants/shorts).\n• **The Bag:** Understanding club application from the driver (for distance) to the putter (on the green).",
+    "fr": "📖 **Règles du Jeu & Étiquette du Golf**\n\nLe golf est basé sur des règles strictes et l'honnêteté envers soi-même :\n• **L'essentiel :** Parcourir 9 ou 18 trous en un minimum de coups (Par).\n• **L'étiquette :** Silence absolu pendant le swing de l'adversaire, soin du parcours (ratisser le sable, réparer les divots) et code vestimentaire strict (polo, pantalon de golf).\n• **Les clubs :** Utilisation du driver (longue distance) jusqu'au putter (sur le green).",
+    "he": "📖 **חוקי המשחק ואטיקט הגולף**\n\nהגולף מושתת על תקנות קפדניות וכנות מוחלטת מול עצמך:\n• מהות המשחק:** מעבר מסלול של 9 או 18 גומות במינימום חבטות (Par) •\n• אטיקט מפתח:** שמירה на שקט מוחלט בזמן החבטה של היריב, דאגה למסלול (גריפת חול בבאנקר) וקוד לבוש קפדני (חולצת פולו, מכנסי גולף) •\n• תיק המקלות:** הבנת השימוש במקלות השונים — מהדרייבר (לחבטות ארוכות) ועד לפאטר (על הגרין) •"
+}
+
+GOLF_PLACES_TEXTS = {
+    "ru": "🏆 **Мои игры и география гольф-полей**\n\nЯ регулярно тренируюсь и участвую в любительских турнирах на премиальных локациях:\n\n• 🇷🇺 **Россия:** Ключевые загородные клубы Подмосковья и регионов с чемпионскими 18-луночными полями (Пестово, Links National, Целеево).\n• 🌍 **Международный опыт:** Визиты на культовые гольф-курорты Европы и Ближнего Востока. Оценка архитектуры полей, ландшафтного дизайна и уровня клубного сервиса.",
+    "en": "🏆 **My Games & Golf Course Geography**\n\nI regularly train and compete in amateur tournaments across premium destinations:\n\n• 🇷🇺 **Russia:** Premium country clubs with championship 18-hole courses (Pestovo, Links National, Tseleevo).\n• 🌍 **International Experience:** Visits to iconic golf resorts in Europe and the Middle East, evaluating course architecture, landscape engineering, and elite club management.",
+    "fr": "🏆 **Mes Parties & Géographie des Parcours**\n\nJe m'entraîne et participe régulièrement à des tournois amateurs dans des lieux premium :\n• 🇷🇺 **Russie :** Clubs d'élite avec des parcours de championnat de 18 trous (Pestovo, Links National, Tseleevo).\n• 🌍 **International :** Visites de complexes de golf emblématiques en Europe et au Moyen-Orient, analyse de l'architecture des parcours.",
+    "he": "🏆 **המשחקים שלי וגיאוגרפיית מסלולי הגולף**\n\nאני מתאמנת ומשתתפת באופן קבוע בטורנירי חובבים בלוקיישנים יוקרתיים:\n• רוסיה:** מועדוני פרימיום עם מסלולי אליפות של 18 גומות (פסטובו, לינקס נשיונל, צלייבו) •\n• ניסיון בינלאומי:** ביקורים באתרי גולф אייקוניים באירופה ובמזרח התיכון, תוך הערכת ארכיטקטורת מסלולים וניהול מועדוני עילית •"
+}
+
+GOLF_COMMUNITY_TEXTS = {
+    "ru": "👥 **Закрытое гольф-сообщество**\n\nЯ собираю круг единомышленников — предпринимателей, топ-менеджеров и инженеров, увлеченных гольфом, для совместных выездов на поля, тренировок и качественного нетворкинга.\n\nНажмите кнопку ниже, чтобы отправить заявку на вступление в сообщество. Я свяжусь с вами лично! 👇",
+    "en": "👥 **Private Golf Community**\n\nI am building a network of like-minded entrepreneurs, executives, and engineers passionate about golf for joint training sessions, course visits, and high-value networking.\n\nClick the button below to submit your join request. I will contact you personally! 👇",
+    "fr": "👥 **Communauté Privée de Golf**\n\nJe rassemble un cercle d'entrepreneurs, de dirigeants et d'ingénieurs passionnés de golf pour des entraînements communs et du réseautage de haut niveau.\n\nCliquez ci-dessous pour postuler. Je vous contacterai personnellement ! 👇",
+    "he": "👥 **קהילת גולף סגורה**\n\nאני אוספת חוג של אנשים בעלי חזון דומה — יזמים, מנהלים בכירים ומהנדסים חובבי גולף, לאימונים משותפים, ביקורים במסלולים ונטוורקינג איכותי. לחץ על הכפתור למטה כדי לשלוח בקשת הצטרפות. אני אצור איתך קשר אישי! 👇"
+}

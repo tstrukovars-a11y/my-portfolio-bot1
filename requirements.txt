@@ -1,0 +1,5 @@
+aiogram
+anthropic
+httpx
+aiosqlite
+python-dotenv

@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Executive Product Analytics</title>
+    <!-- Подключаем современную библиотеку графиков и стили -->
+    <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f4f6f9;
+            color: #333;
+            margin: 0;
+            padding: 15px;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: #fff;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+        }
+        h2 {
+            text-align: center;
+            margin-top: 0;
+            color: #24292e;
+            font-size: 20px;
+        }
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 25px;
+        }
+        .metric-card {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+            border: 1px solid #e1e4e8;
+        }
+        .metric-card h3 {
+            margin: 0 0 5px 0;
+            font-size: 14px;
+            color: #586069;
+        }
+        .metric-card p {
+            margin: 0;
+            font-size: 22px;
+            font-weight: bold;
+            color: #0366d6;
+        }
+        .chart-box {
+            margin-bottom: 25px;
+        }
+        .loading {
+            text-align: center;
+            padding: 40px;
+            font-size: 16px;
+            color: #6a737d;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2 id="dash-title">📊 Executive Analytics Dashboard</h2>
+    
+    <div id="loading-block" class="loading">Loading real-time database logs...</div>
+    
+    <div id="dashboard-content" style="display: none;">
+        <!-- Карточки ключевых метрик DAU / MAU -->
+        <div class="metrics-grid">
+            <div class="metric-card">
+                <h3 id="lbl-dau">DAU (24h Active)</h3>
+                <p id="val-dau">0</p>
+            </div>
+            <div class="metric-card">
+                <h3 id="lbl-mau">MAU (30d Active)</h3>
+                <p id="val-mau">0</p>
+            </div>
+        </div>
+
+        <!-- График долей трафика по разделам -->
+        <div class="chart-box">
+            <div id="sectionsChart"></div>
+        </div>
+
+        <!-- График распределения по языкам -->
+        <div class="chart-box">
+            <div id="langsChart"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Инициализируем Telegram Web App, чтобы понимать контекст и язык пользователя
+    const tg = window.Telegram.WebApp;
+    tg.ready();
+    tg.expand();
+
+    // Адрес API приходит из бота через параметр ?api=... в ссылке Mini App
+    // (бот сам знает свой адрес на Render через RENDER_EXTERNAL_URL)
+    const urlParams = new URLSearchParams(window.location.search);
+    const API_URL = urlParams.get('api') || "https://ВАШ-СЕРВИС.onrender.com/api/metrics";
+
+    // Локализация интерфейса дашборда на 4 языка
+    const locales = {
+        "ru": { title: "📊 Бизнес-аналитика проекта (Real-Time)", dau: "DAU (Активность 24ч)", mau: "MAU (Активность 30д)", chart1: "Распределение трафика по разделам", chart2: "Языковое расслоение аудитории" },
+        "en": { title: "📊 Executive Analytics Dashboard", dau: "DAU (24h Active)", mau: "MAU (30d Active)", chart1: "Traffic Share by Sections", chart2: "Audience Language Breakdown" },
+        "fr": { title: "📊 Dashboard d'Analyses Executive", dau: "DAU (Actifs 24h)", mau: "MAU (Actifs 30j)", chart1: "Part du trafic по разделам", chart2: "Répartition par langue" },
+        "he": { title: "📊 אנליטיקה עסקית בזמן אמת", dau: "DAU (פעילים 24 ש')", mau: "MAU (פעילים 30 יום)", chart1: "התפלגות תנועה לפי מדורים", chart2: "התפלגות קהל לפי שפה" }
+    };
+
+    // Определяем язык (по умолчанию английский)
+    const userLang = tg.initDataUnsafe?.user?.language_code || "en";
+    const lang = locales[userLang] ? userLang : "en";
+    const t = locales[lang];
+
+    // Применяем тексты локализации на страницу
+    document.getElementById("dash-title").innerText = t.title;
+    document.getElementById("lbl-dau").innerText = t.dau;
+    document.getElementById("lbl-mau").innerText = t.mau;
+
+    // Асинхронно запрашиваем данные с нашего ИТ-бэкенда на Render
+    async function loadData() {
+        try {
+            const response = await fetch(API_URL);
+            const data = await response.json();
+
+            document.getElementById("loading-block").style.display = "none";
+            document.getElementById("dashboard-content").style.display = "block";
+
+            // Заполняем карточки
+            document.getElementById("val-dau").innerText = data.dau;
+            document.getElementById("val-mau").innerText = data.mau;
+
+            // 1. Рендерим график долей трафика по разделам (Bar Chart)
+            const sectionKeys = Object.keys(data.sections || {});
+            const sectionValues = Object.values(data.sections || {});
+
+            new ApexCharts(document.querySelector("#sectionsChart"), {
+                chart: { type: 'bar', height: 250, toolbar: { show: false } },
+                series: [{ name: 'Clicks', data: sectionValues }],
+                xaxis: { categories: sectionKeys },
+                title: { text: t.chart1, align: 'center' },
+                colors: ['#0366d6']
+            }).render();
+
+            // 2. Рендерим график языков (Pie/Donut Chart)
+            const langKeys = Object.keys(data.languages || {}).map(l => l.toUpperCase());
+            const langValues = Object.values(data.languages || {});
+
+            new ApexCharts(document.querySelector("#langsChart"), {
+                chart: { type: 'donut', height: 250 },
+                series: langValues,
+                labels: langKeys,
+                title: { text: t.chart2, align: 'center' },
+                responsive: [{ breakpoint: 480, options: { chart: { width: 200 }, legend: { position: 'bottom' } } }]
+            }).render();
+
+        } catch (error) {
+            document.getElementById("loading-block").innerText = "Error loading metrics: " + error;
+        }
+    }
+
+    loadData();
+</script>
+</body>
+</html>
