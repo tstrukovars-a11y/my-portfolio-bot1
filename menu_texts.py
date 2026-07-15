@@ -32,6 +32,7 @@ from locales.log_euroset import TEXT_EVROSET_ADM, TEXT_EVROSET_PRO
 from locales.ind_agroeco import TEXT_AGROECO
 from locales.ind_vaso_sap import TEXT_VASO_SAP
 from locales.ind_vaso_1c import TEXT_VASO_1C
+from locales.profile_universal import TEXT_UNIVERSAL
 
 # menu_texts.py
 

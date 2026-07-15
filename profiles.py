@@ -49,7 +49,11 @@ async def sub_production(call: CallbackQuery):
 
 @router.callback_query(F.data.startswith("p_"))
 async def show_project_details(call: CallbackQuery):
-    if call.data in {"p_sb_dist", "p_sb_risk", "p_sb_cash", "p_sb_ml", "p_rsb"}:
+    user_lang = await database.get_user_language(call.from_user.id)
+
+    if call.data == "p_universal":
+        back_markup = inline_kb.get_profiles_menu(user_lang)
+    elif call.data in {"p_sb_dist", "p_sb_risk", "p_sb_cash", "p_sb_ml", "p_rsb"}:
         back_markup = inline_kb.get_bank_submenu(exclude_prj=call.data)
     elif call.data in {"p_lg_sms", "p_lg_cust", "p_lg_fts", "p_lg_fulfill", "p_lg_acq", "p_lg_unit", "p_ev_adm", "p_ev_pro"}:
         back_markup = inline_kb.get_logistics_submenu(exclude_prj=call.data)
@@ -59,6 +63,7 @@ async def show_project_details(call: CallbackQuery):
         back_markup = inline_kb.get_production_submenu()
 
     data_map = {
+        "p_universal": menu_texts.TEXT_UNIVERSAL,
         "p_sb_dist": menu_texts.TEXT_SBER_DIST,
         "p_sb_risk": menu_texts.TEXT_SBER_RISK,
         "p_sb_cash": menu_texts.TEXT_SBER_CASH,
@@ -78,7 +83,6 @@ async def show_project_details(call: CallbackQuery):
     }
     
     txt_dict = data_map.get(call.data, {"ru": "Ошибка"})
-    user_lang = await database.get_user_language(call.from_user.id)
     caption_text = txt_dict.get(user_lang, txt_dict.get("ru", ""))
     
     # КЛЮЧЕВАЯ УМНАЯ ПРОВЕРКА ЛИМИТОВ: 

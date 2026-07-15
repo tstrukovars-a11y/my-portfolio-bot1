@@ -137,12 +137,14 @@ def get_news_main_menu(lang):
     ])
 
 def get_profiles_menu(lang):
+    b0 = "🎯 Стратегическая архитектура" if lang == "ru" else "🎯 Strategic Architecture"
     b1 = "🏛 Банки" if lang == "ru" else "🏛 Banking"
     b2 = "📦 Логистика" if lang == "ru" else "📦 Logistics"
     b3 = "🚜 АПК" if lang == "ru" else "🚜 Agriculture"
     b4 = "✈ Машиностроение" if lang == "ru" else "✈ Manufacturing"
     
     ck = [
+        [InlineKeyboardButton(text=b0, callback_data="p_universal")],
         [InlineKeyboardButton(text=b1, callback_data="sub_bank")],
         [InlineKeyboardButton(text=b2, callback_data="sub_logistics")],
         [InlineKeyboardButton(text=b3, callback_data="sub_agro")],
