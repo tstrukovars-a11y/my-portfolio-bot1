@@ -170,17 +170,17 @@ PUZZLE_MENU_TEXTS = {
 # ДОПИСАНО: ТЕКСТЫ БЛОКА 4 (НЕЙРОСЕТЬ CLAUDE)
 # ==========================================
 CLAUDE_LIMIT_TEXTS = {
-    "ru": "⚠️ **Дневной лимит бесплатных запросов исчерпан (макс. 3)**\n\nВы использовали все доступные ИИ-сессии на сегодня. Чтобы общаться с Claude без ограничений, иметь доступ к аналитике книг и премиум-разделам, пожалуйста, оформите подписку ниже.",
-    "en": "⚠️ **Daily Free Limit Reclaimed (Max 3)**\n\nYou have exhausted your available AI requests for today. To unlock unlimited chat sessions with Claude, book analysis, and locked assets, please activate your subscription below.",
-    "fr": "⚠️ **Limite quotidienne gratuite atteinte (Max 3)**\n\nVous avez épuisé vos requêtes IA pour aujourd'hui. Pour débloquer des sessions illimitées avec Claude, veuillez activer votre abonnement ci-dessous.",
-    "he": "⚠️ **מכסת הבקשות החינמיות היומית הסתיימה (מקסימום 3)**\n\nניצלת את כל שאילתות ה-AI הזמינות להיום. כדי לפתוח שיחות ללא הגבלה עם קלוד וגישה למדורים מוגנים, אנא הפעל את המנוי שלך למטה."
+    "ru": "⚠️ **Дневной лимит бесплатных запросов исчерпан (макс. 5)**\n\nВы использовали все доступные ИИ-сессии на сегодня. Чтобы общаться с Claude без ограничений, иметь доступ к аналитике книг и премиум-разделам, пожалуйста, оформите подписку ниже.",
+    "en": "⚠️ **Daily Free Limit Reclaimed (Max 5)**\n\nYou have exhausted your available AI requests for today. To unlock unlimited chat sessions with Claude, book analysis, and locked assets, please activate your subscription below.",
+    "fr": "⚠️ **Limite quotidienne gratuite atteinte (Max 5)**\n\nVous avez épuisé vos requêtes IA pour aujourd'hui. Pour débloquer des sessions illimitées avec Claude, veuillez activer votre abonnement ci-dessous.",
+    "he": "⚠️ **מכסת הבקשות החינמיות היומית הסתיימה (מקסימום 5)**\n\nניצלת את כל שאילתות ה-AI הזמינות להיום. כדי לפתוח שיחות ללא הגבלה עם קלוד וגישה למדורים מוגנים, אנא הפעל את המנוי שלך למטה."
 }
 
 CLAUDE_SUCCESS_TEXTS = {
-    "ru": "🤖 **Интеграция с Claude 3.5 Sonnet активна!**\n\nВы успешно подключились к ИИ-ассистенту. Задайте свой вопрос прямо в чат (например: 'помоги составить контент-план' или 'напиши код на Python').\n\n*Для завершения сессии и возврата в меню используйте кнопку ниже:*",
-    "en": "🤖 **Claude 3.5 Sonnet Integration Active!**\n\nYou are now connected to the AI Assistant. Submit your inquiry directly into the chat (e.g., 'help me compile a content strategy' or 'write Python code').\n\n*To terminate the session and exit to the main menu, use the button below:*",
-    "fr": "🤖 **Intégration Claude 3.5 Sonnet Active !**\n\nVous êtes connecté à l'assistant IA. Posez votre question directement dans le chat.\n\n*Pour terminer la session et retourner au menu principal, utilisez le bouton ci-dessous :*",
-    "he": "🤖 **האינטגרציה עם קלוד 3.5 סונטה פעילה!**\n\nהתחברת בהצלחה לעוזר ה-AI. שלח את השאילתה שלך ישירות לצ'אט.\n\n*כדי לסיים את הפגישה ולחזור לתפריט הראשי, השתמש בכפתור למטה:*"
+    "ru": "🤖 **Интеграция с Claude активна!**\n\nВы успешно подключились к ИИ-ассистенту. Задайте свой вопрос прямо в чат (например: 'помоги составить контент-план' или 'напиши код на Python').\n\n*Для завершения сессии и возврата в меню используйте кнопку ниже:*",
+    "en": "🤖 **Claude Integration Active!**\n\nYou are now connected to the AI Assistant. Submit your inquiry directly into the chat (e.g., 'help me compile a content strategy' or 'write Python code').\n\n*To terminate the session and exit to the main menu, use the button below:*",
+    "fr": "🤖 **Intégration Claude Active !**\n\nVous êtes connecté à l'assistant IA. Posez votre question directement dans le chat.\n\n*Pour terminer la session et retourner au menu principal, utilisez le bouton ci-dessous :*",
+    "he": "🤖 **האינטגרציה עם קלוד פעילה!**\n\nהתחברת בהצלחה לעוזר ה-AI. שלח את השאילתה שלך ישירות לצ'אט.\n\n*כדי לסיים את הפגישה ולחזור לתפריט הראשי, השתמש בכפתור למטה:*"
 }
 
 MAIN_MENU_TEXTS = {

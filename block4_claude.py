@@ -31,9 +31,9 @@ async def open_claude(call: CallbackQuery, state: FSMContext):
     has_premium = await database.check_subscription(user_id)
     
     if not has_premium:
-        # 2. Если премиума нет, проверяем дневной лимит бесплатных запросов (например, макс. 3)
+        # 2. Если премиума нет, проверяем дневной лимит бесплатных запросов (5 в день)
         current_requests = await database.get_ai_requests_count(user_id)
-        if current_requests >= 3:
+        if current_requests >= 5:
             caption_limit = menu_texts.CLAUDE_LIMIT_TEXTS.get(lang, menu_texts.CLAUDE_LIMIT_TEXTS["en"])
             
             # Подгружаем правильные 4-язычные сетки подписок (Английский на месте)
@@ -138,14 +138,14 @@ async def handle_ai_question(message: Message, state: FSMContext):
     has_premium = await database.check_subscription(user_id)
     if not has_premium:
         current_requests = await database.get_ai_requests_count(user_id)
-        if current_requests >= 3:
+        if current_requests >= 5:
             await message.answer("⚠️ Your daily free limit is over. Please buy Premium in Claude Menu.")
             return
 
     await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
     try:
         response = await claude_client.messages.create(
-            model="claude-3-5-sonnet-20241022",
+            model="claude-haiku-4-5-20251001",
             max_tokens=1000,
             messages=[{"role": "user", "content": message.text}]
         )
