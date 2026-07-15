@@ -203,6 +203,13 @@ def get_composers_grid_menu(lang):
         [InlineKeyboardButton(text="🎹 И.С. Бах" if lang=="ru" else "🎹 J.S. Bach", callback_data="comp_detail_bach")],
         [InlineKeyboardButton(text="✨ В.А. Моцарт" if lang=="ru" else "✨ W.A. Mozart", callback_data="comp_detail_mozart")],
         [InlineKeyboardButton(text="⚡ Л. Бетховен" if lang=="ru" else "⚡ L. Beethoven", callback_data="comp_detail_beethoven")],
+        [InlineKeyboardButton(text="🎼 Ф. Шопен" if lang=="ru" else "🎼 F. Chopin", callback_data="comp_detail_chopin")],
+        [InlineKeyboardButton(text="🎭 П.И. Чайковский" if lang=="ru" else "🎭 P.I. Tchaikovsky", callback_data="comp_detail_tchaikovsky")],
+        [InlineKeyboardButton(text="🔥 С. Рахманинов" if lang=="ru" else "🔥 S. Rachmaninoff", callback_data="comp_detail_rachmaninoff")],
+        [InlineKeyboardButton(text="🍃 А. Вивальди" if lang=="ru" else "🍃 A. Vivaldi", callback_data="comp_detail_vivaldi")],
+        [InlineKeyboardButton(text="🌊 К. Дебюсси" if lang=="ru" else "🌊 C. Debussy", callback_data="comp_detail_debussy")],
+        [InlineKeyboardButton(text="🎯 И. Брамс" if lang=="ru" else "🎯 J. Brahms", callback_data="comp_detail_brahms")],
+        [InlineKeyboardButton(text="👑 Г.Ф. Гендель" if lang=="ru" else "👑 G.F. Handel", callback_data="comp_detail_handel")],
         [InlineKeyboardButton(text="⇦ Назад", callback_data="sport_music")]
     ])
 
