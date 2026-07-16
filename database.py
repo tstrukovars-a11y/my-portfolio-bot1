@@ -91,6 +91,18 @@ async def init_db():
             content TEXT,
             fetched_at TEXT
         )""")
+
+        # 9. НОВАЯ ТАБЛИЦА: Анкеты поиска партнёра для игры (падел / настольный теннис)
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS game_partners (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sport TEXT,
+            city TEXT,
+            level TEXT,
+            available_time TEXT,
+            username TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )""")
         
         await db.commit()
 
@@ -212,3 +224,28 @@ async def get_daily_news(country: str):
         ) as cursor:
             row = await cursor.fetchone()
             return (row[0], row[1]) if row else (None, None)
+
+# --- ФУНКЦИИ ДЛЯ ПОИСКА ПАРТНЁРА ПО ИГРЕ (падел / настольный теннис) ---
+
+async def add_game_partner(sport: str, city: str, level: str, available_time: str, username: str):
+    """Сохраняет анкету игрока, ищущего партнёра"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT INTO game_partners (sport, city, level, available_time, username) VALUES (?, ?, ?, ?, ?)",
+            (sport, city, level, available_time, username)
+        )
+        await db.commit()
+
+async def get_game_partners(sport: str, limit: int = 50):
+    """Возвращает список анкет по конкретному виду спорта, самые новые первыми"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT city, level, available_time, username, created_at FROM game_partners "
+            "WHERE sport = ? ORDER BY created_at DESC LIMIT ?",
+            (sport, limit)
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [
+                {"city": r[0], "level": r[1], "available_time": r[2], "username": r[3], "created_at": r[4]}
+                for r in rows
+            ]

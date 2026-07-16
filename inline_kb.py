@@ -47,10 +47,10 @@ def get_main_menu(lang):
 
 def get_sport_menu(lang):
     titles = {
-        "ru": ["🎵 Музыка", "🌍 Путешествия", "🎾 Большой теннис", "🏇 Конный спорт", "🏌 Гольф", "📰 Новости", "⇦ В главное меню"],
-        "en": ["🎵 Music", "🌍 Travel", "🎾 Tennis", "🏇 Equestrian", "🏌 Golf", "📰 News", "⇦ Main Menu"],
-        "fr": ["🎵 Musique", "🌍 Voyage", "🎾 Tennis", "🏇 Équitation", "🏌 Golf", "📰 Actualités", "⇦ Menu Principal"],
-        "he": ["מוזיקה 🎵", "נסיעות 🌍", "טניס 🎾", "רכיבה על סוסים 🏇", "גולף 🏌", "חדשות 📰", "⇦ לתפריט הראשי"]
+        "ru": ["🎵 Музыка", "🌍 Путешествия", "🎾 Большой теннис", "🏇 Конный спорт", "🏌 Гольф", "🥎 Падел", "🏓 Настольный теннис", "📰 Новости", "⇦ В главное меню"],
+        "en": ["🎵 Music", "🌍 Travel", "🎾 Tennis", "🏇 Equestrian", "🏌 Golf", "🥎 Padel", "🏓 Table Tennis", "📰 News", "⇦ Main Menu"],
+        "fr": ["🎵 Musique", "🌍 Voyage", "🎾 Tennis", "🏇 Équitation", "🏌 Golf", "🥎 Padel", "🏓 Tennis de Table", "📰 Actualités", "⇦ Menu Principal"],
+        "he": ["מוזיקה 🎵", "נסיעות 🌍", "טניס 🎾", "רכיבה על סוסים 🏇", "גולף 🏌", "פאדל 🥎", "טניס שולחן 🏓", "חדשות 📰", "⇦ לתפריט הראשי"]
     }
     m = titles.get(lang, titles["en"])
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -59,8 +59,10 @@ def get_sport_menu(lang):
         [InlineKeyboardButton(text=m[2], callback_data="sport_tennis")],
         [InlineKeyboardButton(text=m[3], callback_data="sport_horse")],
         [InlineKeyboardButton(text=m[4], callback_data="sport_golf")],
-        [InlineKeyboardButton(text=m[5], callback_data="sport_news")],
-        [InlineKeyboardButton(text=m[6], callback_data="go_home")]
+        [InlineKeyboardButton(text=m[5], callback_data="sport_padel")],
+        [InlineKeyboardButton(text=m[6], callback_data="sport_table_tennis")],
+        [InlineKeyboardButton(text=m[7], callback_data="sport_news")],
+        [InlineKeyboardButton(text=m[8], callback_data="go_home")]
     ])
 
 def get_music_main_menu(lang):

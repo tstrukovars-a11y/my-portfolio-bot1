@@ -1,6 +1,7 @@
 import logging
+import os
 from aiogram import Router, F
-from aiogram.types import CallbackQuery, InputMediaPhoto
+from aiogram.types import CallbackQuery, InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 from aiogram.exceptions import TelegramBadRequest
 from datetime import datetime
 import config
@@ -245,4 +246,51 @@ async def open_news_sub(call: CallbackQuery):
             else:
                 news_message = NEWS_EMPTY_TEXTS.get(user_lang, NEWS_EMPTY_TEXTS["en"])
             await call.message.answer(news_message, parse_mode="Markdown", disable_web_page_preview=True)
+    except TelegramBadRequest as e: logging.error(f"ОШИБКА БЛОКА 1: {e}")
+
+
+# ==========================================================
+# 🥎🏓 ПАДЕЛ И НАСТОЛЬНЫЙ ТЕННИС: ПРАВИЛА + ПОИСК ПАРТНЁРА
+# ==========================================================
+
+GITHUB_PAGES_BASE = "https://tstrukovars-a11y.github.io/my-portfolio-bot1"
+
+def _build_partner_finder_markup(lang, sport_code, html_filename):
+    render_url = os.environ.get("RENDER_EXTERNAL_URL", "")
+    web_app_url = f"{GITHUB_PAGES_BASE}/{html_filename}?sport={sport_code}"
+    if render_url:
+        web_app_url += f"&api={render_url}/api/partners"
+
+    btn_text = "🤝 Найти партнёра для игры" if lang == "ru" else "🤝 Find a Playing Partner"
+    back_text = "⇦ В главное меню" if lang == "ru" else "⇦ Main Menu"
+
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=btn_text, web_app=WebAppInfo(url=web_app_url))],
+        [InlineKeyboardButton(text=back_text, callback_data="menu_sport")]
+    ])
+
+@router.callback_query(F.data == "sport_padel")
+async def open_sport_padel(call: CallbackQuery):
+    await call.answer()
+    try:
+        user_lang = await database.get_user_language(call.from_user.id)
+        caption_text = menu_texts.PADEL_MAIN_TEXTS.get(user_lang, menu_texts.PADEL_MAIN_TEXTS["en"])
+        markup = _build_partner_finder_markup(user_lang, "padel", "padel_partners.html")
+        await call.message.edit_media(
+            media=InputMediaPhoto(media=config.PADEL_BANNER, caption=caption_text, parse_mode="Markdown"),
+            reply_markup=markup
+        )
+    except TelegramBadRequest as e: logging.error(f"ОШИБКА БЛОКА 1: {e}")
+
+@router.callback_query(F.data == "sport_table_tennis")
+async def open_sport_table_tennis(call: CallbackQuery):
+    await call.answer()
+    try:
+        user_lang = await database.get_user_language(call.from_user.id)
+        caption_text = menu_texts.TABLE_TENNIS_MAIN_TEXTS.get(user_lang, menu_texts.TABLE_TENNIS_MAIN_TEXTS["en"])
+        markup = _build_partner_finder_markup(user_lang, "table_tennis", "tt_partners.html")
+        await call.message.edit_media(
+            media=InputMediaPhoto(media=config.TABLE_TENNIS_BANNER, caption=caption_text, parse_mode="Markdown"),
+            reply_markup=markup
+        )
     except TelegramBadRequest as e: logging.error(f"ОШИБКА БЛОКА 1: {e}")

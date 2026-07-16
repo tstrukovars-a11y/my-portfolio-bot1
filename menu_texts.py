@@ -33,6 +33,8 @@ from locales.ind_agroeco import TEXT_AGROECO
 from locales.ind_vaso_sap import TEXT_VASO_SAP
 from locales.ind_vaso_1c import TEXT_VASO_1C
 from locales.profile_universal import TEXT_UNIVERSAL
+from locales.sport_padel import PADEL_MAIN_TEXTS
+from locales.sport_table_tennis import TABLE_TENNIS_MAIN_TEXTS
 
 # menu_texts.py
 

@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Найти партнёра — Настольный теннис</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        :root {
+            --court: #1A1A1A;
+            --court-light: #C0392B;
+            --sand: #F5F5F5;
+            --card: #FFFFFF;
+            --line: #E0E0E0;
+            --text: #17262B;
+            --muted: #6B7A7D;
+            --accent: #C0392B;
+        }
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: linear-gradient(180deg, var(--court) 0%, var(--court-light) 140px, var(--sand) 140px);
+            color: var(--text);
+            margin: 0;
+            padding: 0 0 32px 0;
+            min-height: 100vh;
+        }
+        .header {
+            padding: 24px 20px 16px 20px;
+            color: #fff;
+        }
+        .header .eyebrow {
+            font-size: 12px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            opacity: 0.75;
+            margin-bottom: 4px;
+        }
+        .header h1 {
+            font-size: 24px;
+            margin: 0;
+            font-weight: 700;
+        }
+        .container {
+            max-width: 520px;
+            margin: 0 auto;
+            padding: 0 16px;
+        }
+        .card {
+            background: var(--card);
+            border-radius: 16px;
+            padding: 20px;
+            margin-top: 16px;
+            box-shadow: 0 6px 20px rgba(15,76,92,0.12);
+            border: 1px solid var(--line);
+        }
+        .card h2 {
+            font-size: 15px;
+            margin: 0 0 14px 0;
+            color: var(--court);
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+        label {
+            display: block;
+            font-size: 13px;
+            color: var(--muted);
+            margin: 12px 0 6px 0;
+        }
+        input, select {
+            width: 100%;
+            padding: 11px 12px;
+            border-radius: 10px;
+            border: 1.5px solid var(--line);
+            font-size: 15px;
+            background: #FAFAF7;
+            color: var(--text);
+        }
+        input:focus, select:focus {
+            outline: none;
+            border-color: var(--court-light);
+        }
+        button.submit {
+            width: 100%;
+            margin-top: 18px;
+            padding: 13px;
+            border-radius: 10px;
+            border: none;
+            background: var(--court);
+            color: #fff;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        button.submit:disabled { opacity: 0.6; }
+        .status {
+            margin-top: 10px;
+            font-size: 13px;
+            text-align: center;
+        }
+        .status.ok { color: #2E7D32; }
+        .status.err { color: #C62828; }
+        .partner-card {
+            background: var(--card);
+            border-radius: 14px;
+            padding: 14px 16px;
+            margin-top: 10px;
+            border: 1px solid var(--line);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .partner-info .city { font-weight: 700; font-size: 15px; }
+        .partner-info .meta { font-size: 13px; color: var(--muted); margin-top: 2px; }
+        .contact-btn {
+            background: var(--accent);
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            padding: 8px 14px;
+            font-size: 13px;
+            font-weight: 600;
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        .empty-state {
+            text-align: center;
+            padding: 24px 10px;
+            color: var(--muted);
+            font-size: 14px;
+        }
+        .loading { text-align: center; padding: 20px; color: var(--muted); font-size: 14px; }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <div class="eyebrow">Настольный теннис · Поиск партнёра</div>
+    <h1>🏓 Найдите, с кем сыграть</h1>
+</div>
+
+<div class="container">
+    <div class="card">
+        <h2>Оставить заявку</h2>
+        <form id="partner-form">
+            <label for="city">Город</label>
+            <input type="text" id="city" placeholder="Например, Москва" required maxlength="100">
+
+            <label for="level">Уровень игры</label>
+            <select id="level">
+                <option value="Начинающий">Начинающий</option>
+                <option value="Любитель">Любитель</option>
+                <option value="Продвинутый">Продвинутый</option>
+                <option value="Профи">Профи</option>
+            </select>
+
+            <label for="time">Удобное время</label>
+            <input type="text" id="time" placeholder="Например, будни вечером" maxlength="200">
+
+            <label for="username">Telegram username</label>
+            <input type="text" id="username" placeholder="без @, например ivan_petrov" required maxlength="100">
+
+            <button type="submit" class="submit" id="submit-btn">Опубликовать заявку</button>
+            <div class="status" id="status"></div>
+        </form>
+    </div>
+
+    <div class="card">
+        <h2>Кто ищет партнёра</h2>
+        <div id="partners-list">
+            <div class="loading">Загрузка...</div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const tg = window.Telegram?.WebApp;
+    if (tg) { tg.ready(); tg.expand(); }
+
+    const params = new URLSearchParams(window.location.search);
+    const SPORT = params.get('sport') || 'table_tennis';
+    const API_BASE = params.get('api') || '';
+
+    function escapeHtml(str) {
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+    }
+
+    async function loadPartners() {
+        const listEl = document.getElementById('partners-list');
+        if (!API_BASE) {
+            listEl.innerHTML = '<div class="empty-state">Сервис временно недоступен</div>';
+            return;
+        }
+        try {
+            const res = await fetch(`${API_BASE}?sport=${encodeURIComponent(SPORT)}`);
+            const data = await res.json();
+            if (!Array.isArray(data) || data.length === 0) {
+                listEl.innerHTML = '<div class="empty-state">Пока никто не оставил заявку — станьте первым!</div>';
+                return;
+            }
+            listEl.innerHTML = data.map(p => `
+                <div class="partner-card">
+                    <div class="partner-info">
+                        <div class="city">${escapeHtml(p.city || '')}</div>
+                        <div class="meta">${escapeHtml(p.level || '')} · ${escapeHtml(p.available_time || 'время не указано')}</div>
+                    </div>
+                    <a class="contact-btn" href="https://t.me/${encodeURIComponent(p.username || '')}" target="_blank">Написать</a>
+                </div>
+            `).join('');
+        } catch (e) {
+            listEl.innerHTML = '<div class="empty-state">Не удалось загрузить список</div>';
+        }
+    }
+
+    document.getElementById('partner-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const btn = document.getElementById('submit-btn');
+        const statusEl = document.getElementById('status');
+        const payload = {
+            sport: SPORT,
+            city: document.getElementById('city').value.trim(),
+            level: document.getElementById('level').value,
+            available_time: document.getElementById('time').value.trim(),
+            username: document.getElementById('username').value.trim().replace(/^@/, '')
+        };
+
+        if (!payload.city || !payload.username) {
+            statusEl.textContent = 'Заполните город и username';
+            statusEl.className = 'status err';
+            return;
+        }
+        if (!API_BASE) {
+            statusEl.textContent = 'Сервис временно недоступен';
+            statusEl.className = 'status err';
+            return;
+        }
+
+        btn.disabled = true;
+        statusEl.textContent = '';
+        try {
+            const res = await fetch(API_BASE, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const result = await res.json();
+            if (result.status === 'ok') {
+                statusEl.textContent = 'Заявка опубликована!';
+                statusEl.className = 'status ok';
+                document.getElementById('partner-form').reset();
+                loadPartners();
+            } else {
+                statusEl.textContent = 'Заполните все обязательные поля';
+                statusEl.className = 'status err';
+            }
+        } catch (e) {
+            statusEl.textContent = 'Ошибка отправки, попробуйте позже';
+            statusEl.className = 'status err';
+        } finally {
+            btn.disabled = false;
+        }
+    });
+
+    loadPartners();
+</script>
+</body>
+</html>
