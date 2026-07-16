@@ -1,7 +1,6 @@
 # block7_analytics.py
 import logging
 import os
-import aiosqlite
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 import database
@@ -52,27 +51,19 @@ async def show_analytics_dashboard(call: CallbackQuery):
     sections_list, langs_list = [], []
     
     try:
-        async with aiosqlite.connect(database.DB_PATH) as db:
-            async with db.execute("SELECT COUNT(DISTINCT user_id) FROM user_logs WHERE timestamp >= datetime('now', '-1 day')") as c:
-                row = await c.fetchone()
-                dau = row[0] if row else 0
-            async with db.execute("SELECT COUNT(DISTINCT user_id) FROM user_logs WHERE timestamp >= datetime('now', '-30 days')") as c:
-                row = await c.fetchone()
-                mau = row[0] if row else 0
-            async with db.execute("SELECT COUNT(*) FROM user_logs") as c:
-                row = await c.fetchone()
-                total_clicks = row[0] if row else 0
-                
-            if total_clicks > 0:
-                async with db.execute("SELECT section, COUNT(*) as cnt FROM user_logs GROUP BY section ORDER BY cnt DESC LIMIT 4") as cursor:
-                    async for section_name, count in cursor:
-                        pct = (count / total_clicks) * 100
-                        bar = generate_progress_bar(pct)
-                        sections_list.append(f"• `{section_name}`:\n  `{bar}` {pct:.1f}% ({count} кликов)")
-                async with db.execute("SELECT lang, COUNT(*) as cnt FROM user_logs GROUP BY lang ORDER BY cnt DESC") as cursor:
-                    async for l_code, count in cursor:
-                        pct = (count / total_clicks) * 100
-                        langs_list.append(f"• `{l_code.upper()}`: {pct:.1f}%")
+        dau, mau, total_clicks, sections_data, langs_data = await database.get_metrics_summary()
+
+        if total_clicks > 0:
+            top_sections = sorted(sections_data.items(), key=lambda x: x[1], reverse=True)[:4]
+            for section_name, count in top_sections:
+                pct = (count / total_clicks) * 100
+                bar = generate_progress_bar(pct)
+                sections_list.append(f"• `{section_name}`:\n  `{bar}` {pct:.1f}% ({count} кликов)")
+
+            top_langs = sorted(langs_data.items(), key=lambda x: x[1], reverse=True)
+            for l_code, count in top_langs:
+                pct = (count / total_clicks) * 100
+                langs_list.append(f"• `{l_code.upper()}`: {pct:.1f}%")
     except Exception as e:
         logging.error(f"Ошибка вычисления дашборда: {e}")
 

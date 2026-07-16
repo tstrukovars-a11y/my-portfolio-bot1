@@ -1,251 +1,302 @@
 import os
-import aiosqlite
+import logging
 from datetime import datetime, timedelta
 
-# Определяем путь к БД в зависимости от среды (локально или Amvera/Render)
-DB_PATH = "/data/quiz_bot_v2.db" if os.path.exists("/data") else "quiz_bot_v2.db"
+import asyncpg
+
+# Render даёт строку вида postgres://..., приводим к схеме postgresql:// для совместимости
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+_pool = None
+
+
+async def get_pool():
+    """Возвращает пул соединений, создаёт при первом обращении"""
+    global _pool
+    if _pool is None:
+        _pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5)
+    return _pool
+
 
 async def init_db():
     """Инициализация базы данных и создание всех необходимых таблиц"""
-    async with aiosqlite.connect(DB_PATH) as db:
+    pool = await get_pool()
+    async with pool.acquire() as conn:
         # 1. Таблицы для квизов
-        await db.execute("""
+        await conn.execute("""
         CREATE TABLE IF NOT EXISTS quizzes (
             poll_id TEXT PRIMARY KEY,
-            message_id INTEGER,
+            message_id BIGINT,
             question TEXT,
             correct_option_id INTEGER
         )""")
-        await db.execute("""
+        await conn.execute("""
         CREATE TABLE IF NOT EXISTS user_answers (
-            user_id INTEGER,
+            user_id BIGINT,
             poll_id TEXT,
             is_correct INTEGER,
             PRIMARY KEY (user_id, poll_id)
         )""")
-        
+
         # 2. Таблица для подписок
-        await db.execute("""
+        await conn.execute("""
         CREATE TABLE IF NOT EXISTS subscriptions (
-            user_id INTEGER PRIMARY KEY,
+            user_id BIGINT PRIMARY KEY,
             expires_at TEXT
         )""")
-        
+
         # 3. Таблицы для контента (рецепты и книги)
-        await db.execute("""
+        await conn.execute("""
         CREATE TABLE IF NOT EXISTS recipes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             category TEXT,
             text_content TEXT,
             video_file_id TEXT,
             link_url TEXT
         )""")
-        await db.execute("""
+        await conn.execute("""
         CREATE TABLE IF NOT EXISTS books (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             category TEXT,
             text_content TEXT,
             cover_file_id TEXT
         )""")
-        
-        # 4. Таблица для логов платежей (CryptoBot, ЮKassa и т.д.)
-        await db.execute("""
+
+        # 4. Таблица для логов платежей
+        await conn.execute("""
         CREATE TABLE IF NOT EXISTS payments (
             invoice_id TEXT PRIMARY KEY,
-            user_id INTEGER,
+            user_id BIGINT,
             amount REAL,
             currency TEXT,
             status TEXT,
             created_at TEXT
         )""")
-        
-        # 5. Таблица для надежного хранения лимитов ИИ
-        await db.execute("""
+
+        # 5. Таблица для лимитов ИИ
+        await conn.execute("""
         CREATE TABLE IF NOT EXISTS ai_limits (
-            user_id INTEGER PRIMARY KEY,
+            user_id BIGINT PRIMARY KEY,
             requests_count INTEGER DEFAULT 0,
             last_request_date TEXT
         )""")
-        
-        # 6. Таблица для сохранения выбранного языка пользователя
-        await db.execute("""
+
+        # 6. Таблица языка пользователя
+        await conn.execute("""
         CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY, 
+            user_id BIGINT PRIMARY KEY,
             lang TEXT
         )""")
-        
-        # 7. НОВАЯ ТАБЛИЦА: Продуктовые логи для DAU/MAU и долей трафика по разделам
-        await db.execute("""
+
+        # 7. Продуктовые логи для DAU/MAU и долей трафика
+        await conn.execute("""
         CREATE TABLE IF NOT EXISTS user_logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT,
             section TEXT,
             lang TEXT,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""")
 
-        # 8. НОВАЯ ТАБЛИЦА: Ежедневные новости по странам (обновляется фоновой задачей раз в сутки)
-        await db.execute("""
+        # 8. Ежедневные новости по странам
+        await conn.execute("""
         CREATE TABLE IF NOT EXISTS daily_news (
             country TEXT PRIMARY KEY,
             content TEXT,
             fetched_at TEXT
         )""")
 
-        # 9. НОВАЯ ТАБЛИЦА: Анкеты поиска партнёра для игры (падел / настольный теннис)
-        await db.execute("""
+        # 9. Анкеты поиска партнёра для игры
+        await conn.execute("""
         CREATE TABLE IF NOT EXISTS game_partners (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             sport TEXT,
             city TEXT,
             level TEXT,
             available_time TEXT,
             username TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""")
-        
-        await db.commit()
+
+    logging.info("PostgreSQL: таблицы инициализированы")
+
 
 # --- ФУНКЦИИ ДЛЯ РАБОТЫ С ЯЗЫКАМИ ПОЛЬЗОВАТЕЛЕЙ ---
 
 async def set_user_language(user_id: int, lang: str):
     """Сохраняет выбранный язык пользователя в базу данных"""
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            "INSERT OR REPLACE INTO users (user_id, lang) VALUES (?, ?)", 
-            (user_id, lang)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO users (user_id, lang) VALUES ($1, $2) "
+            "ON CONFLICT (user_id) DO UPDATE SET lang = EXCLUDED.lang",
+            user_id, lang
         )
-        await db.commit()
 
 async def get_user_language(user_id: int) -> str:
     """Получает сохраненный язык пользователя (по умолчанию английский)"""
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute("SELECT lang FROM users WHERE user_id = ?", (user_id,)) as cursor:
-            row = await cursor.fetchone()
-            return row[0] if row else "en"
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT lang FROM users WHERE user_id = $1", user_id)
+        return row["lang"] if row else "en"
+
 
 # --- ФУНКЦИИ ДЛЯ РАБОТЫ С ПОДПИСКАМИ ---
 
 async def check_subscription(user_id: int) -> bool:
     """Проверяет, активна ли платная подписка у пользователя"""
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute("SELECT expires_at FROM subscriptions WHERE user_id = ?", (user_id,)) as cursor:
-            row = await cursor.fetchone()
-            if not row or not row[0]:
-                return False
-            
-            try:
-                expires_at = datetime.fromisoformat(row[0])
-                return expires_at > datetime.now()
-            except ValueError:
-                return False
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT expires_at FROM subscriptions WHERE user_id = $1", user_id)
+        if not row or not row["expires_at"]:
+            return False
+        try:
+            expires_at = datetime.fromisoformat(row["expires_at"])
+            return expires_at > datetime.now()
+        except ValueError:
+            return False
 
 async def add_or_extend_subscription(user_id: int, days: int):
     """Создает или продлевает платную подписку на N дней"""
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute("SELECT expires_at FROM subscriptions WHERE user_id = ?", (user_id,)) as cursor:
-            row = await cursor.fetchone()
-            
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT expires_at FROM subscriptions WHERE user_id = $1", user_id)
+
         now = datetime.now()
-        if row and row[0]:
+        if row and row["expires_at"]:
             try:
-                current_expires = datetime.fromisoformat(row[0])
+                current_expires = datetime.fromisoformat(row["expires_at"])
                 start_date = current_expires if current_expires > now else now
             except ValueError:
                 start_date = now
         else:
             start_date = now
-            
+
         new_expires = start_date + timedelta(days=days)
-        await db.execute(
-            "INSERT OR REPLACE INTO subscriptions (user_id, expires_at) VALUES (?, ?)",
-            (user_id, new_expires.isoformat())
+        await conn.execute(
+            "INSERT INTO subscriptions (user_id, expires_at) VALUES ($1, $2) "
+            "ON CONFLICT (user_id) DO UPDATE SET expires_at = EXCLUDED.expires_at",
+            user_id, new_expires.isoformat()
         )
-        await db.commit()
+
 
 # --- ФУНКЦИИ ДЛЯ РАБОТЫ С ЛИМИТАМИ ИИ ---
 
 async def get_ai_requests_count(user_id: int) -> int:
     """Получает количество запросов пользователя к Claude за сегодня"""
     today = datetime.now().date().isoformat()
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute(
-            "SELECT requests_count, last_request_date FROM ai_limits WHERE user_id = ?", (user_id,)
-        ) as cursor:
-            row = await cursor.fetchone()
-            if row:
-                requests_count, last_date = row
-                if last_date == today:
-                    return requests_count
-            return 0
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT requests_count, last_request_date FROM ai_limits WHERE user_id = $1", user_id
+        )
+        if row and row["last_request_date"] == today:
+            return row["requests_count"]
+        return 0
 
 async def increment_ai_requests(user_id: int):
     """Увеличивает счетчик запросов к Claude на 1"""
     today = datetime.now().date().isoformat()
     current_count = await get_ai_requests_count(user_id)
-    
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            "INSERT OR REPLACE INTO ai_limits (user_id, requests_count, last_request_date) VALUES (?, ?, ?)",
-            (user_id, current_count + 1, today)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO ai_limits (user_id, requests_count, last_request_date) VALUES ($1, $2, $3) "
+            "ON CONFLICT (user_id) DO UPDATE SET requests_count = EXCLUDED.requests_count, "
+            "last_request_date = EXCLUDED.last_request_date",
+            user_id, current_count + 1, today
         )
-        await db.commit()
 
-# --- НОВАЯ ФУНКЦИЯ: Сбор сырых метрик для сквозного Data-Driven дашборда ---
+
+# --- ЛОГИРОВАНИЕ ПРОДУКТОВОЙ АНАЛИТИКИ ---
+
 async def log_action(user_id: int, section: str, lang: str):
     """Фиксирует клик пользователя для подсчета DAU/MAU и долей трафика"""
     try:
-        async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute(
-                "INSERT INTO user_logs (user_id, section, lang) VALUES (?, ?, ?)",
-                (user_id, section, lang)
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO user_logs (user_id, section, lang) VALUES ($1, $2, $3)",
+                user_id, section, lang
             )
-            await db.commit()
     except Exception as e:
-        import logging
         logging.error(f"Ошибка логирования продуктовой аналитики: {e}")
+
+async def get_metrics_summary():
+    """Возвращает (dau, mau, total_clicks, sections_data, langs_data) для дашборда аналитики"""
+    dau, mau, total_clicks = 0, 0, 0
+    sections_data, langs_data = {}, {}
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        dau = await conn.fetchval(
+            "SELECT COUNT(DISTINCT user_id) FROM user_logs WHERE timestamp >= NOW() - INTERVAL '1 day'"
+        ) or 0
+        mau = await conn.fetchval(
+            "SELECT COUNT(DISTINCT user_id) FROM user_logs WHERE timestamp >= NOW() - INTERVAL '30 days'"
+        ) or 0
+        total_clicks = await conn.fetchval("SELECT COUNT(*) FROM user_logs") or 0
+
+        if total_clicks > 0:
+            rows = await conn.fetch("SELECT section, COUNT(*) as cnt FROM user_logs GROUP BY section")
+            for r in rows:
+                sections_data[r["section"]] = r["cnt"]
+            rows = await conn.fetch("SELECT lang, COUNT(*) as cnt FROM user_logs GROUP BY lang")
+            for r in rows:
+                langs_data[r["lang"]] = r["cnt"]
+
+    return dau, mau, total_clicks, sections_data, langs_data
+
 
 # --- ФУНКЦИИ ДЛЯ ЕЖЕДНЕВНЫХ НОВОСТЕЙ ---
 
 async def save_daily_news(country: str, content: str):
     """Сохраняет свежую подборку заголовков по стране (перезаписывает предыдущую)"""
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            "INSERT OR REPLACE INTO daily_news (country, content, fetched_at) VALUES (?, ?, ?)",
-            (country, content, datetime.now().isoformat())
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO daily_news (country, content, fetched_at) VALUES ($1, $2, $3) "
+            "ON CONFLICT (country) DO UPDATE SET content = EXCLUDED.content, fetched_at = EXCLUDED.fetched_at",
+            country, content, datetime.now().isoformat()
         )
-        await db.commit()
 
 async def get_daily_news(country: str):
     """Возвращает (content, fetched_at) для страны или (None, None), если новостей ещё нет"""
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute(
-            "SELECT content, fetched_at FROM daily_news WHERE country = ?", (country,)
-        ) as cursor:
-            row = await cursor.fetchone()
-            return (row[0], row[1]) if row else (None, None)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT content, fetched_at FROM daily_news WHERE country = $1", country)
+        return (row["content"], row["fetched_at"]) if row else (None, None)
+
 
 # --- ФУНКЦИИ ДЛЯ ПОИСКА ПАРТНЁРА ПО ИГРЕ (падел / настольный теннис) ---
 
 async def add_game_partner(sport: str, city: str, level: str, available_time: str, username: str):
     """Сохраняет анкету игрока, ищущего партнёра"""
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            "INSERT INTO game_partners (sport, city, level, available_time, username) VALUES (?, ?, ?, ?, ?)",
-            (sport, city, level, available_time, username)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO game_partners (sport, city, level, available_time, username) "
+            "VALUES ($1, $2, $3, $4, $5)",
+            sport, city, level, available_time, username
         )
-        await db.commit()
 
 async def get_game_partners(sport: str, limit: int = 50):
     """Возвращает список анкет по конкретному виду спорта, самые новые первыми"""
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute(
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
             "SELECT city, level, available_time, username, created_at FROM game_partners "
-            "WHERE sport = ? ORDER BY created_at DESC LIMIT ?",
-            (sport, limit)
-        ) as cursor:
-            rows = await cursor.fetchall()
-            return [
-                {"city": r[0], "level": r[1], "available_time": r[2], "username": r[3], "created_at": r[4]}
-                for r in rows
-            ]
+            "WHERE sport = $1 ORDER BY created_at DESC LIMIT $2",
+            sport, limit
+        )
+        return [
+            {
+                "city": r["city"],
+                "level": r["level"],
+                "available_time": r["available_time"],
+                "username": r["username"],
+                "created_at": str(r["created_at"])
+            }
+            for r in rows
+        ]

@@ -1,6 +1,6 @@
 aiogram
 anthropic
 httpx
-aiosqlite
+asyncpg
 python-dotenv
 feedparser

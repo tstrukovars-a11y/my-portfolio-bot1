@@ -18,7 +18,7 @@ def get_main_menu(lang):
     m = titles.get(lang, titles["en"])
     # Тексты для кнопки VPN на 4 языках
     vpn_titles = {
-        "ru": "🔌 VPN: Партнерская программа",
+        "ru": "🔌 Premium VPN",
         "en": "🔌 Premium VPN Service",
         "fr": "🔌 Service VPN Premium",
         "he": "🔌 שירות VPN פרימיום"

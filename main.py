@@ -3,7 +3,6 @@ import logging
 import sys
 import os
 import json
-import sqlite3
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
@@ -63,24 +62,7 @@ async def handle_ping(reader, writer):
         dau, mau, total_clicks = 0, 0, 0
         sections_data, langs_data = {}, {}
         try:
-            # Делаем быстрые синхронные запросы для API-ответа сервера
-            conn = sqlite3.connect(database.DB_PATH)
-            c = conn.cursor()
-            c.execute("SELECT COUNT(DISTINCT user_id) FROM user_logs WHERE timestamp >= datetime('now', '-1 day')")
-            dau = c.fetchone()[0] or 0
-            c.execute("SELECT COUNT(DISTINCT user_id) FROM user_logs WHERE timestamp >= datetime('now', '-30 days')")
-            mau = c.fetchone()[0] or 0
-            c.execute("SELECT COUNT(*) FROM user_logs")
-            total_clicks = c.fetchone()[0] or 0
-
-            if total_clicks > 0:
-                c.execute("SELECT section, COUNT(*) FROM user_logs GROUP BY section")
-                for sec, cnt in c.fetchall():
-                    sections_data[sec] = cnt
-                c.execute("SELECT lang, COUNT(*) FROM user_logs GROUP BY lang")
-                for ln, cnt in c.fetchall():
-                    langs_data[ln] = cnt
-            conn.close()
+            dau, mau, total_clicks, sections_data, langs_data = await database.get_metrics_summary()
         except Exception as e:
             logging.error(f"API Analytics Error: {e}")
 
