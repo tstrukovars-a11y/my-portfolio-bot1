@@ -11,12 +11,24 @@ if DATABASE_URL.startswith("postgres://"):
 
 _pool = None
 
+# Отдельная "схема" (namespace) внутри общей базы — изолирует таблицы этого бота
+# от таблиц других ботов, использующих ту же самую бесплатную базу Postgres на Render
+SCHEMA_NAME = "vizitka_bot"
+
+
+async def _init_connection(conn):
+    """Выполняется при каждом новом соединении: создаёт схему (если её ещё нет) и переключается в неё"""
+    await conn.execute(f"CREATE SCHEMA IF NOT EXISTS {SCHEMA_NAME}")
+    await conn.execute(f"SET search_path TO {SCHEMA_NAME}")
+
 
 async def get_pool():
     """Возвращает пул соединений, создаёт при первом обращении"""
     global _pool
     if _pool is None:
-        _pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5)
+        _pool = await asyncpg.create_pool(
+            DATABASE_URL, min_size=1, max_size=5, init=_init_connection
+        )
     return _pool
 
 
