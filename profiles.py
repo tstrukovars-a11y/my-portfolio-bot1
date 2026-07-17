@@ -1,6 +1,8 @@
 # handlers/profiles.py
 from aiogram import Router, F
-from aiogram.types import CallbackQuery, InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import CallbackQuery, Message, InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import StatesGroup, State
 import config
 import database
 import menu_texts
@@ -8,24 +10,95 @@ import inline_kb
 
 router = Router()
 
+# Пароль для доступа к разделу Профили — легко продиктовать голосом, сложно подобрать
+PROFILES_PASSWORD = "проект будущего"
+
+class ProfilesStates(StatesGroup):
+    waiting_password = State()
+
+PASSWORD_PROMPT_TEXTS = {
+    "ru": "🔒 Этот раздел закрыт паролем. Введите пароль, чтобы продолжить, или нажмите «Отмена»:",
+    "en": "🔒 This section is password-protected. Enter the password to continue, or tap Cancel:",
+    "fr": "🔒 Cette section est protégée par un mot de passe. Entrez le mot de passe, ou appuyez sur Annuler :",
+    "he": "🔒 מדור זה מוגן בסיסמה. הזן את הסיסמה כדי להמשיך, או לחץ על ביטול:"
+}
+
+WRONG_PASSWORD_TEXTS = {
+    "ru": "❌ Неверный пароль. Попробуйте ещё раз, или нажмите «Отмена».",
+    "en": "❌ Wrong password. Please try again, or tap Cancel.",
+    "fr": "❌ Mot de passe incorrect. Réessayez, ou appuyez sur Annuler.",
+    "he": "❌ סיסמה שגויה. נסה שוב, או לחץ על ביטול."
+}
+
+CANCEL_TEXTS = {
+    "ru": "⛔ Отмена",
+    "en": "⛔ Cancel",
+    "fr": "⛔ Annuler",
+    "he": "⛔ ביטול"
+}
+
+
+def _cancel_markup(lang):
+    text = CANCEL_TEXTS.get(lang, CANCEL_TEXTS["en"])
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=text, callback_data="profiles_cancel")]
+    ])
+
+
 @router.callback_query(F.data == "menu_profiles")
-async def open_profiles(call: CallbackQuery):
-    user_lang = await database.get_user_language(call.from_user.id)
-    text = menu_texts.PROFILES_MENU_TEXTS.get(user_lang, menu_texts.PROFILES_MENU_TEXTS["en"])
-    try:
-        await call.message.edit_media(
-            media=InputMediaPhoto(media=config.SCIENCE_BANNER, caption=text, parse_mode="Markdown"),
-            reply_markup=inline_kb.get_profiles_menu(user_lang)
-        )
-    except Exception:
-        await call.message.delete()
-        await call.message.answer_photo(
-            photo=config.SCIENCE_BANNER,
-            caption=text,
-            parse_mode="Markdown",
-            reply_markup=inline_kb.get_profiles_menu(user_lang)
-        )
+async def request_profiles_password(call: CallbackQuery, state: FSMContext):
     await call.answer()
+    user_lang = await database.get_user_language(call.from_user.id)
+
+    await state.set_state(ProfilesStates.waiting_password)
+    await state.update_data(profiles_lang=user_lang)
+
+    prompt = PASSWORD_PROMPT_TEXTS.get(user_lang, PASSWORD_PROMPT_TEXTS["en"])
+    await call.message.answer(text=prompt, reply_markup=_cancel_markup(user_lang))
+
+
+@router.callback_query(F.data == "profiles_cancel", ProfilesStates.waiting_password)
+async def cancel_profiles_password(call: CallbackQuery, state: FSMContext):
+    await call.answer()
+    await state.clear()
+
+    user_lang = await database.get_user_language(call.from_user.id)
+    caption = menu_texts.MAIN_MENU_TEXTS.get(user_lang, menu_texts.MAIN_MENU_TEXTS["en"])
+    markup = inline_kb.get_main_menu(user_lang)
+
+    try:
+        await call.message.delete()
+    except Exception:
+        pass
+
+    await call.message.answer_photo(
+        photo=config.MAIN_BANNER,
+        caption=caption,
+        reply_markup=markup,
+        parse_mode="Markdown"
+    )
+
+
+# Ловим ТОЛЬКО обычный текст (не команды вроде /start), чтобы не блокировать выход из состояния
+@router.message(ProfilesStates.waiting_password, F.text, ~F.text.startswith("/"))
+async def check_profiles_password(message: Message, state: FSMContext):
+    data = await state.get_data()
+    user_lang = data.get("profiles_lang", "ru")
+    entered = message.text.strip().lower()
+
+    if entered != PROFILES_PASSWORD.lower():
+        wrong_text = WRONG_PASSWORD_TEXTS.get(user_lang, WRONG_PASSWORD_TEXTS["en"])
+        await message.answer(text=wrong_text, reply_markup=_cancel_markup(user_lang))
+        return
+
+    await state.clear()
+    text = menu_texts.PROFILES_MENU_TEXTS.get(user_lang, menu_texts.PROFILES_MENU_TEXTS["en"])
+    await message.answer_photo(
+        photo=config.SCIENCE_BANNER,
+        caption=text,
+        parse_mode="Markdown",
+        reply_markup=inline_kb.get_profiles_menu(user_lang)
+    )
 
 @router.callback_query(F.data == "sub_bank")
 async def sub_bank(call: CallbackQuery):
