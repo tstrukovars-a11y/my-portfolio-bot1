@@ -1,5 +1,4 @@
 # handlers/block2_creative.py
-import aiosqlite
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, Message, InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
@@ -258,13 +257,8 @@ async def open_creative_culinary_main(call: CallbackQuery):
 
 async def fetch_and_send_recipes(call: CallbackQuery, category_key: str):
     user_lang = await database.get_user_language(call.from_user.id)
-    
-    async with aiosqlite.connect(database.DB_PATH) as db:
-        async with db.execute(
-            "SELECT text_content, video_file_id, link_url FROM recipes WHERE category = ? ORDER BY id DESC LIMIT 3", 
-            (category_key,)
-        ) as cursor:
-            rows = await cursor.fetchall()
+
+    rows = await database.get_recipes(category_key, limit=3)
             
     if not rows:
         empty_txt = menu_texts.CULINARY_EMPTY_TEXTS.get(user_lang, menu_texts.CULINARY_EMPTY_TEXTS["en"])
@@ -284,12 +278,12 @@ async def fetch_and_send_recipes(call: CallbackQuery, category_key: str):
                 target_language = lang_names.get(user_lang, "English")
                 
                 response = await claude_client.messages.create(
-                    model="claude-3-5-sonnet-20241022",
+                    model="claude-haiku-4-5-20251001",
                     max_tokens=800,
                     system=f"You are a professional culinary translator. Translate the following recipe text strictly into {target_language}. Maintain the emojis, formatting, and ingredient structure. Do not add any conversational text or introduction, return ONLY the direct translation.",
                     messages=[{"role": "user", "content": text}]
                 )
-                final_text = response.content.text
+                final_text = response.content[0].text
             except Exception as e:
                 print(f"⚠️ Ошибка автоперевода Claude: {e}")
         
@@ -338,12 +332,7 @@ async def auto_listen_culinary_channel(message: Message):
                     extracted_link = text_to_check[entity.offset:entity.offset + entity.length]
                     break
         
-        async with aiosqlite.connect(database.DB_PATH) as db:
-            await db.execute(
-                "INSERT INTO recipes (category, text_content, video_file_id, link_url) VALUES (?, ?, ?, ?)",
-                (detected_category, text_to_check, video_id, extracted_link)
-            )
-            await db.commit()
+        await database.add_recipe(detected_category, text_to_check, video_id, extracted_link)
         print(f"🍏 АВТО-СИНХРОНИЗАЦИЯ: Добавлен лот категории {detected_category}!")
 
 # =====================================================================
@@ -423,7 +412,7 @@ async def process_price_final(message: Message, state: FSMContext):
     price_val = message.text
     data_inner = await state.get_data()
     await state.clear()
-    user_lang_i = config.user_languages.get(message.from_user.id, "en")
+    user_lang_i = await database.get_user_language(message.from_user.id)
     
     summary_sale = f"✅ **Заявка на продажу создана!**\n• 🖼 Название: {data_inner['title']}\n• 💵 Цена: {price_val}" if user_lang_i == "ru" else f"✅ **Sale created!**\n• Title: {data_inner['title']}\n• Price: {price_val}"
     await message.answer_photo(photo=data_inner['photo_id'], caption=summary_sale, parse_mode="Markdown")

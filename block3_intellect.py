@@ -1,5 +1,4 @@
 # handlers/block3_intellect.py
-import aiosqlite
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, Message, InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.exceptions import TelegramBadRequest
@@ -266,12 +265,7 @@ async def fetch_and_send_books(call: CallbackQuery, category_key: str):
     if user_id in processing_users:
         return
         
-    async with aiosqlite.connect(database.DB_PATH) as db:
-        async with db.execute(
-            "SELECT text_content, cover_file_id FROM books WHERE category = ? ORDER BY id DESC LIMIT 3", 
-            (category_key,)
-        ) as cursor:
-            rows = await cursor.fetchall()
+    rows = await database.get_books(category_key, limit=3)
             
     if not rows:
         empty_texts = {
@@ -307,12 +301,12 @@ async def fetch_and_send_books(call: CallbackQuery, category_key: str):
                 try:
                     lang_names = {"en": "English", "fr": "French", "he": "Hebrew"}
                     response = await claude_client.messages.create(
-                        model="claude-3-5-sonnet-20241022",
+                        model="claude-haiku-4-5-20251001",
                         max_tokens=1000,
                         system=f"You are an expert executive editor. Translate this book review precisely into {lang_names.get(user_lang, 'English')}. Keep all headers, book structure, emojis, and specific business terminology. Do not add any intros, output only the translation.",
                         messages=[{"role": "user", "content": text}]
                     )
-                    final_text = response.content.text
+                    final_text = response.content[0].text
                 except Exception as e:
                     print(f"⚠️ Ошибка Claude: {e}")
 
@@ -356,12 +350,7 @@ async def auto_listen_books_channel(message: Message):
             
     if detected_category:
         cover_id = message.photo[-1].file_id if message.photo else None
-        async with aiosqlite.connect(database.DB_PATH) as db:
-            await db.execute(
-                "INSERT INTO books (category, text_content, cover_file_id) VALUES (?, ?, ?)",
-                (detected_category, text_to_check, cover_id)
-            )
-            await db.commit()
+        await database.add_book(detected_category, text_to_check, cover_id)
         print(f"📚 АВТО-БИБЛИОТЕКА: Добавлен новый лот книги в категорию {detected_category}!")
 
 
@@ -369,13 +358,7 @@ async def auto_listen_books_channel(message: Message):
 # 🧩 СИМУЛЯТОР КВИЗОВ-ГОЛОВОЛОМОК (ОСТАВЛЕН БЕЗ ИЗМЕНЕНИЙ)
 # =====================================================================
 async def channel_puzzles(message: Message, user_id: int):
-    async with aiosqlite.connect(database.DB_PATH) as db:
-        async with db.execute("""
-            SELECT poll_id, message_id FROM quizzes 
-            WHERE poll_id NOT IN (SELECT poll_id FROM user_answers WHERE user_id = ?)
-            ORDER BY message_id ASC LIMIT 1
-        """, (user_id,)) as cursor:
-            row = await cursor.fetchone()
+    row = await database.get_next_unsolved_quiz(user_id)
             
     if not row:
         no_puzzles_texts = {

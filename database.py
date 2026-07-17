@@ -300,3 +300,64 @@ async def get_game_partners(sport: str, limit: int = 50):
             }
             for r in rows
         ]
+
+
+# --- ФУНКЦИИ ДЛЯ РЕЦЕПТОВ (блок кулинарии) ---
+
+async def add_recipe(category: str, text_content: str, video_file_id: str, link_url: str):
+    """Сохраняет новый рецепт (добавляется автоматически при публикации в канале)"""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO recipes (category, text_content, video_file_id, link_url) VALUES ($1, $2, $3, $4)",
+            category, text_content, video_file_id, link_url
+        )
+
+async def get_recipes(category: str, limit: int = 3):
+    """Возвращает последние рецепты по категории"""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT text_content, video_file_id, link_url FROM recipes "
+            "WHERE category = $1 ORDER BY id DESC LIMIT $2",
+            category, limit
+        )
+        return [(r["text_content"], r["video_file_id"], r["link_url"]) for r in rows]
+
+
+# --- ФУНКЦИИ ДЛЯ КНИГ (блок интеллекта) ---
+
+async def get_books(category: str, limit: int = 3):
+    """Возвращает последние книги по категории"""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT text_content, cover_file_id FROM books "
+            "WHERE category = $1 ORDER BY id DESC LIMIT $2",
+            category, limit
+        )
+        return [(r["text_content"], r["cover_file_id"]) for r in rows]
+
+async def add_book(category: str, text_content: str, cover_file_id: str):
+    """Сохраняет новую книгу (добавляется автоматически при публикации в канале)"""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO books (category, text_content, cover_file_id) VALUES ($1, $2, $3)",
+            category, text_content, cover_file_id
+        )
+
+
+# --- ФУНКЦИИ ДЛЯ КВИЗОВ-ГОЛОВОЛОМОК ---
+
+async def get_next_unsolved_quiz(user_id: int):
+    """Возвращает (poll_id, message_id) следующей нерешённой пользователем головоломки, либо None"""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT poll_id, message_id FROM quizzes "
+            "WHERE poll_id NOT IN (SELECT poll_id FROM user_answers WHERE user_id = $1) "
+            "ORDER BY message_id ASC LIMIT 1",
+            user_id
+        )
+        return (row["poll_id"], row["message_id"]) if row else None
