@@ -36,6 +36,24 @@ async def init_db():
     """Инициализация базы данных и создание всех необходимых таблиц"""
     pool = await get_pool()
     async with pool.acquire() as conn:
+        # Одноразовая очистка "недоделанных" таблиц от прошлых прерванных попыток
+        # деплоя. Срабатывает только один раз благодаря маркеру _schema_version —
+        # при всех следующих запусках эта проверка будет пропускаться, и данные
+        # между деплоями продолжат сохраняться как положено.
+        marker_exists = await conn.fetchval(
+            "SELECT EXISTS (SELECT FROM information_schema.tables "
+            "WHERE table_schema = current_schema() AND table_name = '_schema_version')"
+        )
+        if not marker_exists:
+            for table_name in [
+                "quizzes", "user_answers", "subscriptions", "recipes", "books",
+                "payments", "ai_limits", "users", "user_logs", "daily_news", "game_partners"
+            ]:
+                await conn.execute(f"DROP TABLE IF EXISTS {table_name} CASCADE")
+            await conn.execute("CREATE TABLE _schema_version (version INTEGER)")
+            await conn.execute("INSERT INTO _schema_version (version) VALUES (1)")
+            logging.info("Выполнена одноразовая очистка испорченных таблиц")
+
         # 1. Таблицы для квизов
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS quizzes (
