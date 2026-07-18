@@ -79,6 +79,7 @@ async def init_db():
         CREATE TABLE IF NOT EXISTS {SCHEMA}.recipes (
             id SERIAL PRIMARY KEY,
             category TEXT,
+            title TEXT,
             text_content TEXT,
             video_file_id TEXT,
             link_url TEXT
@@ -331,25 +332,36 @@ async def get_game_partners(sport: str, limit: int = 50):
 
 # --- ФУНКЦИИ ДЛЯ РЕЦЕПТОВ (блок кулинарии) ---
 
-async def add_recipe(category: str, text_content: str, video_file_id: str, link_url: str):
+async def add_recipe(category: str, title: str, text_content: str, video_file_id: str, link_url: str):
     """Сохраняет новый рецепт (добавляется автоматически при публикации в канале)"""
     pool = await get_pool()
     async with pool.acquire() as conn:
         await conn.execute(
-            f"INSERT INTO {SCHEMA}.recipes (category, text_content, video_file_id, link_url) VALUES ($1, $2, $3, $4)",
-            category, text_content, video_file_id, link_url
+            f"INSERT INTO {SCHEMA}.recipes (category, title, text_content, video_file_id, link_url) "
+            "VALUES ($1, $2, $3, $4, $5)",
+            category, title, text_content, video_file_id, link_url
         )
 
-async def get_recipes(category: str, limit: int = 3):
-    """Возвращает последние рецепты по категории"""
+async def get_recipe_titles(category: str, limit: int = 15):
+    """Возвращает список (id, title) для отображения кликабельного списка рецептов"""
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            f"SELECT text_content, video_file_id, link_url FROM {SCHEMA}.recipes "
+            f"SELECT id, title FROM {SCHEMA}.recipes "
             "WHERE category = $1 ORDER BY id DESC LIMIT $2",
             category, limit
         )
-        return [(r["text_content"], r["video_file_id"], r["link_url"]) for r in rows]
+        return [(r["id"], r["title"]) for r in rows]
+
+async def get_recipe_by_id(recipe_id: int):
+    """Возвращает (text_content, video_file_id, link_url) конкретного рецепта по id"""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            f"SELECT text_content, video_file_id, link_url FROM {SCHEMA}.recipes WHERE id = $1",
+            recipe_id
+        )
+        return (row["text_content"], row["video_file_id"], row["link_url"]) if row else None
 
 
 # --- ФУНКЦИИ ДЛЯ КНИГ (блок интеллекта) ---

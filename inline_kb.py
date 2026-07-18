@@ -275,7 +275,7 @@ def get_game_menu(lang):
 def get_creative_menu(lang):
     p = "🎨 Картины и Арт-Хаб" if lang == "ru" else "🎨 Paintings & Art Hub"
     a = "👗 Ателье и Fashion" if lang == "ru" else "👗 Atelier & Fashion"
-    c = "🍳 Кулинария и Claude AI" if lang == "ru" else "🍳 Haute Cuisine"
+    c = "🍳 Кулинария" if lang == "ru" else "🍳 Haute Cuisine"
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=p, callback_data="creative_paintings")],
         [InlineKeyboardButton(text=a, callback_data="creative_atelier")],
@@ -326,13 +326,13 @@ def get_atelier_b2b_action_menu(lang):
     ])
 
 def get_creative_culinary_menu(lang):
-    b = "🥞 Завтраки" if lang == "ru" else "🥞 Breakfasts"
-    m = "🥩 Горячие блюда" if lang == "ru" else "🥩 Main Courses"
-    d = "🍰 Десерты" if lang == "ru" else "🍰 Desserts"
+    b = "🎬 Видеорецепты" if lang == "ru" else "🎬 Video Recipes"
+    m = "📖 Рецепты" if lang == "ru" else "📖 Recipes"
+    d = "💪 Полезное" if lang == "ru" else "💪 Healthy"
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=b, callback_data="culinary_view_breakfasts")],
-        [InlineKeyboardButton(text=m, callback_data="culinary_view_mains")],
-        [InlineKeyboardButton(text=d, callback_data="culinary_view_desserts")],
+        [InlineKeyboardButton(text=b, callback_data="culinary_cat_video")],
+        [InlineKeyboardButton(text=m, callback_data="culinary_cat_recipes")],
+        [InlineKeyboardButton(text=d, callback_data="culinary_cat_useful")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="menu_creative")]
     ])
 

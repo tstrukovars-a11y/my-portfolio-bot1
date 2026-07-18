@@ -255,59 +255,92 @@ async def open_creative_culinary_main(call: CallbackQuery):
     except TelegramBadRequest:
         pass
 
-async def fetch_and_send_recipes(call: CallbackQuery, category_key: str):
+async def show_recipe_list(call: CallbackQuery, category_key: str):
     user_lang = await database.get_user_language(call.from_user.id)
 
-    rows = await database.get_recipes(category_key, limit=3)
-            
+    rows = await database.get_recipe_titles(category_key, limit=15)
+
     if not rows:
         empty_txt = menu_texts.CULINARY_EMPTY_TEXTS.get(user_lang, menu_texts.CULINARY_EMPTY_TEXTS["en"])
         await call.message.answer(empty_txt)
         return
 
+    buttons = []
+    for recipe_id, title in rows:
+        label = (title or "Рецепт").strip()
+        if len(label) > 60:
+            label = label[:57].rstrip() + "…"
+        buttons.append([InlineKeyboardButton(text=label, callback_data=f"recipe_view_{recipe_id}")])
+
+    back_text = "🔙 Назад" if user_lang == "ru" else "🔙 Back"
+    buttons.append([InlineKeyboardButton(text=back_text, callback_data="creative_culinary")])
+
+    list_header = {
+        "ru": "👇 Выберите рецепт из списка:",
+        "en": "👇 Choose a recipe from the list:",
+        "fr": "👇 Choisissez une recette dans la liste :",
+        "he": "👇 בחר מתכון מהרשימה:"
+    }
+    header_text = list_header.get(user_lang, list_header["en"])
+
+    await call.message.answer(header_text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+
+
+@router.callback_query(F.data.startswith("recipe_view_"))
+async def view_single_recipe(call: CallbackQuery):
+    await call.answer()
+    user_lang = await database.get_user_language(call.from_user.id)
+
+    try:
+        recipe_id = int(call.data.split("_")[-1])
+    except ValueError:
+        return
+
+    recipe = await database.get_recipe_by_id(recipe_id)
+    if not recipe:
+        return
+
+    text, video_id, link = recipe
+    final_text = text
+
     need_translation = user_lang != "ru"
+    if need_translation and claude_client is not None:
+        await call.message.bot.send_chat_action(chat_id=call.message.chat.id, action="typing")
+        try:
+            lang_names = {"en": "English", "fr": "French", "he": "Hebrew"}
+            target_language = lang_names.get(user_lang, "English")
 
-    for row in rows:
-        text, video_id, link = row
-        final_text = text
-        
-        if need_translation and claude_client is not None:
-            await call.message.bot.send_chat_action(chat_id=call.message.chat.id, action="typing")
-            try:
-                lang_names = {"en": "English", "fr": "French", "he": "Hebrew"}
-                target_language = lang_names.get(user_lang, "English")
-                
-                response = await claude_client.messages.create(
-                    model="claude-haiku-4-5-20251001",
-                    max_tokens=800,
-                    system=f"You are a professional culinary translator. Translate the following recipe text strictly into {target_language}. Maintain the emojis, formatting, and ingredient structure. Do not add any conversational text or introduction, return ONLY the direct translation.",
-                    messages=[{"role": "user", "content": text}]
-                )
-                final_text = response.content[0].text
-            except Exception as e:
-                print(f"⚠️ Ошибка автоперевода Claude: {e}")
-        
-        caption = f"{final_text}\n\n🔗 Original: {link}" if link else final_text
-        
-        if video_id:
-            await call.message.answer_video(video=video_id, caption=caption)
-        else:
-            await call.message.answer(caption)
+            response = await claude_client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=800,
+                system=f"You are a professional culinary translator. Translate the following recipe text strictly into {target_language}. Maintain the emojis, formatting, and ingredient structure. Do not add any conversational text or introduction, return ONLY the direct translation.",
+                messages=[{"role": "user", "content": text}]
+            )
+            final_text = response.content[0].text
+        except Exception as e:
+            print(f"⚠️ Ошибка автоперевода Claude: {e}")
 
-@router.callback_query(F.data == "culinary_view_breakfasts")
-async def view_breakfasts_recipes(call: CallbackQuery):
+    caption = f"{final_text}\n\n🔗 Original: {link}" if link else final_text
+
+    if video_id:
+        await call.message.answer_video(video=video_id, caption=caption)
+    else:
+        await call.message.answer(caption)
+
+@router.callback_query(F.data == "culinary_cat_video")
+async def view_video_recipes(call: CallbackQuery):
     await call.answer()
-    await fetch_and_send_recipes(call, "breakfasts")
+    await show_recipe_list(call, "video")
 
-@router.callback_query(F.data == "culinary_view_mains")
-async def view_mains_recipes(call: CallbackQuery):
+@router.callback_query(F.data == "culinary_cat_recipes")
+async def view_recipes_category(call: CallbackQuery):
     await call.answer()
-    await fetch_and_send_recipes(call, "mains")
+    await show_recipe_list(call, "recipes")
 
-@router.callback_query(F.data == "culinary_view_desserts")
-async def view_desserts_recipes(call: CallbackQuery):
+@router.callback_query(F.data == "culinary_cat_useful")
+async def view_useful_recipes(call: CallbackQuery):
     await call.answer()
-    await fetch_and_send_recipes(call, "desserts")
+    await show_recipe_list(call, "useful")
 
 # =====================================================================
 # 🤖 РОБОТ-АВТОМАТИЗАТОР: МОНИТОРИНГ КАНАЛА
@@ -315,14 +348,14 @@ async def view_desserts_recipes(call: CallbackQuery):
 @router.channel_post()
 async def auto_listen_culinary_channel(message: Message):
     text_to_check = message.text or message.caption or ""
-    hashtag_map = {"#завтраки": "breakfasts", "#горячее": "mains", "#десерты": "desserts"}
-    
+    hashtag_map = {"#видеорецепты": "video", "#рецепты": "recipes", "#полезное": "useful"}
+
     detected_category = None
     for hashtag, cat_name in hashtag_map.items():
         if hashtag in text_to_check.lower():
             detected_category = cat_name
             break
-            
+
     if detected_category:
         video_id = message.video.file_id if message.video else None
         extracted_link = None
@@ -331,8 +364,12 @@ async def auto_listen_culinary_channel(message: Message):
                 if entity.type == "url":
                     extracted_link = text_to_check[entity.offset:entity.offset + entity.length]
                     break
-        
-        await database.add_recipe(detected_category, text_to_check, video_id, extracted_link)
+
+        # Заголовок для списка — первая строка поста (без хэштегов, если та строка их содержит)
+        first_line = text_to_check.strip().split("\n")[0].strip()
+        title = first_line if first_line and not first_line.startswith("#") else "Рецепт"
+
+        await database.add_recipe(detected_category, title, text_to_check, video_id, extracted_link)
         print(f"🍏 АВТО-СИНХРОНИЗАЦИЯ: Добавлен лот категории {detected_category}!")
 
 # =====================================================================
