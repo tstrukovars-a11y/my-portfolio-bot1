@@ -39,17 +39,23 @@ async def init_db():
     """Инициализация базы данных и создание всех необходимых таблиц"""
     pool = await get_pool()
     async with pool.acquire() as conn:
-        # ВРЕМЕННО: безусловная очистка перед созданием таблиц на каждом старте.
-        # Это временная мера на период стабилизации (после нескольких неудачных
-        # деплоев БД могла остаться в противоречивом состоянии). Как только всё
-        # подтвердит стабильную работу — уберём эти строки, чтобы данные
-        # сохранялись между деплоями как положено.
-        for table_name in [
-            "quizzes", "user_answers", "subscriptions", "recipes", "books",
-            "payments", "ai_limits", "users", "user_logs", "daily_news", "game_partners"
-        ]:
-            await conn.execute(f"DROP TABLE IF EXISTS {SCHEMA}.{table_name} CASCADE")
-        logging.info("Выполнена очистка таблиц перед пересозданием")
+        # Одноразовая очистка "недоделанных" таблиц от прошлых прерванных попыток
+        # деплоя. Срабатывает только один раз благодаря маркеру _schema_version —
+        # при всех следующих запусках эта проверка пропускается, и данные между
+        # деплоями сохраняются как положено.
+        marker_exists = await conn.fetchval(
+            "SELECT EXISTS (SELECT FROM information_schema.tables "
+            f"WHERE table_schema = '{SCHEMA}' AND table_name = '_schema_version')"
+        )
+        if not marker_exists:
+            for table_name in [
+                "quizzes", "user_answers", "subscriptions", "recipes", "books",
+                "payments", "ai_limits", "users", "user_logs", "daily_news", "game_partners"
+            ]:
+                await conn.execute(f"DROP TABLE IF EXISTS {SCHEMA}.{table_name} CASCADE")
+            await conn.execute(f"CREATE TABLE {SCHEMA}._schema_version (version INTEGER)")
+            await conn.execute(f"INSERT INTO {SCHEMA}._schema_version (version) VALUES (1)")
+            logging.info("Выполнена одноразовая очистка испорченных таблиц")
 
         # 1. Таблицы для квизов
         await conn.execute(f"""
