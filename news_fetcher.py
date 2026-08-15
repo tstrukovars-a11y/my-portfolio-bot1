@@ -8,20 +8,46 @@ import logging
 import httpx
 import feedparser
 
-FEEDS = {
-    "ru": "https://www.vedomosti.ru/rss/rubric/economics",
-    "il": "https://www.timesofisrael.com/feed/",
-    "fr": "https://www.lemonde.fr/economie/rss_full.xml",
-    "us": "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml",
+# Заголовки живого браузера. Сами по себе они блокировку не снимают — Cloudflare
+# у части изданий режет по IP дата-центра, а не по User-Agent, — но с ними
+# капризные ленты отдают контент охотнее.
+REQUEST_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/rss+xml, application/xml, text/xml, */*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
 }
 
-# Для Israel нет отдельной надёжной бизнес-ленты (специализированная блокирует автозапросы),
-# поэтому фильтруем по ключевым словам вручную из общей ленты
-INCLUDE_KEYWORDS = {
+# Общая лента издания смешивает экономику с происшествиями, поэтому её
+# приходится фильтровать по ключевым словам. Тематическим лентам фильтр не нужен.
+IL_ECONOMY_KEYWORDS = [
+    "econom", "shekel", "startup", "tech", "business", "market",
+    "bank", "budget", "tax", "trade", "investment", "gdp", "finance"
+]
+
+# По каждой стране — цепочка источников. Берётся первый, который реально ответил
+# и дал заголовки. Ленты Google News стоят запасными: они не блокируют запросы
+# с серверов Render, в отличие от Times of Israel, который отдаёт оттуда 403.
+FEEDS = {
+    "ru": [
+        ("https://www.vedomosti.ru/rss/rubric/economics", None),
+        ("https://news.google.com/rss/search?q=экономика+бизнес&hl=ru&gl=RU&ceid=RU:ru", None),
+    ],
     "il": [
-        "econom", "shekel", "startup", "tech", "business", "market",
-        "bank", "budget", "tax", "trade", "investment", "gdp", "finance"
-    ]
+        ("https://news.google.com/rss/search?q=Israel+economy+business&hl=en-US&gl=US&ceid=US:en", None),
+        ("https://www.timesofisrael.com/feed/", IL_ECONOMY_KEYWORDS),
+        ("https://www.israelhayom.com/feed/", IL_ECONOMY_KEYWORDS),
+    ],
+    "fr": [
+        ("https://www.lemonde.fr/economie/rss_full.xml", None),
+        ("https://news.google.com/rss/search?q=économie+entreprises&hl=fr&gl=FR&ceid=FR:fr", None),
+    ],
+    "us": [
+        ("https://rss.nytimes.com/services/xml/rss/nyt/Business.xml", None),
+        ("https://news.google.com/rss/search?q=US+business+economy&hl=en-US&gl=US&ceid=US:en", None),
+    ],
 }
 
 # Темы, которые всегда исключаются из подборки, даже если попали в экономический раздел ленты
@@ -74,15 +100,22 @@ def _format_entries(entries, include_keywords=None) -> str:
     return "\n".join(lines)
 
 
-async def fetch_country_news(client: httpx.AsyncClient, country: str, url: str) -> str:
-    try:
-        response = await client.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
-        response.raise_for_status()
-        feed = feedparser.parse(response.content)
-        return _format_entries(feed.entries, INCLUDE_KEYWORDS.get(country))
-    except Exception as e:
-        logging.error(f"Ошибка загрузки новостей ({country}): {e}")
-        return ""
+async def fetch_country_news(client: httpx.AsyncClient, country: str, sources) -> str:
+    """Идёт по цепочке источников страны и возвращает первый непустой результат"""
+    for url, include_keywords in sources:
+        try:
+            response = await client.get(url, timeout=15, headers=REQUEST_HEADERS)
+            response.raise_for_status()
+            content = _format_entries(feedparser.parse(response.content).entries, include_keywords)
+            if content:
+                logging.info(f"Новости ({country}) взяты из {url.split('/')[2]}")
+                return content
+            logging.warning(f"Источник {url.split('/')[2]} для {country} ответил, но заголовков не дал")
+        except Exception as e:
+            logging.warning(f"Источник {url.split('/')[2]} для {country} недоступен: {e}")
+
+    logging.error(f"Ни один источник новостей для {country} не сработал")
+    return ""
 
 
 async def refresh_all_news(database_module):
