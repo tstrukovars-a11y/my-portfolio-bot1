@@ -12,8 +12,9 @@ QUIZ_CHANNEL = int(os.getenv("QUIZ_CHANNEL", -1002648861151))
 
 # Telegram-id владельца бота. Нужен для импорта головоломок: только этот
 # пользователь может пересылать боту опросы из канала и пополнять банк задач.
-# Пока переменная не задана (0), режим импорта выключен целиком.
-ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
+# На Render эта переменная называется ORGANIZER_TELEGRAM_ID, поэтому читаем оба
+# имени. Пока ни одно не задано (0), режим импорта выключен целиком.
+ADMIN_ID = int(os.getenv("ORGANIZER_TELEGRAM_ID") or os.getenv("ADMIN_ID") or 0)
 
 def get_banner(file_id_or_path: str):
     # Если строка похожа на file_id от Telegram, возвращаем её как есть
