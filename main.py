@@ -1,9 +1,9 @@
 import asyncio
+import hashlib
 import logging
 import sys
 import os
 import json
-import secrets
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
@@ -14,8 +14,32 @@ import database
 import news_fetcher
 import common, block1_sport, block2_creative, block3_intellect, block4_claude, profiles, block5_game, block6_vpn, block7_analytics
 
-# Секрет для проверки, что запрос на /webhook пришёл именно от Telegram, а не от кого попало
-WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET") or secrets.token_urlsafe(32)
+
+def _make_webhook_secret() -> str:
+    """Секрет для проверки, что запрос на /webhook пришёл именно от Telegram.
+
+    Важно: секрет обязан быть ОДИНАКОВЫМ при каждом старте процесса. На бесплатном
+    тарифе Render сервис засыпает и перезапускается; если генерировать секрет
+    случайно, то апдейты, которые Telegram шлёт со старым секретом (пока новый
+    процесс ещё не успел вызвать setWebhook), получают 403 и молча теряются.
+    Поэтому берём значение из переменной окружения, а если её нет — детерминированно
+    выводим его из токена бота.
+    """
+    env_secret = os.environ.get("WEBHOOK_SECRET")
+    if env_secret:
+        return env_secret
+    return hashlib.sha256(f"webhook-secret::{config.TOKEN}".encode()).hexdigest()[:48]
+
+
+WEBHOOK_SECRET = _make_webhook_secret()
+
+
+async def _process_update(bot: Bot, dp: Dispatcher, update: Update):
+    """Прогоняет апдейт через роутеры, не давая исключению потеряться молча"""
+    try:
+        await dp.feed_update(bot=bot, update=update)
+    except Exception as e:
+        logging.exception(f"Необработанная ошибка в хендлере (апдейт {update.update_id}): {e}")
 
 
 def make_handle_ping(bot: Bot, dp: Dispatcher):
@@ -70,14 +94,19 @@ def make_handle_ping(bot: Bot, dp: Dispatcher):
         elif path == "/webhook" and method == "POST":
             secret_header = headers.get("x-telegram-bot-api-secret-token", "")
             if secret_header != WEBHOOK_SECRET:
+                logging.warning("Webhook: отклонён запрос с неверным секретом")
                 response = b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
             else:
                 try:
                     update_data = json.loads(body.decode('utf-8'))
                     update = Update.model_validate(update_data)
-                    await dp.feed_update(bot=bot, update=update)
+                    logging.info(f"Webhook: получен апдейт {update.update_id} типа {update.event_type}")
+                    # Обрабатываем в фоне и сразу отвечаем 200: иначе медленный хендлер
+                    # (запрос к Claude, к БД) заставит Telegram считать доставку неудачной
+                    # и слать тот же апдейт повторно.
+                    asyncio.create_task(_process_update(bot, dp, update))
                 except Exception as e:
-                    logging.error(f"Ошибка обработки webhook-обновления: {e}")
+                    logging.exception(f"Ошибка разбора webhook-обновления: {e}")
                 response = b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
 
         elif path == "/api/metrics" and method == "GET":
@@ -180,16 +209,36 @@ def make_handle_ping(bot: Bot, dp: Dispatcher):
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 
 async def main():
-    await database.init_db()
+    # Бот обязан подниматься даже с недоступной базой: язык и навигация работают
+    # из памяти процесса, а в логах остаётся явная причина сбоя.
+    try:
+        await database.init_db()
+    except Exception as e:
+        logging.error(
+            f"НЕ УДАЛОСЬ ПОДКЛЮЧИТЬСЯ К БАЗЕ: {e}\n"
+            f"    Хост из DATABASE_URL: {database.describe_db_target()}\n"
+            f"    Бот запустится, но данные (язык, рецепты, книги, аналитика) не сохраняются.\n"
+            f"    Проверьте, жива ли база Postgres на Render и совпадает ли DATABASE_URL."
+        )
 
     # Фоновая задача: подтягивает свежие заголовки при старте, затем каждые 24 часа
     asyncio.create_task(news_fetcher.news_scheduler(database))
 
+    # ВАЖНО: параметр называется `default`, а не `default_properties`.
+    # Неизвестные аргументы aiogram молча проглатывает в **kwargs, из-за чего
+    # раньше режим разметки по умолчанию вообще не применялся.
     bot = Bot(
-        token=config.TOKEN, 
-        default_properties=DefaultBotProperties(parse_mode=ParseMode.HTML)
+        token=config.TOKEN,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML)
     )
     dp = Dispatcher()
+
+    @dp.errors()
+    async def on_error(event):
+        """Глобальный перехватчик: без него ошибка в хендлере не видна в логах Render,
+        а пользователь просто видит кнопку, которая «ничего не делает»."""
+        logging.exception(f"Ошибка при обработке апдейта: {event.exception}")
+        return True
 
     # Приоритеты регистрации роутеров
     dp.include_router(block7_analytics.router)
@@ -209,12 +258,24 @@ async def main():
     render_url = os.environ.get("RENDER_EXTERNAL_URL", "")
     if render_url:
         webhook_url = f"{render_url}/webhook"
+        # allowed_updates задаём ЯВНО. Если его не передать, Telegram сохраняет
+        # список типов апдейтов от предыдущей настройки — и если там когда-то
+        # остался только "message", то нажатия на инлайн-кнопки (callback_query)
+        # просто не доставляются: меню показывается, а кнопки не работают.
+        allowed = dp.resolve_used_update_types()
         await bot.set_webhook(
             url=webhook_url,
             secret_token=WEBHOOK_SECRET,
+            allowed_updates=allowed,
             drop_pending_updates=True
         )
-        logging.info(f"Webhook установлен: {webhook_url}")
+        logging.info(f"Webhook установлен: {webhook_url} | allowed_updates={allowed}")
+
+        info = await bot.get_webhook_info()
+        logging.info(
+            f"getWebhookInfo -> url={info.url} pending={info.pending_update_count} "
+            f"allowed_updates={info.allowed_updates} last_error={info.last_error_message}"
+        )
     else:
         logging.warning(
             "RENDER_EXTERNAL_URL не найден — webhook не установлен, "

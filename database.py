@@ -11,6 +11,12 @@ if DATABASE_URL.startswith("postgres://"):
 
 _pool = None
 
+# Язык пользователя дублируется в памяти процесса. Это страховка: если база
+# недоступна (истёк бесплатный Postgres на Render, не резолвится хост,
+# сменился DATABASE_URL), навигация по боту обязана продолжать работать —
+# раньше любая ошибка БД убивала хендлер, и кнопки просто «не нажимались».
+_lang_cache: dict[int, str] = {}
+
 # Отдельная "схема" (namespace) внутри общей базы — изолирует таблицы этого бота
 # от таблиц других ботов, использующих ту же самую бесплатную базу Postgres на Render.
 # Указывается явно в каждом запросе (а не через SET search_path), потому что
@@ -23,6 +29,18 @@ SCHEMA = "vizitka_bot"
 async def _init_connection(conn):
     """Выполняется при каждом новом соединении: гарантирует существование схемы"""
     await conn.execute(f"CREATE SCHEMA IF NOT EXISTS {SCHEMA}")
+
+
+def describe_db_target() -> str:
+    """Хост и имя базы из DATABASE_URL без пароля — чтобы безопасно писать в логи"""
+    if not DATABASE_URL:
+        return "DATABASE_URL не задан"
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(DATABASE_URL)
+        return f"{parsed.hostname}:{parsed.port or 5432}{parsed.path}"
+    except Exception:
+        return "не удалось разобрать DATABASE_URL"
 
 
 async def get_pool():
@@ -160,37 +178,58 @@ async def init_db():
 # --- ФУНКЦИИ ДЛЯ РАБОТЫ С ЯЗЫКАМИ ПОЛЬЗОВАТЕЛЕЙ ---
 
 async def set_user_language(user_id: int, lang: str):
-    """Сохраняет выбранный язык пользователя в базу данных"""
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        await conn.execute(
-            f"INSERT INTO {SCHEMA}.users (user_id, lang) VALUES ($1, $2) "
-            "ON CONFLICT (user_id) DO UPDATE SET lang = EXCLUDED.lang",
-            user_id, lang
-        )
+    """Сохраняет выбранный язык пользователя. Недоступность БД не должна ломать бота."""
+    _lang_cache[user_id] = lang
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"INSERT INTO {SCHEMA}.users (user_id, lang) VALUES ($1, $2) "
+                "ON CONFLICT (user_id) DO UPDATE SET lang = EXCLUDED.lang",
+                user_id, lang
+            )
+    except Exception as e:
+        logging.error(f"БД недоступна, язык сохранён только в памяти процесса: {e}")
 
 async def get_user_language(user_id: int) -> str:
-    """Получает сохраненный язык пользователя (по умолчанию английский)"""
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(f"SELECT lang FROM {SCHEMA}.users WHERE user_id = $1", user_id)
-        return row["lang"] if row else "en"
+    """Получает сохранённый язык пользователя.
+
+    Порядок: база → кэш в памяти → английский по умолчанию. Ошибка БД здесь
+    НЕ пробрасывается наружу: этот вызов стоит первой строкой почти в каждом
+    хендлере, и исключение делало неработающим всё меню целиком.
+    """
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(f"SELECT lang FROM {SCHEMA}.users WHERE user_id = $1", user_id)
+        if row:
+            _lang_cache[user_id] = row["lang"]
+            return row["lang"]
+    except Exception as e:
+        logging.error(f"БД недоступна при чтении языка, работаем из памяти: {e}")
+
+    return _lang_cache.get(user_id, "en")
 
 
 # --- ФУНКЦИИ ДЛЯ РАБОТЫ С ПОДПИСКАМИ ---
 
 async def check_subscription(user_id: int) -> bool:
-    """Проверяет, активна ли платная подписка у пользователя"""
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(f"SELECT expires_at FROM {SCHEMA}.subscriptions WHERE user_id = $1", user_id)
-        if not row or not row["expires_at"]:
-            return False
-        try:
-            expires_at = datetime.fromisoformat(row["expires_at"])
-            return expires_at > datetime.now()
-        except ValueError:
-            return False
+    """Проверяет, активна ли платная подписка. При недоступной БД считаем, что подписки нет."""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(f"SELECT expires_at FROM {SCHEMA}.subscriptions WHERE user_id = $1", user_id)
+    except Exception as e:
+        logging.error(f"БД недоступна при проверке подписки: {e}")
+        return False
+
+    if not row or not row["expires_at"]:
+        return False
+    try:
+        expires_at = datetime.fromisoformat(row["expires_at"])
+        return expires_at > datetime.now()
+    except ValueError:
+        return False
 
 async def add_or_extend_subscription(user_id: int, days: int):
     """Создает или продлевает платную подписку на N дней"""
@@ -221,27 +260,35 @@ async def add_or_extend_subscription(user_id: int, days: int):
 async def get_ai_requests_count(user_id: int) -> int:
     """Получает количество запросов пользователя к Claude за сегодня"""
     today = datetime.now().date().isoformat()
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            f"SELECT requests_count, last_request_date FROM {SCHEMA}.ai_limits WHERE user_id = $1", user_id
-        )
-        if row and row["last_request_date"] == today:
-            return row["requests_count"]
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                f"SELECT requests_count, last_request_date FROM {SCHEMA}.ai_limits WHERE user_id = $1", user_id
+            )
+    except Exception as e:
+        logging.error(f"БД недоступна при чтении лимитов ИИ: {e}")
         return 0
+
+    if row and row["last_request_date"] == today:
+        return row["requests_count"]
+    return 0
 
 async def increment_ai_requests(user_id: int):
     """Увеличивает счетчик запросов к Claude на 1"""
     today = datetime.now().date().isoformat()
     current_count = await get_ai_requests_count(user_id)
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        await conn.execute(
-            f"INSERT INTO {SCHEMA}.ai_limits (user_id, requests_count, last_request_date) VALUES ($1, $2, $3) "
-            "ON CONFLICT (user_id) DO UPDATE SET requests_count = EXCLUDED.requests_count, "
-            "last_request_date = EXCLUDED.last_request_date",
-            user_id, current_count + 1, today
-        )
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"INSERT INTO {SCHEMA}.ai_limits (user_id, requests_count, last_request_date) VALUES ($1, $2, $3) "
+                "ON CONFLICT (user_id) DO UPDATE SET requests_count = EXCLUDED.requests_count, "
+                "last_request_date = EXCLUDED.last_request_date",
+                user_id, current_count + 1, today
+            )
+    except Exception as e:
+        logging.error(f"БД недоступна при записи лимитов ИИ: {e}")
 
 
 # --- ЛОГИРОВАНИЕ ПРОДУКТОВОЙ АНАЛИТИКИ ---
@@ -297,10 +344,14 @@ async def save_daily_news(country: str, content: str):
 
 async def get_daily_news(country: str):
     """Возвращает (content, fetched_at) для страны или (None, None), если новостей ещё нет"""
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(f"SELECT content, fetched_at FROM {SCHEMA}.daily_news WHERE country = $1", country)
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(f"SELECT content, fetched_at FROM {SCHEMA}.daily_news WHERE country = $1", country)
         return (row["content"], row["fetched_at"]) if row else (None, None)
+    except Exception as e:
+        logging.error(f"БД недоступна при чтении новостей: {e}")
+        return (None, None)
 
 
 # --- ФУНКЦИИ ДЛЯ ПОИСКА ПАРТНЁРА ПО ИГРЕ (падел / настольный теннис) ---
@@ -350,38 +401,50 @@ async def add_recipe(category: str, title: str, text_content: str, video_file_id
 
 async def get_recipe_titles(category: str, limit: int = 15):
     """Возвращает список (id, title) для отображения кликабельного списка рецептов"""
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        rows = await conn.fetch(
-            f"SELECT id, title FROM {SCHEMA}.recipes "
-            "WHERE category = $1 ORDER BY id DESC LIMIT $2",
-            category, limit
-        )
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT id, title FROM {SCHEMA}.recipes "
+                "WHERE category = $1 ORDER BY id DESC LIMIT $2",
+                category, limit
+            )
         return [(r["id"], r["title"]) for r in rows]
+    except Exception as e:
+        logging.error(f"БД недоступна при чтении списка рецептов: {e}")
+        return []
 
 async def get_recipe_by_id(recipe_id: int):
     """Возвращает (text_content, video_file_id, link_url) конкретного рецепта по id"""
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            f"SELECT text_content, video_file_id, link_url FROM {SCHEMA}.recipes WHERE id = $1",
-            recipe_id
-        )
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                f"SELECT text_content, video_file_id, link_url FROM {SCHEMA}.recipes WHERE id = $1",
+                recipe_id
+            )
         return (row["text_content"], row["video_file_id"], row["link_url"]) if row else None
+    except Exception as e:
+        logging.error(f"БД недоступна при чтении рецепта: {e}")
+        return None
 
 
 # --- ФУНКЦИИ ДЛЯ КНИГ (блок интеллекта) ---
 
 async def get_books(category: str, limit: int = 3):
     """Возвращает последние книги по категории"""
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        rows = await conn.fetch(
-            f"SELECT text_content, cover_file_id FROM {SCHEMA}.books "
-            "WHERE category = $1 ORDER BY id DESC LIMIT $2",
-            category, limit
-        )
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT text_content, cover_file_id FROM {SCHEMA}.books "
+                "WHERE category = $1 ORDER BY id DESC LIMIT $2",
+                category, limit
+            )
         return [(r["text_content"], r["cover_file_id"]) for r in rows]
+    except Exception as e:
+        logging.error(f"БД недоступна при чтении книг: {e}")
+        return []
 
 async def add_book(category: str, text_content: str, cover_file_id: str):
     """Сохраняет новую книгу (добавляется автоматически при публикации в канале)"""
@@ -397,12 +460,16 @@ async def add_book(category: str, text_content: str, cover_file_id: str):
 
 async def get_next_unsolved_quiz(user_id: int):
     """Возвращает (poll_id, message_id) следующей нерешённой пользователем головоломки, либо None"""
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            f"SELECT poll_id, message_id FROM {SCHEMA}.quizzes "
-            f"WHERE poll_id NOT IN (SELECT poll_id FROM {SCHEMA}.user_answers WHERE user_id = $1) "
-            "ORDER BY message_id ASC LIMIT 1",
-            user_id
-        )
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                f"SELECT poll_id, message_id FROM {SCHEMA}.quizzes "
+                f"WHERE poll_id NOT IN (SELECT poll_id FROM {SCHEMA}.user_answers WHERE user_id = $1) "
+                "ORDER BY message_id ASC LIMIT 1",
+                user_id
+            )
         return (row["poll_id"], row["message_id"]) if row else None
+    except Exception as e:
+        logging.error(f"БД недоступна при чтении головоломок: {e}")
+        return None

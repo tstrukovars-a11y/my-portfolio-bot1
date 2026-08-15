@@ -93,6 +93,68 @@ CULINARY_MAIN_TEXTS = {
 }
 
 # ==========================================
+# ПОДРАЗДЕЛЫ БЛОКА 2: ГАЛЕРЕЯ, АТЕЛЬЕ, КУЛИНАРИЯ
+# Эти тексты используются в block2_creative.py. Без них кнопки подразделов
+# падали с AttributeError и внешне выглядели как «неработающие».
+# ==========================================
+
+ART_MY_GALLERY_TEXTS = {
+    "ru": "🖼 **Моя галерея**\n\nЖивопись — мой способ переводить сложные управленческие концепты в визуальный язык. В подборке работы разных периодов: от студийных этюдов до крупных выставочных холстов.\n\nПодробное портфолио с фотографиями работ доступно по запросу — напишите мне, и я пришлю актуальную подборку.",
+    "en": "🖼 **My Gallery**\n\nPainting is how I translate complex management concepts into visual language. The selection spans different periods: from studio studies to large exhibition canvases.\n\nA detailed portfolio with photographs is available on request — message me and I will send the current selection.",
+    "fr": "🖼 **Ma Galerie**\n\nLa peinture est ma façon de traduire des concepts de gestion complexes en langage visuel. La sélection couvre différentes périodes : des études d'atelier aux grandes toiles d'exposition.\n\nUn portfolio détaillé est disponible sur demande — écrivez-moi et je vous enverrai la sélection actuelle.",
+    "he": "🖼 **הגלריה שלי**\n\nציור הוא הדרך שלי לתרגם מושגי ניהול מורכבים לשפה חזותית. המבחר כולל עבודות מתקופות שונות: מרישומי סטודיו ועד בדים גדולים לתערוכות.\n\nתיק עבודות מפורט זמין לפי בקשה — כתבו לי ואשלח את המבחר העדכני."
+}
+
+ART_MARKET_INFO_TEXTS = {
+    "ru": "💰 **Подписки и цены**\n\nФормат сотрудничества выстроен как понятная подписка: доступ к закрытым материалам, разборам работ и приоритетная запись на новые холсты.\n\nАктуальные условия и стоимость обсуждаются индивидуально — нажмите кнопку ниже, чтобы оставить заявку.",
+    "en": "💰 **Subscriptions & Pricing**\n\nCollaboration is structured as a clear subscription: access to closed materials, work breakdowns, and priority booking for new canvases.\n\nCurrent terms and pricing are discussed individually — tap the button below to submit a request.",
+    "fr": "💰 **Abonnements & Tarifs**\n\nLa collaboration est structurée comme un abonnement clair : accès aux contenus privés, analyses d'œuvres et réservation prioritaire.\n\nLes conditions actuelles sont discutées individuellement — appuyez sur le bouton ci-dessous pour envoyer une demande.",
+    "he": "💰 **מנויים ומחירים**\n\nשיתוף הפעולה בנוי כמנוי ברור: גישה לחומרים סגורים, ניתוחי עבודות והרשמה מועדפת ליצירות חדשות.\n\nהתנאים והמחירים נדונים באופן אישי — לחצו על הכפתור למטה כדי לשלוח בקשה."
+}
+
+ART_EXHIBITIONS_TEXTS = {
+    "ru": "📅 **Календарь выставок**\n\nЗдесь публикуется расписание ближайших выставок и совместных проектов: даты, площадки и условия участия.\n\nРасписание обновляется по мере подтверждения площадок. Напишите мне, если хотите получить приглашение на ближайшее событие.",
+    "en": "📅 **Exhibition Calendar**\n\nThis section lists upcoming exhibitions and joint projects: dates, venues, and participation terms.\n\nThe schedule is updated as venues are confirmed. Message me if you would like an invitation to the next event.",
+    "fr": "📅 **Calendrier des Expositions**\n\nCette section présente les expositions à venir et les projets communs : dates, lieux et conditions de participation.\n\nLe calendrier est mis à jour au fur et à mesure. Écrivez-moi pour recevoir une invitation au prochain événement.",
+    "he": "📅 **לוח התערוכות**\n\nכאן מתפרסם לוח הזמנים של התערוכות הקרובות והפרויקטים המשותפים: תאריכים, מקומות ותנאי השתתפות.\n\nהלוח מתעדכן עם אישור המקומות. כתבו לי אם תרצו הזמנה לאירוע הקרוב."
+}
+
+ART_FORM_START_TEXTS = {
+    "ru": "📝 **Анкета автора**\n\nЕсли вы художник и хотите попасть в подборку арт-хаба, заполните короткую анкету: название работы, год, основа, материалы, размер, фото и цена.\n\nЭто займёт пару минут. Нажмите кнопку ниже, чтобы начать.",
+    "en": "📝 **Artist Application**\n\nIf you are an artist and want to be featured in the art hub selection, fill in a short form: title, year, substrate, materials, size, photo, and price.\n\nIt takes a couple of minutes. Tap the button below to start.",
+    "fr": "📝 **Formulaire Artiste**\n\nSi vous êtes artiste et souhaitez figurer dans la sélection du hub, remplissez un court formulaire : titre, année, support, matériaux, taille, photo et prix.\n\nCela prend deux minutes. Appuyez sur le bouton ci-dessous.",
+    "he": "📝 **טופס לאמנים**\n\nאם אתם אמנים ורוצים להיכלל במבחר של מרכז האמנות, מלאו טופס קצר: שם העבודה, שנה, מצע, חומרים, גודל, תמונה ומחיר.\n\nזה ייקח כמה דקות. לחצו על הכפתור למטה כדי להתחיל."
+}
+
+ATELIER_MY_CAPSULE_TEXTS = {
+    "ru": "🧥 **Моя капсульная коллекция**\n\nКапсула — это небольшой набор вещей, которые сочетаются между собой и закрывают почти любой сценарий дня. Мой подход: сдержанная палитра, плотные натуральные ткани и посадка, выверенная по лекалам.\n\nКаждая вещь просчитана по unit-экономике: расход ткани, часы работы, себестоимость.",
+    "en": "🧥 **My Capsule Collection**\n\nA capsule is a small set of garments that combine with each other and cover almost any scenario of the day. My approach: a restrained palette, dense natural fabrics, and a fit refined through pattern drafting.\n\nEvery piece is calculated by unit economics: fabric consumption, working hours, cost price.",
+    "fr": "🧥 **Ma Collection Capsule**\n\nUne capsule est un petit ensemble de vêtements qui se combinent entre eux et couvrent presque toutes les situations. Mon approche : palette sobre, tissus naturels denses et coupe affinée par le patronage.\n\nChaque pièce est calculée selon son économie unitaire.",
+    "he": "🧥 **קולקציית הקפסולה שלי**\n\nקפסולה היא מערכת קטנה של פריטים שמשתלבים זה בזה ומכסים כמעט כל תרחיש יומי. הגישה שלי: פלטה מאופקת, בדים טבעיים צפופים וגזרה מדויקת.\n\nכל פריט מחושב לפי כלכלה יחידתית: צריכת בד, שעות עבודה ועלות."
+}
+
+ATELIER_HISTORY_TEXTS = {
+    "ru": "📜 **История моды**\n\nМода — это хроника технологий и экономики. Промышленная революция дала массовое производство, послевоенный дефицит ткани изменил силуэт, а синтетика 60-х обрушила себестоимость.\n\nЗа каждым узнаваемым силуэтом стоит конкретное производственное ограничение своего времени — это и делает историю костюма прикладной дисциплиной, а не набором картинок.",
+    "en": "📜 **Fashion History**\n\nFashion is a chronicle of technology and economics. The Industrial Revolution enabled mass production, post-war fabric shortages reshaped the silhouette, and 1960s synthetics collapsed the cost price.\n\nBehind every recognisable silhouette stands a concrete manufacturing constraint of its era — which makes costume history an applied discipline, not a set of pictures.",
+    "fr": "📜 **Histoire de la Mode**\n\nLa mode est une chronique de la technologie et de l'économie. La révolution industrielle a permis la production de masse, la pénurie de tissu d'après-guerre a modifié la silhouette, et les synthétiques des années 60 ont fait chuter les coûts.\n\nDerrière chaque silhouette se cache une contrainte de production de son époque.",
+    "he": "📜 **היסטוריה של האופנה**\n\nאופנה היא כרוניקה של טכנולוגיה וכלכלה. המהפכה התעשייתית אפשרה ייצור המוני, מחסור הבדים שלאחר המלחמה שינה את הגזרה, והסינתטיקה של שנות ה-60 הפילה את העלויות.\n\nמאחורי כל גזרה מוכרת עומדת מגבלת ייצור קונקרטית של אותה תקופה."
+}
+
+ATELIER_B2B_TEXTS = {
+    "ru": "🤝 **B2B-интеграция бренда**\n\nЕсли у вас свой бренд одежды, я готова рассмотреть интеграцию: обзор коллекции в канале, совместный материал о производстве или разбор unit-экономики вашей линейки.\n\nЧтобы обсудить формат, заполните короткую заявку: название бренда, ссылка, аудитория и что именно хотите получить.",
+    "en": "🤝 **B2B Brand Integration**\n\nIf you run a clothing brand, I am open to integration: a collection review in the channel, a joint piece about production, or a unit-economics breakdown of your line.\n\nTo discuss the format, fill in a short request: brand name, link, audience, and what exactly you are looking for.",
+    "fr": "🤝 **Intégration B2B de Marque**\n\nSi vous avez votre propre marque de vêtements, je suis ouverte à une intégration : revue de collection, contenu commun sur la production ou analyse de l'économie unitaire de votre ligne.\n\nPour en discuter, remplissez une courte demande : nom de la marque, lien, audience et objectif.",
+    "he": "🤝 **שילוב עסקי של מותג**\n\nאם יש לכם מותג אופנה, אשמח לשקול שיתוף פעולה: סקירת קולקציה בערוץ, תוכן משותף על ייצור או ניתוח כלכלה יחידתית של הקו שלכם.\n\nכדי לדון בפורמט, מלאו בקשה קצרה: שם המותג, קישור, קהל ומה בדיוק אתם מחפשים."
+}
+
+CULINARY_EMPTY_TEXTS = {
+    "ru": "🍽 В этой категории пока нет рецептов. Новые публикации подтягиваются из кулинарного канала автоматически — загляните чуть позже.",
+    "en": "🍽 There are no recipes in this category yet. New posts are pulled from the culinary channel automatically — please check back a little later.",
+    "fr": "🍽 Il n'y a pas encore de recettes dans cette catégorie. Les nouvelles publications sont récupérées automatiquement depuis la chaîne — revenez un peu plus tard.",
+    "he": "🍽 אין עדיין מתכונים בקטגוריה הזו. פרסומים חדשים נמשכים אוטומטית מערוץ הבישול — בדקו שוב מאוחר יותר."
+}
+
+# ==========================================
 # ДОПИСАНО: ТЕКСТЫ БЛОКА 3 (ИНТЕЛЛЕКТ И КАРЬЕРА)
 # ==========================================
 INTELLECT_MENU_TEXTS = {
