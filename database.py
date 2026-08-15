@@ -10,6 +10,24 @@ DATABASE_URL = os.getenv("DATABASE_URL", "")
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
+
+def _dsn_candidates() -> list:
+    """Строки подключения в порядке проверки.
+
+    Внешний адрес базы (External Database URL у Render, Neon и прочие облака)
+    принимает только SSL, а asyncpg сам его не включает и падает с
+    «SSL/TLS required». Внутренний адрес Render, наоборот, может SSL не
+    предлагать вовсе. sslmode=prefer не спасает: он молча откатывается на
+    открытое соединение и упирается в отказ сервера. Поэтому пробуем сначала с
+    SSL, затем без — что сработает, то и запомним.
+    """
+    if not DATABASE_URL:
+        return []
+    if "sslmode=" in DATABASE_URL:
+        return [DATABASE_URL]
+    sep = "&" if "?" in DATABASE_URL else "?"
+    return [f"{DATABASE_URL}{sep}sslmode=require", DATABASE_URL]
+
 _pool = None
 
 # Язык пользователя дублируется в памяти процесса. Это страховка: если база
@@ -50,24 +68,36 @@ _pool_failure_logged = False
 async def get_pool():
     """Возвращает пул соединений, создаёт при первом обращении"""
     global _pool, _pool_failure_logged
-    if _pool is None:
+    if _pool is not None:
+        return _pool
+
+    candidates = _dsn_candidates()
+    if not candidates:
+        raise RuntimeError("DATABASE_URL не задан")
+
+    last_error = None
+    for dsn in candidates:
+        ssl_note = "с SSL" if "sslmode=require" in dsn else "без SSL"
         try:
             _pool = await asyncpg.create_pool(
-                DATABASE_URL, min_size=1, max_size=5, init=_init_connection
+                dsn, min_size=1, max_size=5, init=_init_connection
             )
             _pool_failure_logged = False
-            logging.info(f"Подключение к базе установлено: {describe_db_target()}")
-        except Exception:
-            # Пишем адрес только при первом сбое: иначе каждая кнопка засыпает
-            # логи одной и той же строкой, а найти причину всё равно нельзя.
-            if not _pool_failure_logged:
-                logging.error(
-                    f"Не удалось подключиться к базе. Адрес из DATABASE_URL: "
-                    f"{describe_db_target()}"
-                )
-                _pool_failure_logged = True
-            raise
-    return _pool
+            logging.info(f"Подключение к базе установлено ({ssl_note}): {describe_db_target()}")
+            return _pool
+        except Exception as e:
+            last_error = e
+            logging.warning(f"Подключение {ssl_note} не удалось: {e}")
+
+    # Адрес пишем только при первом сбое: иначе каждая кнопка засыпает логи
+    # одной и той же строкой, а найти причину всё равно нельзя.
+    if not _pool_failure_logged:
+        logging.error(
+            f"Не удалось подключиться к базе ни с SSL, ни без него. "
+            f"Адрес из DATABASE_URL: {describe_db_target()}"
+        )
+        _pool_failure_logged = True
+    raise last_error
 
 
 async def init_db():
