@@ -216,27 +216,8 @@ async def open_genetics_research(call: CallbackQuery):
 
 
 
-# ==========================================================
-# 🧩 ПОДБЛОК: ГОЛОВОЛОМКА
-# ==========================================================
-@router.callback_query(F.data == "intellect_puzzle")
-async def open_menu_intellect_puzzle(call: CallbackQuery):
-    await call.answer()
-    try:
-        user_lang = await database.get_user_language(call.from_user.id)
-        caption_text = menu_texts.PUZZLE_MENU_TEXTS.get(user_lang, menu_texts.PUZZLE_MENU_TEXTS["en"])
-        
-        puzzle_actions_menu = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🧩 Решать задачи" if user_lang == "ru" else "🧩 Solve Puzzles", callback_data="start_solving_puzzles")],
-            [InlineKeyboardButton(text="🔙 Назад", callback_data="menu_diary")]
-        ])
-        
-        await call.message.edit_media(
-            media=InputMediaPhoto(media=config.PUZZLE_BANNER, caption=caption_text, parse_mode="Markdown"),
-            reply_markup=puzzle_actions_menu
-        )
-    except TelegramBadRequest:
-        pass
+# Раздел «Головоломка» целиком переехал в puzzles.py: там банк задач из канала,
+# случайный порядок, итоговый балл, повторные прохождения и статистика.
 
 
 # ==========================================================
@@ -337,10 +318,20 @@ async def view_tools_books(call: CallbackQuery):
 # =====================================================================
 # 🤖 СЛУШАТЕЛЬ КАНАЛА ОБЗОРОВ КНИГ (АВТОМАТИЧЕСКАЯ СБОРКА)
 # =====================================================================
-@router.channel_post()
+BOOK_HASHTAGS = {"#бизнес": "business", "#кругозор": "horizon", "#полезное": "tools"}
+
+
+def _has_book_hashtag(message: Message) -> bool:
+    """Без этого фильтра хендлер матчил любой пост канала — и сам никогда не
+    срабатывал, потому что сборщик рецептов в block2 перехватывал всё раньше."""
+    text = (message.text or message.caption or "").lower()
+    return any(tag in text for tag in BOOK_HASHTAGS)
+
+
+@router.channel_post(_has_book_hashtag)
 async def auto_listen_books_channel(message: Message):
     text_to_check = message.text or message.caption or ""
-    hashtag_map = {"#бизнес": "business", "#кругозор": "horizon", "#полезное": "tools"}
+    hashtag_map = BOOK_HASHTAGS
     
     detected_category = None
     for hashtag, cat_name in hashtag_map.items():
@@ -354,75 +345,5 @@ async def auto_listen_books_channel(message: Message):
         print(f"📚 АВТО-БИБЛИОТЕКА: Добавлен новый лот книги в категорию {detected_category}!")
 
 
-# =====================================================================
-# 🧩 СИМУЛЯТОР КВИЗОВ-ГОЛОВОЛОМОК (ОСТАВЛЕН БЕЗ ИЗМЕНЕНИЙ)
-# =====================================================================
-async def channel_puzzles(message: Message, user_id: int):
-    row = await database.get_next_unsolved_quiz(user_id)
-            
-    if not row:
-        no_puzzles_texts = {
-            "ru": "🎉 **Все доступные задачи решены!** Загляните позже за новыми головоломками.",
-            "en": "🎉 **All available puzzles are solved!** Check back later for new challenges.",
-            "fr": "🎉 **Tous les puzzles disponibles sont résolus !** Revenez plus tard.",
-            "he": "🎉 **כל החידות הזמינות נפתרו!** בדוק שוב מאוחר יותר."
-        }
-        btn_stop_texts = {"ru": "🛑 Вернуться в Дневник", "en": "🛑 Back to Diary", "fr": "🛑 Retour au Journal", "he": "🛑 חזרה ליומן"}
-        lang = await database.get_user_language(user_id)
-        exit_markup = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=btn_stop_texts.get(lang, btn_stop_texts["en"]), callback_data="menu_diary")]])
-        await message.answer(text=no_puzzles_texts.get(lang, no_puzzles_texts["en"]), reply_markup=exit_markup, parse_mode="Markdown")
-        return
-
-    poll_id, message_id = row
-    try:
-        await message.bot.forward_message(chat_id=message.chat.id, from_chat_id=config.QUIZ_CHANNEL, message_id=message_id)
-        lang = await database.get_user_language(user_id)
-        btn_next = {"ru": "➡ Следующая задача", "en": "➡ Next Puzzle", "fr": "➡ Puzzle Suivant", "he": "➡ החידה הבאה"}
-        btn_stop = {"ru": "🛑 Вернуться в Дневник", "en": "🛑 Back to Diary", "fr": "🛑 Retour au Journal", "he": "🛑 חזרה ליומן"}
-        
-        control_menu = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=btn_next.get(lang, btn_next["en"]), callback_data="puzzle_next")],
-            [InlineKeyboardButton(text=btn_stop.get(lang, btn_stop["en"]), callback_data="puzzle_stop")]
-        ])
-        instruction = {
-            "ru": "▲ **Новая задача.** Ответьте на встроенный опрос выше и нажмите кнопку управления:",
-            "en": "▲ **New puzzle.** Answer the built-in poll above and use the control button:",
-            "fr": "▲ **Nouveau puzzle.** Répondez au sondage ci-dessus et utilisez le bouton :",
-            "he": "▲ **חידה חדשה.** ענה על הסקר למעלה והשתמש בכפתור השליטה:"
-        }
-        await message.answer(instruction.get(lang, instruction["en"]), reply_markup=control_menu, parse_mode="Markdown")
-    except Exception as e:
-        print(f"Ошибка пересылки опроса из канала: {e}")
-
-@router.callback_query(F.data == "start_solving_puzzles")
-async def inbound_puzzle_click(call: CallbackQuery):
-    user_id = call.from_user.id
-    user_lang = await database.get_user_language(user_id)
-    alert_texts = {"ru": "Загружаю тренажер... 🧩", "en": "Loading trainer... 🧩", "fr": "Chargement...", "he": "טוען... 🧩"}
-    await call.answer(alert_texts.get(user_lang, alert_texts["en"]))
-    try:
-        await call.message.delete()
-    except Exception:
-        pass
-    await channel_puzzles(message=call.message, user_id=user_id)
-
-@router.callback_query(F.data == "puzzle_next")
-async def process_puzzle_next(call: CallbackQuery):
-    user_id = call.from_user.id
-    try:
-        await call.message.delete()
-    except Exception:
-        pass
-    await channel_puzzles(message=call.message, user_id=user_id)
-
-@router.callback_query(F.data == "puzzle_stop")
-async def process_puzzle_stop(call: CallbackQuery):
-    await call.answer()
-    try:
-        await call.message.delete()
-    except Exception:
-        pass
-    user_lang = await database.get_user_language(call.from_user.id)
-    caption_text = menu_texts.DIARY_MENU_TEXTS.get(user_lang, menu_texts.DIARY_MENU_TEXTS["en"])
-    current_markup = inline_kb.get_diary_menu(user_lang) if user_lang == "ru" else (inline_kb.get_diary_menu(user_lang) if user_lang == "fr" else (inline_kb.get_diary_menu(user_lang) if user_lang == "he" else inline_kb.get_diary_menu(user_lang)))
-    await call.message.answer_photo(photo=config.MAIN_BANNER, caption=caption_text, reply_markup=current_markup, parse_mode="Markdown")
+# Старый движок головоломок (пересылка опросов из канала по одному, без
+# подсчёта баллов) удалён — его заменил puzzles.py.

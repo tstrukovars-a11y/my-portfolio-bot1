@@ -1,3 +1,4 @@
+import json
 import os
 import logging
 from datetime import datetime, timedelta
@@ -160,7 +161,39 @@ async def init_db():
             fetched_at TEXT
         )""")
 
-        # 9. Анкеты поиска партнёра для игры
+        # 9. Головоломки: банк задач, импортированных из quiz-опросов канала
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.puzzles (
+            id SERIAL PRIMARY KEY,
+            source_poll_id TEXT UNIQUE,
+            question TEXT NOT NULL,
+            options TEXT NOT NULL,
+            correct_option_id INTEGER NOT NULL,
+            explanation TEXT,
+            added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+
+        # 10. Завершённые прохождения (для итогового балла и статистики)
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.puzzle_rounds (
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT,
+            total INTEGER,
+            correct INTEGER,
+            finished_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+
+        # 11. Каждый отдельный ответ — нужен для точности по конкретным задачам
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.puzzle_answers (
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT,
+            puzzle_id INTEGER,
+            is_correct BOOLEAN,
+            answered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+
+        # 12. Анкеты поиска партнёра для игры
         await conn.execute(f"""
         CREATE TABLE IF NOT EXISTS {SCHEMA}.game_partners (
             id SERIAL PRIMARY KEY,
@@ -391,13 +424,16 @@ async def get_game_partners(sport: str, limit: int = 50):
 
 async def add_recipe(category: str, title: str, text_content: str, video_file_id: str, link_url: str):
     """Сохраняет новый рецепт (добавляется автоматически при публикации в канале)"""
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        await conn.execute(
-            f"INSERT INTO {SCHEMA}.recipes (category, title, text_content, video_file_id, link_url) "
-            "VALUES ($1, $2, $3, $4, $5)",
-            category, title, text_content, video_file_id, link_url
-        )
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"INSERT INTO {SCHEMA}.recipes (category, title, text_content, video_file_id, link_url) "
+                "VALUES ($1, $2, $3, $4, $5)",
+                category, title, text_content, video_file_id, link_url
+            )
+    except Exception as e:
+        logging.error(f"БД недоступна, рецепт из канала не сохранён: {e}")
 
 async def get_recipe_titles(category: str, limit: int = 15):
     """Возвращает список (id, title) для отображения кликабельного списка рецептов"""
@@ -448,15 +484,154 @@ async def get_books(category: str, limit: int = 3):
 
 async def add_book(category: str, text_content: str, cover_file_id: str):
     """Сохраняет новую книгу (добавляется автоматически при публикации в канале)"""
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        await conn.execute(
-            f"INSERT INTO {SCHEMA}.books (category, text_content, cover_file_id) VALUES ($1, $2, $3)",
-            category, text_content, cover_file_id
-        )
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"INSERT INTO {SCHEMA}.books (category, text_content, cover_file_id) VALUES ($1, $2, $3)",
+                category, text_content, cover_file_id
+            )
+    except Exception as e:
+        logging.error(f"БД недоступна, книга из канала не сохранена: {e}")
 
 
-# --- ФУНКЦИИ ДЛЯ КВИЗОВ-ГОЛОВОЛОМОК ---
+# --- ФУНКЦИИ ДЛЯ ГОЛОВОЛОМОК (банк задач + статистика) ---
+
+async def add_puzzle(source_poll_id, question, options, correct_option_id, explanation=None) -> str:
+    """Сохраняет задачу в банк. Возвращает 'added', 'duplicate' или 'error'.
+
+    options — список строк с вариантами ответа, хранится как JSON.
+    """
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            inserted = await conn.fetchval(
+                f"INSERT INTO {SCHEMA}.puzzles "
+                "(source_poll_id, question, options, correct_option_id, explanation) "
+                "VALUES ($1, $2, $3, $4, $5) "
+                "ON CONFLICT (source_poll_id) DO NOTHING RETURNING id",
+                source_poll_id, question, json.dumps(options, ensure_ascii=False),
+                correct_option_id, explanation
+            )
+        return "added" if inserted else "duplicate"
+    except Exception as e:
+        logging.error(f"БД недоступна при сохранении головоломки: {e}")
+        return "error"
+
+
+async def get_all_puzzles():
+    """Весь банк задач. Перемешиванием занимается вызывающий код."""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT id, question, options, correct_option_id, explanation "
+                f"FROM {SCHEMA}.puzzles ORDER BY id"
+            )
+        return [
+            {
+                "id": r["id"],
+                "question": r["question"],
+                "options": json.loads(r["options"]),
+                "correct_option_id": r["correct_option_id"],
+                "explanation": r["explanation"],
+            }
+            for r in rows
+        ]
+    except Exception as e:
+        logging.error(f"БД недоступна при чтении банка головоломок: {e}")
+        return []
+
+
+async def count_puzzles() -> int:
+    """Сколько задач в банке — нужно админу при импорте"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            return await conn.fetchval(f"SELECT COUNT(*) FROM {SCHEMA}.puzzles") or 0
+    except Exception as e:
+        logging.error(f"БД недоступна при подсчёте головоломок: {e}")
+        return 0
+
+
+async def save_puzzle_answer(user_id: int, puzzle_id: int, is_correct: bool):
+    """Фиксирует один ответ пользователя"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"INSERT INTO {SCHEMA}.puzzle_answers (user_id, puzzle_id, is_correct) "
+                "VALUES ($1, $2, $3)",
+                user_id, puzzle_id, is_correct
+            )
+    except Exception as e:
+        logging.error(f"БД недоступна при записи ответа на головоломку: {e}")
+
+
+async def save_puzzle_round(user_id: int, total: int, correct: int):
+    """Фиксирует завершённое прохождение целиком"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"INSERT INTO {SCHEMA}.puzzle_rounds (user_id, total, correct) VALUES ($1, $2, $3)",
+                user_id, total, correct
+            )
+    except Exception as e:
+        logging.error(f"БД недоступна при записи итога раунда: {e}")
+
+
+async def get_puzzle_stats(user_id: int) -> dict:
+    """Сводная статистика пользователя по головоломкам"""
+    empty = {
+        "rounds": 0, "best_correct": 0, "best_total": 0, "best_pct": 0.0,
+        "avg_pct": 0.0, "answers": 0, "answers_correct": 0, "accuracy": 0.0,
+        "last_correct": 0, "last_total": 0,
+    }
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rounds = await conn.fetch(
+                f"SELECT total, correct FROM {SCHEMA}.puzzle_rounds "
+                "WHERE user_id = $1 ORDER BY finished_at DESC",
+                user_id
+            )
+            ans = await conn.fetchrow(
+                f"SELECT COUNT(*) AS n, COUNT(*) FILTER (WHERE is_correct) AS ok "
+                f"FROM {SCHEMA}.puzzle_answers WHERE user_id = $1",
+                user_id
+            )
+    except Exception as e:
+        logging.error(f"БД недоступна при чтении статистики головоломок: {e}")
+        return empty
+
+    if not rounds:
+        return empty
+
+    scored = [(r["correct"], r["total"]) for r in rounds if r["total"]]
+    if not scored:
+        return empty
+
+    percents = [c / t * 100 for c, t in scored]
+    best_correct, best_total = max(scored, key=lambda ct: ct[0] / ct[1])
+    total_answers = (ans["n"] if ans else 0) or 0
+    total_ok = (ans["ok"] if ans else 0) or 0
+
+    return {
+        "rounds": len(scored),
+        "best_correct": best_correct,
+        "best_total": best_total,
+        "best_pct": best_correct / best_total * 100,
+        "avg_pct": sum(percents) / len(percents),
+        "answers": total_answers,
+        "answers_correct": total_ok,
+        "accuracy": (total_ok / total_answers * 100) if total_answers else 0.0,
+        "last_correct": scored[0][0],
+        "last_total": scored[0][1],
+    }
+
+
+# --- ЛЕГАСИ: СТАРЫЙ ДВИЖОК КВИЗОВ ЧЕРЕЗ ПЕРЕСЫЛКУ ИЗ КАНАЛА ---
 
 async def get_next_unsolved_quiz(user_id: int):
     """Возвращает (poll_id, message_id) следующей нерешённой пользователем головоломки, либо None"""

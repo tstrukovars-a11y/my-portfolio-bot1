@@ -10,6 +10,11 @@ ANTHROPIC_API_KEY = os.getenv("CLAUDE_KEY")
 REQUIRED_CHANNEL = int(os.getenv("REQUIRED_CHANNEL", -1001234567890))
 QUIZ_CHANNEL = int(os.getenv("QUIZ_CHANNEL", -1002648861151))
 
+# Telegram-id владельца бота. Нужен для импорта головоломок: только этот
+# пользователь может пересылать боту опросы из канала и пополнять банк задач.
+# Пока переменная не задана (0), режим импорта выключен целиком.
+ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
+
 def get_banner(file_id_or_path: str):
     # Если строка похожа на file_id от Telegram, возвращаем её как есть
     if file_id_or_path.startswith("AgAC") or (len(file_id_or_path) > 30 and "/" not in file_id_or_path and "\\" not in file_id_or_path):

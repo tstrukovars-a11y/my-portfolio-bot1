@@ -345,10 +345,20 @@ async def view_useful_recipes(call: CallbackQuery):
 # =====================================================================
 # 🤖 РОБОТ-АВТОМАТИЗАТОР: МОНИТОРИНГ КАНАЛА
 # =====================================================================
-@router.channel_post()
+CULINARY_HASHTAGS = {"#видеорецепты": "video", "#рецепты": "recipes", "#полезное": "useful"}
+
+
+def _has_culinary_hashtag(message: Message) -> bool:
+    """Фильтр обязателен: без него хендлер матчил ЛЮБОЙ пост канала и,
+    отработав первым, глушил сборщики книг и головоломок."""
+    text = (message.text or message.caption or "").lower()
+    return any(tag in text for tag in CULINARY_HASHTAGS)
+
+
+@router.channel_post(_has_culinary_hashtag)
 async def auto_listen_culinary_channel(message: Message):
     text_to_check = message.text or message.caption or ""
-    hashtag_map = {"#видеорецепты": "video", "#рецепты": "recipes", "#полезное": "useful"}
+    hashtag_map = CULINARY_HASHTAGS
 
     detected_category = None
     for hashtag, cat_name in hashtag_map.items():
