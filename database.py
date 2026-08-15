@@ -44,13 +44,29 @@ def describe_db_target() -> str:
         return "не удалось разобрать DATABASE_URL"
 
 
+_pool_failure_logged = False
+
+
 async def get_pool():
     """Возвращает пул соединений, создаёт при первом обращении"""
-    global _pool
+    global _pool, _pool_failure_logged
     if _pool is None:
-        _pool = await asyncpg.create_pool(
-            DATABASE_URL, min_size=1, max_size=5, init=_init_connection
-        )
+        try:
+            _pool = await asyncpg.create_pool(
+                DATABASE_URL, min_size=1, max_size=5, init=_init_connection
+            )
+            _pool_failure_logged = False
+            logging.info(f"Подключение к базе установлено: {describe_db_target()}")
+        except Exception:
+            # Пишем адрес только при первом сбое: иначе каждая кнопка засыпает
+            # логи одной и той же строкой, а найти причину всё равно нельзя.
+            if not _pool_failure_logged:
+                logging.error(
+                    f"Не удалось подключиться к базе. Адрес из DATABASE_URL: "
+                    f"{describe_db_target()}"
+                )
+                _pool_failure_logged = True
+            raise
     return _pool
 
 
