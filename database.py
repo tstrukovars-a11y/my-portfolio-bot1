@@ -282,7 +282,21 @@ async def init_db():
             f"ON {SCHEMA}.shop_items (source_key)"
         )
 
-        # 13. Анкеты поиска партнёра для игры
+        # 13. Ежедневный индекс по странам: тон новостей + макропоказатели.
+        # Копится по дням, чтобы считать динамику относительно вчера и недели.
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.country_index (
+            country TEXT,
+            day DATE,
+            tone REAL,
+            fx REAL,
+            inflation REAL,
+            gdp_growth REAL,
+            score REAL,
+            PRIMARY KEY (country, day)
+        )""")
+
+        # 14. Анкеты поиска партнёра для игры
         await conn.execute(f"""
         CREATE TABLE IF NOT EXISTS {SCHEMA}.game_partners (
             id SERIAL PRIMARY KEY,
@@ -594,6 +608,81 @@ async def get_recipe_by_id(recipe_id: int):
     except Exception as e:
         logging.error(f"БД недоступна при чтении рецепта: {e}")
         return None
+
+
+# --- ИНДЕКС СТРАН (тон новостей + макропоказатели) ---
+
+async def save_country_index(day, country: str, tone, fx, inflation, gdp_growth, score):
+    """Кладёт значения за день; повторный расчёт в тот же день перезаписывает их"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"INSERT INTO {SCHEMA}.country_index "
+                "(country, day, tone, fx, inflation, gdp_growth, score) "
+                "VALUES ($1, $2, $3, $4, $5, $6, $7) "
+                "ON CONFLICT (country, day) DO UPDATE SET "
+                "tone = EXCLUDED.tone, fx = EXCLUDED.fx, inflation = EXCLUDED.inflation, "
+                "gdp_growth = EXCLUDED.gdp_growth, score = EXCLUDED.score",
+                country, day, tone, fx, inflation, gdp_growth, score
+            )
+    except Exception as e:
+        logging.error(f"Не удалось сохранить индекс стран: {type(e).__name__}: {e}")
+
+
+async def get_latest_index():
+    """Самый свежий срез: (дата, {страна: {...показатели}}) либо (None, {})"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            day = await conn.fetchval(f"SELECT MAX(day) FROM {SCHEMA}.country_index")
+            if not day:
+                return None, {}
+            rows = await conn.fetch(
+                f"SELECT country, tone, fx, inflation, gdp_growth, score "
+                f"FROM {SCHEMA}.country_index WHERE day = $1", day
+            )
+        return day, {r["country"]: dict(r) for r in rows}
+    except Exception as e:
+        logging.error(f"БД недоступна при чтении индекса стран: {e}")
+        return None, {}
+
+
+async def get_scores_before(day, days_back: int):
+    """Баллы на ближайший день не позже чем day - days_back. Для стрелок динамики."""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            target = await conn.fetchval(
+                f"SELECT MAX(day) FROM {SCHEMA}.country_index "
+                "WHERE day <= $1::date - $2::int", day, days_back
+            )
+            if not target:
+                return {}
+            rows = await conn.fetch(
+                f"SELECT country, score FROM {SCHEMA}.country_index WHERE day = $1", target
+            )
+        return {r["country"]: r["score"] for r in rows}
+    except Exception as e:
+        logging.error(f"БД недоступна при чтении истории индекса: {e}")
+        return {}
+
+
+async def get_last_known_macro(country: str):
+    """Последние непустые инфляция и рост ВВП — API Всемирного банка часто
+    отваливается, а показатели годовые, поэтому старое значение вполне годится."""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                f"SELECT inflation, gdp_growth FROM {SCHEMA}.country_index "
+                "WHERE country = $1 AND inflation IS NOT NULL AND gdp_growth IS NOT NULL "
+                "ORDER BY day DESC LIMIT 1", country
+            )
+        return (row["inflation"], row["gdp_growth"]) if row else (None, None)
+    except Exception as e:
+        logging.error(f"БД недоступна при чтении макроданных: {e}")
+        return (None, None)
 
 
 # --- ФУНКЦИИ ДЛЯ PRO-SHOP (каталог одежды и аксессуаров) ---

@@ -133,11 +133,22 @@ async def refresh_all_news(database_module):
                 logging.warning(f"Не удалось обновить новости: {country}")
 
 
-async def news_scheduler(database_module):
-    """Фоновая задача: обновляет новости сразу при старте бота, затем каждые 24 часа."""
+async def news_scheduler(database_module, index_module=None, claude_client=None):
+    """Фоновая задача: обновляет новости сразу при старте бота, затем каждые 24 часа.
+
+    Следом пересчитывает индекс стран — он опирается на только что загруженные
+    заголовки, поэтому порядок важен.
+    """
     while True:
         try:
             await refresh_all_news(database_module)
         except Exception as e:
             logging.error(f"Ошибка планировщика новостей: {e}")
+
+        if index_module is not None:
+            try:
+                await index_module.refresh_index(claude_client)
+            except Exception as e:
+                logging.error(f"Ошибка пересчёта индекса стран: {e}")
+
         await asyncio.sleep(24 * 60 * 60)

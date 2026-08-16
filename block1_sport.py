@@ -10,6 +10,7 @@ import config
 import database
 import menu_texts
 import inline_kb
+import country_index
 
 router = Router()
 
@@ -346,6 +347,13 @@ async def open_news_sub(call: CallbackQuery):
             else:
                 news_message = NEWS_EMPTY_TEXTS.get(user_lang, NEWS_EMPTY_TEXTS["en"])
             await call.message.answer(news_message, parse_mode="Markdown", disable_web_page_preview=True)
+
+        # ROI-отчёты: живой сравнительный индекс четырёх стран вместо статичного текста
+        if sub == "analytics":
+            await call.message.answer(
+                await country_index.render_index(user_lang),
+                parse_mode="Markdown", disable_web_page_preview=True
+            )
     except TelegramBadRequest as e: logging.error(f"ОШИБКА БЛОКА 1: {e}")
 
 

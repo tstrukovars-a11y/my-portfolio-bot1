@@ -12,6 +12,7 @@ from aiogram.types import Update
 import config
 import database
 import news_fetcher
+import country_index
 import common, block1_sport, block2_creative, block3_intellect, block4_claude, profiles, block5_game, block6_vpn, block7_analytics, puzzles, shop
 
 
@@ -222,7 +223,9 @@ async def main():
         )
 
     # Фоновая задача: подтягивает свежие заголовки при старте, затем каждые 24 часа
-    asyncio.create_task(news_fetcher.news_scheduler(database))
+    # Индексу нужен Claude для оценки тона; без ключа составляющая просто отключится
+    asyncio.create_task(news_fetcher.news_scheduler(
+        database, country_index, block2_creative.claude_client))
 
     # ВАЖНО: параметр называется `default`, а не `default_properties`.
     # Неизвестные аргументы aiogram молча проглатывает в **kwargs, из-за чего
