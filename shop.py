@@ -22,19 +22,17 @@ PAGE_SIZE = 15
 GENDERS = {
     "men": {"ru": "👔 Мужское", "en": "👔 Men"},
     "women": {"ru": "👗 Женское", "en": "👗 Women"},
-    "acc": {"ru": "🎾 Аксессуары", "en": "🎾 Accessories"},
+    "acc": {"ru": "🎒 Аксессуары", "en": "🎒 Accessories"},
 }
 
 # Типы вещей внутри каждого раздела
 TYPES = {
     "men": {
-        "kits": {"ru": "🎽 Форма", "en": "🎽 Kits"},
         "sneakers": {"ru": "👟 Кроссовки", "en": "👟 Sneakers"},
         "tshirts": {"ru": "👕 Футболки и поло", "en": "👕 T-shirts & polos"},
         "shorts": {"ru": "🩳 Шорты", "en": "🩳 Shorts"},
     },
     "women": {
-        "kits": {"ru": "🎽 Форма", "en": "🎽 Kits"},
         "sneakers": {"ru": "👟 Кроссовки", "en": "👟 Sneakers"},
         "dresses": {"ru": "👗 Платья", "en": "👗 Dresses"},
         "skirts": {"ru": "🩱 Юбки", "en": "🩱 Skirts"},
@@ -43,6 +41,7 @@ TYPES = {
     },
     "acc": {
         "rackets": {"ru": "🎾 Ракетки", "en": "🎾 Rackets"},
+        "balls": {"ru": "🟡 Мячи", "en": "🟡 Balls"},
         "grips": {"ru": "🧵 Намотки", "en": "🧵 Grips & overgrips"},
     },
 }
@@ -52,9 +51,7 @@ TYPES = {
 TYPE_KEYWORDS = {
     "rackets": ["ракетк", "ракета", "racket", "racquet"],
     "grips": ["намотк", "обмотк", "овергрип", "грип", "overgrip", "grip"],
-    # «Форма» и «комплект» проверяются раньше отдельных предметов: если в посте
-    # написано «форма: футболка + шорты», это набор целиком, а не шорты.
-    "kits": ["форма", "формы", "комплект", "костюм", "kit", "outfit"],
+    "balls": ["мяч", "ball"],
     "sneakers": ["кроссовк", "кросовк", "кеды", "sneaker", "shoes"],
     "dresses": ["платье", "платья", "dress"],
     "skirts": ["юбк", "skirt"],
@@ -66,7 +63,7 @@ WOMEN_KEYWORDS = ["женск", "жен.", "women", "woman", "female", "wmn"]
 MEN_KEYWORDS = ["мужск", "муж.", "men's", "mens", "male"]
 
 # Типы, которые сами по себе определяют раздел, без слов о поле
-ACCESSORY_TYPES = {"rackets", "grips"}
+ACCESSORY_TYPES = {"rackets", "balls", "grips"}
 WOMEN_ONLY_TYPES = {"dresses", "skirts"}
 
 
@@ -132,7 +129,10 @@ async def open_shop(call: CallbackQuery):
 
     rows = []
     for gender in GENDERS:
-        count = await database.count_shop_items(gender)
+        # Считаем по известным типам, а не по разделу целиком: если категорию
+        # когда-нибудь уберут, её товары не должны раздувать счётчик сверху,
+        # оставаясь при этом недоступными ни в одном списке.
+        count = sum([await database.count_shop_items(gender, t) for t in TYPES[gender]])
         if count:
             rows.append([InlineKeyboardButton(
                 text=f"{_label(GENDERS[gender], lang)} ({count})",
