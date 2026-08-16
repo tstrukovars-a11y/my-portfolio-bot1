@@ -55,6 +55,13 @@ BOOKS_CHANNEL = env_int("BOOKS_CHANNEL")
 GOLF_INVITE_URL = os.getenv("GOLF_INVITE_URL") or "https://t.me/+a5gt9GCsK75kZDIy"
 GOLF_PASSWORD = os.getenv("GOLF_PASSWORD") or "гольфонутые"
 
+# Пароли остальных закрытых разделов — тоже через окружение.
+# ВНИМАНИЕ: значения по умолчанию уже попали в историю git и секретом больше не
+# являются. Чтобы разделы действительно закрылись, задайте в Render новые
+# значения — умолчания здесь только чтобы бот не сломался без переменных.
+VPN_PASSWORD = os.getenv("VPN_PASSWORD") or "единорог2026"
+PROFILES_PASSWORD = os.getenv("PROFILES_PASSWORD") or "проект будущего"
+
 
 def channel_allowed(configured_channel: int, chat_id: int) -> bool:
     """Пришёл ли пост из того канала, который закреплён за разделом"""

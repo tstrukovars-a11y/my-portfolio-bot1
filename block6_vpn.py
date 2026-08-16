@@ -11,8 +11,8 @@ import inline_kb
 
 router = Router()
 
-# Пароль для доступа к разделу VPN — легко продиктовать голосом, сложно подобрать
-VPN_PASSWORD = "единорог2026"
+# Пароль задаётся переменной окружения VPN_PASSWORD (см. config)
+VPN_PASSWORD = config.VPN_PASSWORD
 
 class VPNStates(StatesGroup):
     waiting_password = State()

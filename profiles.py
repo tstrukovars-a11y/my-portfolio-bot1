@@ -10,8 +10,8 @@ import inline_kb
 
 router = Router()
 
-# Пароль для доступа к разделу Профили — легко продиктовать голосом, сложно подобрать
-PROFILES_PASSWORD = "проект будущего"
+# Пароль задаётся переменной окружения PROFILES_PASSWORD (см. config)
+PROFILES_PASSWORD = config.PROFILES_PASSWORD
 
 class ProfilesStates(StatesGroup):
     waiting_password = State()
