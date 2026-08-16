@@ -165,9 +165,18 @@ async def init_db():
         await conn.execute(
             f"ALTER TABLE {SCHEMA}.recipes ADD COLUMN IF NOT EXISTS source_key TEXT"
         )
+        # Индекс обязан быть ОБЫЧНЫМ, а не частичным. Postgres не выводит
+        # частичный индекс из «ON CONFLICT (source_key)» — предикат пришлось бы
+        # дословно повторять в каждом запросе, иначе он падает с «no unique or
+        # exclusion constraint matching the ON CONFLICT specification».
+        # Отдельный WHERE тут и не нужен: NULL-значения уникальный индекс
+        # считает различными, так что старые записи без source_key не мешают.
         await conn.execute(
-            f"CREATE UNIQUE INDEX IF NOT EXISTS recipes_source_key_idx "
-            f"ON {SCHEMA}.recipes (source_key) WHERE source_key IS NOT NULL"
+            f"DROP INDEX IF EXISTS {SCHEMA}.recipes_source_key_idx"
+        )
+        await conn.execute(
+            f"CREATE UNIQUE INDEX IF NOT EXISTS recipes_source_key_uniq "
+            f"ON {SCHEMA}.recipes (source_key)"
         )
         await conn.execute(f"""
         CREATE TABLE IF NOT EXISTS {SCHEMA}.books (
@@ -511,7 +520,7 @@ async def add_recipe(category: str, title: str, text_content: str, video_file_id
             )
             return "added"
     except Exception as e:
-        logging.error(f"БД недоступна, рецепт не сохранён: {e}")
+        logging.error(f"Не удалось сохранить рецепт: {type(e).__name__}: {e}")
         return "error"
 
 

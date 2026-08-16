@@ -690,7 +690,8 @@ async def _save_imported(message: Message, category: str, source: Message) -> st
                 f"«{data['title']}»\n\nВ базе — {await _import_summary()}")
     if result == "duplicate":
         return f"↩️ Этот пост уже импортирован. В базе — {await _import_summary()}"
-    return "⚠️ База недоступна, рецепт не сохранён."
+    return ("⚠️ Рецепт не сохранён — ошибка базы. "
+            "Точная причина в логах Render, строка «Не удалось сохранить рецепт».")
 
 
 # ~F.text.startswith("/") обязателен: без него хендлер съедал бы /start и любую
