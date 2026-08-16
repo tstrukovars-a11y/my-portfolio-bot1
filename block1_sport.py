@@ -1,8 +1,10 @@
 import logging
 import os
 from aiogram import Router, F
-from aiogram.types import CallbackQuery, InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+from aiogram.types import CallbackQuery, Message, InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 from aiogram.exceptions import TelegramBadRequest
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import StatesGroup, State
 from datetime import datetime
 import config
 import database
@@ -206,6 +208,108 @@ async def process_golf_submit(call: CallbackQuery):
     user_lang = await database.get_user_language(call.from_user.id)
     msgs = {"ru": "🎉 Заявка отправлена!", "en": "🎉 Submitted!", "fr": "🎉 Envoyée!", "he": "🎉 הבקשה נשלחה!"}
     await call.answer(text=msgs.get(user_lang, msgs["en"]), show_alert=True)
+
+
+# ==========================================================
+# ⛳ ЗАКРЫТЫЙ ГОЛЬФ-КАНАЛ: ССЫЛКА ВЫДАЁТСЯ ПО ПАРОЛЮ
+# ==========================================================
+
+GOLF_PASSWORD = "гольфонутые"
+GOLF_INVITE_URL = "https://t.me/+AGWQbLuC4bg0OTE6"
+
+
+class GolfStates(StatesGroup):
+    waiting_password = State()
+
+
+GOLF_ASK_TEXTS = {
+    "ru": "🔒 Вход в клуб по паролю. Введите его, чтобы получить ссылку, или нажмите «Отмена»:",
+    "en": "🔒 The club is password-protected. Enter the password to get the invite link, or tap Cancel:",
+    "fr": "🔒 L'accès au club est protégé par un mot de passe. Entrez-le pour obtenir le lien, ou annulez :",
+    "he": "🔒 הכניסה למועדון מוגנת בסיסמה. הזינו אותה כדי לקבל קישור, או לחצו על ביטול:"
+}
+
+GOLF_WRONG_TEXTS = {
+    "ru": "❌ Неверный пароль. Попробуйте ещё раз или нажмите «Отмена».",
+    "en": "❌ Wrong password. Try again or tap Cancel.",
+    "fr": "❌ Mot de passe incorrect. Réessayez ou annulez.",
+    "he": "❌ סיסמה שגויה. נסו שוב או לחצו על ביטול."
+}
+
+GOLF_GRANTED_TEXTS = {
+    "ru": ("✅ **Добро пожаловать!**\n\nВот ссылка на закрытый гольф-канал. "
+           "Вступление подтверждается администратором, поэтому заявка какое-то время повисит на одобрении."),
+    "en": ("✅ **Welcome!**\n\nHere is the link to the private golf channel. "
+           "Membership is approved by an admin, so your request will sit pending for a little while."),
+    "fr": ("✅ **Bienvenue !**\n\nVoici le lien vers le canal de golf privé. "
+           "L'adhésion est validée par un administrateur, votre demande restera donc en attente un moment."),
+    "he": ("✅ **ברוכים הבאים!**\n\nהנה הקישור לערוץ הגולף הסגור. "
+           "ההצטרפות מאושרת על ידי מנהל, ולכן הבקשה תמתין לאישור זמן מה.")
+}
+
+GOLF_CANCEL_TEXTS = {"ru": "⛔ Отмена", "en": "⛔ Cancel", "fr": "⛔ Annuler", "he": "⛔ ביטול"}
+GOLF_OPEN_TEXTS = {"ru": "⛳ Открыть канал", "en": "⛳ Open the channel",
+                   "fr": "⛳ Ouvrir le canal", "he": "⛳ פתחו את הערוץ"}
+
+
+def _golf_cancel_markup(lang: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
+        text=GOLF_CANCEL_TEXTS.get(lang, GOLF_CANCEL_TEXTS["en"]), callback_data="golf_cancel"
+    )]])
+
+
+@router.callback_query(F.data == "golf_join_request")
+async def ask_golf_password(call: CallbackQuery, state: FSMContext):
+    await call.answer()
+    user_lang = await database.get_user_language(call.from_user.id)
+    await state.set_state(GolfStates.waiting_password)
+    await state.update_data(golf_lang=user_lang)
+    await call.message.answer(
+        GOLF_ASK_TEXTS.get(user_lang, GOLF_ASK_TEXTS["en"]),
+        reply_markup=_golf_cancel_markup(user_lang)
+    )
+
+
+@router.callback_query(F.data == "golf_cancel", GolfStates.waiting_password)
+async def cancel_golf_password(call: CallbackQuery, state: FSMContext):
+    await call.answer()
+    await state.clear()
+    user_lang = await database.get_user_language(call.from_user.id)
+    caption_text = menu_texts.GOLF_MAIN_TEXTS.get(user_lang, menu_texts.GOLF_MAIN_TEXTS["en"])
+    try:
+        await call.message.delete()
+    except Exception:
+        pass
+    await call.message.answer_photo(
+        photo=config.GOLF_BANNER, caption=caption_text,
+        parse_mode="Markdown", reply_markup=inline_kb.get_golf_main_menu(user_lang)
+    )
+
+
+# ~F.text.startswith("/") обязателен, иначе состояние съест /start и выйти будет нечем
+@router.message(GolfStates.waiting_password, F.text, ~F.text.startswith("/"))
+async def check_golf_password(message: Message, state: FSMContext):
+    data = await state.get_data()
+    user_lang = data.get("golf_lang", "ru")
+
+    if message.text.strip().lower() != GOLF_PASSWORD:
+        await message.answer(
+            GOLF_WRONG_TEXTS.get(user_lang, GOLF_WRONG_TEXTS["en"]),
+            reply_markup=_golf_cancel_markup(user_lang)
+        )
+        return
+
+    await state.clear()
+    markup = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text=GOLF_OPEN_TEXTS.get(user_lang, GOLF_OPEN_TEXTS["en"]), url=GOLF_INVITE_URL)],
+        [InlineKeyboardButton(
+            text="⇦ Назад" if user_lang == "ru" else "⇦ Back", callback_data="sport_golf")]
+    ])
+    await message.answer(
+        GOLF_GRANTED_TEXTS.get(user_lang, GOLF_GRANTED_TEXTS["en"]),
+        parse_mode="Markdown", reply_markup=markup
+    )
 
 @router.callback_query(F.data == "sport_news")
 async def open_sport_news(call: CallbackQuery):
