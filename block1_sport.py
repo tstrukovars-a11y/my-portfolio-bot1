@@ -214,8 +214,10 @@ async def process_golf_submit(call: CallbackQuery):
 # ⛳ ЗАКРЫТЫЙ ГОЛЬФ-КАНАЛ: ССЫЛКА ВЫДАЁТСЯ ПО ПАРОЛЮ
 # ==========================================================
 
-GOLF_PASSWORD = "гольфонутые"
-GOLF_INVITE_URL = "https://t.me/+AGWQbLuC4bg0OTE6"
+# Пароль и ссылка живут в config: их удобнее менять переменными окружения,
+# не трогая код, — пригласительные ссылки Telegram периодически истекают.
+GOLF_PASSWORD = config.GOLF_PASSWORD
+GOLF_INVITE_URL = config.GOLF_INVITE_URL
 
 
 class GolfStates(StatesGroup):

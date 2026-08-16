@@ -49,6 +49,13 @@ CULINARY_CHANNEL = env_int("CULINARY_CHANNEL")
 BOOKS_CHANNEL = env_int("BOOKS_CHANNEL")
 
 
+# Пригласительная ссылка в закрытый гольф-канал и пароль к ней. Держим в
+# переменных окружения: ссылки Telegram истекают, и менять их через Render
+# быстрее, чем правкой кода. Значения по умолчанию — текущие рабочие.
+GOLF_INVITE_URL = os.getenv("GOLF_INVITE_URL") or "https://t.me/+a5gt9GCsK75kZDIy"
+GOLF_PASSWORD = os.getenv("GOLF_PASSWORD") or "гольфонутые"
+
+
 def channel_allowed(configured_channel: int, chat_id: int) -> bool:
     """Пришёл ли пост из того канала, который закреплён за разделом"""
     return not configured_channel or chat_id == configured_channel
