@@ -500,16 +500,19 @@ async def puzzles_import_hint(message: Message):
     )
 
 
-@router.channel_post(F.poll)
+def _is_puzzle_post(message: Message) -> bool:
+    return config.channel_allowed(config.QUIZ_CHANNEL, message.chat.id)
+
+
+@router.channel_post(F.poll, _is_puzzle_post)
 async def auto_collect_channel_puzzle(message: Message):
-    """Новые опросы, опубликованные в канале, попадают в банк автоматически.
+    """Новые опросы, опубликованные в канале головоломок, попадают в банк сами.
 
     Фильтр F.poll обязателен: без него этот хендлер перехватывал бы вообще все
-    посты канала и ломал сборщики рецептов и книг.
+    посты канала и ломал сборщики рецептов и книг. Проверка канала стоит тоже в
+    фильтре, а не в теле: иначе опрос из чужого канала считался бы обработанным
+    и до других сборщиков не дошёл бы.
     """
-    if config.QUIZ_CHANNEL and message.chat.id != config.QUIZ_CHANNEL:
-        return
-
     poll = message.poll
     if poll.correct_option_id is None:
         logging.warning(

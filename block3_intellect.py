@@ -324,14 +324,16 @@ async def view_tools_books(call: CallbackQuery):
 BOOK_HASHTAGS = {"#бизнес": "business", "#кругозор": "horizon", "#инструменты": "tools"}
 
 
-def _has_book_hashtag(message: Message) -> bool:
+def _is_book_post(message: Message) -> bool:
     """Без этого фильтра хендлер матчил любой пост канала — и сам никогда не
     срабатывал, потому что сборщик рецептов в block2 перехватывал всё раньше."""
+    if not config.channel_allowed(config.BOOKS_CHANNEL, message.chat.id):
+        return False
     text = (message.text or message.caption or "").lower()
     return any(tag in text for tag in BOOK_HASHTAGS)
 
 
-@router.channel_post(_has_book_hashtag)
+@router.channel_post(_is_book_post)
 async def auto_listen_books_channel(message: Message):
     text_to_check = message.text or message.caption or ""
     hashtag_map = BOOK_HASHTAGS

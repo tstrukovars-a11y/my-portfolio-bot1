@@ -447,9 +447,11 @@ async def view_useful_recipes(call: CallbackQuery):
 CULINARY_HASHTAGS = {"#видеорецепты": "video", "#рецепты": "recipes", "#полезное": "useful"}
 
 
-def _has_culinary_hashtag(message: Message) -> bool:
+def _is_culinary_post(message: Message) -> bool:
     """Фильтр обязателен: без него хендлер матчил ЛЮБОЙ пост канала и,
     отработав первым, глушил сборщики книг и головоломок."""
+    if not config.channel_allowed(config.CULINARY_CHANNEL, message.chat.id):
+        return False
     text = (message.text or message.caption or "").lower()
     return any(tag in text for tag in CULINARY_HASHTAGS)
 
@@ -510,7 +512,7 @@ def recipe_source_key(message: Message) -> str:
     return f"{origin_chat}:{origin_id}"
 
 
-@router.channel_post(_has_culinary_hashtag)
+@router.channel_post(_is_culinary_post)
 async def auto_listen_culinary_channel(message: Message):
     category = detect_culinary_category(message)
     if not category:

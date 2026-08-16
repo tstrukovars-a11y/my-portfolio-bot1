@@ -21,6 +21,18 @@ def is_admin(user_id: int) -> bool:
     """Владелец бота? Пока ADMIN_ID не задан, админских режимов нет ни у кого."""
     return bool(ADMIN_ID) and user_id == ADMIN_ID
 
+
+# Один бот сидит админом в нескольких каналах, поэтому каждый сборщик слушает
+# только свой. Если переменная не задана (0), фильтр по каналу отключён и пост
+# принимается откуда угодно — так поведение не ломается, пока id не проставлены.
+CULINARY_CHANNEL = int(os.getenv("CULINARY_CHANNEL", 0))
+BOOKS_CHANNEL = int(os.getenv("BOOKS_CHANNEL", 0))
+
+
+def channel_allowed(configured_channel: int, chat_id: int) -> bool:
+    """Пришёл ли пост из того канала, который закреплён за разделом"""
+    return not configured_channel or chat_id == configured_channel
+
 def get_banner(file_id_or_path: str):
     # Если строка похожа на file_id от Telegram, возвращаем её как есть
     if file_id_or_path.startswith("AgAC") or (len(file_id_or_path) > 30 and "/" not in file_id_or_path and "\\" not in file_id_or_path):

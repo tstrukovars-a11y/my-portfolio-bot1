@@ -233,6 +233,18 @@ async def main():
     )
     dp = Dispatcher()
 
+    seen_channels = set()
+
+    @dp.channel_post.outer_middleware()
+    async def log_channel_id(handler, event, data):
+        """Подсказывает id каналов: узнать его иначе неоткуда, а он нужен для
+        переменных CULINARY_CHANNEL, BOOKS_CHANNEL и QUIZ_CHANNEL. Пишем один
+        раз на канал, чтобы не засорять логи."""
+        if event.chat.id not in seen_channels:
+            seen_channels.add(event.chat.id)
+            logging.info(f"Канал «{event.chat.title}» -> id {event.chat.id}")
+        return await handler(event, data)
+
     @dp.errors()
     async def on_error(event):
         """Глобальный перехватчик: без него ошибка в хендлере не видна в логах Render,
