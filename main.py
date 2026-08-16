@@ -12,7 +12,7 @@ from aiogram.types import Update
 import config
 import database
 import news_fetcher
-import common, block1_sport, block2_creative, block3_intellect, block4_claude, profiles, block5_game, block6_vpn, block7_analytics, puzzles
+import common, block1_sport, block2_creative, block3_intellect, block4_claude, profiles, block5_game, block6_vpn, block7_analytics, puzzles, shop
 
 
 def _make_webhook_secret() -> str:
@@ -254,6 +254,7 @@ async def main():
 
     # Приоритеты регистрации роутеров
     dp.include_router(puzzles.router)
+    dp.include_router(shop.router)
     dp.include_router(block7_analytics.router)
     dp.include_router(block6_vpn.router)
     dp.include_router(block5_game.router)

@@ -115,14 +115,8 @@ async def open_tennis_sub(call: CallbackQuery):
         await call.message.edit_media(media=InputMediaPhoto(media=config.TENNIS_BANNER, caption=caption_text, parse_mode="Markdown"), reply_markup=markup)
     except TelegramBadRequest as e: logging.error(f"ОШИБКА БЛОКА 1: {e}")
 
-@router.callback_query(F.data == "tennis_shop_referral")
-async def open_tennis_shop(call: CallbackQuery):
-    await call.answer()
-    try:
-        user_lang = await database.get_user_language(call.from_user.id)
-        caption_text = menu_texts.TENNIS_SHOP_TEXTS.get(user_lang, menu_texts.TENNIS_SHOP_TEXTS["en"])
-        await call.message.edit_media(media=InputMediaPhoto(media=config.TENNIS_BANNER, caption=caption_text, parse_mode="Markdown"), reply_markup=inline_kb.get_tennis_shop_action_menu(user_lang))
-    except TelegramBadRequest as e: logging.error(f"ОШИБКА БЛОКА 1: {e}")
+# Экран «tennis_shop_referral» переехал в shop.py: вместо статичного текста там
+# теперь каталог по разделам «пол → тип вещи» с карточками товаров.
 
 @router.callback_query(F.data == "tennis_premium_theory")
 async def open_tennis_theory(call: CallbackQuery):

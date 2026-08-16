@@ -262,7 +262,27 @@ async def init_db():
             answered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""")
 
-        # 12. Анкеты поиска партнёра для игры
+        # 12. Товары Pro-Shop: пол + тип вещи, карточка со ссылкой на пост-источник
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.shop_items (
+            id SERIAL PRIMARY KEY,
+            gender TEXT,
+            item_type TEXT,
+            title TEXT,
+            description TEXT,
+            photo_file_id TEXT,
+            link_url TEXT,
+            source_key TEXT,
+            added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+        # Индекс обычный, а не частичный: см. историю с recipes_source_key —
+        # ON CONFLICT не умеет выводить частичный индекс без повтора предиката.
+        await conn.execute(
+            f"CREATE UNIQUE INDEX IF NOT EXISTS shop_items_source_uniq "
+            f"ON {SCHEMA}.shop_items (source_key)"
+        )
+
+        # 13. Анкеты поиска партнёра для игры
         await conn.execute(f"""
         CREATE TABLE IF NOT EXISTS {SCHEMA}.game_partners (
             id SERIAL PRIMARY KEY,
@@ -573,6 +593,96 @@ async def get_recipe_by_id(recipe_id: int):
         return (row["text_content"], row["video_file_id"], row["link_url"], row["photo_file_id"])
     except Exception as e:
         logging.error(f"БД недоступна при чтении рецепта: {e}")
+        return None
+
+
+# --- ФУНКЦИИ ДЛЯ PRO-SHOP (каталог одежды и аксессуаров) ---
+
+async def add_shop_item(gender: str, item_type: str, title: str, description: str,
+                        photo_file_id: str, link_url: str, source_key: str) -> str:
+    """Сохраняет товар. Возвращает 'added', 'duplicate' или 'error:<причина>'."""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            inserted = await conn.fetchval(
+                f"INSERT INTO {SCHEMA}.shop_items "
+                "(gender, item_type, title, description, photo_file_id, link_url, source_key) "
+                "VALUES ($1, $2, $3, $4, $5, $6, $7) "
+                "ON CONFLICT (source_key) DO NOTHING RETURNING id",
+                gender, item_type, title, description, photo_file_id, link_url, source_key
+            )
+        return f"added:{inserted}" if inserted else "duplicate"
+    except Exception as e:
+        logging.error(f"Не удалось сохранить товар: {type(e).__name__}: {e}")
+        return f"error:{type(e).__name__}: {e}"
+
+
+async def move_shop_item(item_id: int, gender: str, item_type: str) -> bool:
+    """Переносит товар в другую категорию — на случай ошибки автораскладки"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"UPDATE {SCHEMA}.shop_items SET gender = $1, item_type = $2 WHERE id = $3",
+                gender, item_type, item_id
+            )
+        return True
+    except Exception as e:
+        logging.error(f"Не удалось перенести товар: {type(e).__name__}: {e}")
+        return False
+
+
+async def count_shop_items(gender: str = None, item_type: str = None) -> int:
+    """Сколько товаров всего, в разделе пола или в конкретной категории"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            if gender and item_type:
+                return await conn.fetchval(
+                    f"SELECT COUNT(*) FROM {SCHEMA}.shop_items "
+                    "WHERE gender = $1 AND item_type = $2", gender, item_type
+                ) or 0
+            if gender:
+                return await conn.fetchval(
+                    f"SELECT COUNT(*) FROM {SCHEMA}.shop_items WHERE gender = $1", gender
+                ) or 0
+            return await conn.fetchval(f"SELECT COUNT(*) FROM {SCHEMA}.shop_items") or 0
+    except Exception as e:
+        logging.error(f"БД недоступна при подсчёте товаров: {e}")
+        return 0
+
+
+async def get_shop_titles(gender: str, item_type: str, limit: int = 15, offset: int = 0):
+    """Страница списка товаров категории, по алфавиту"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT id, title FROM {SCHEMA}.shop_items "
+                "WHERE gender = $1 AND item_type = $2 "
+                "ORDER BY lower(title), id LIMIT $3 OFFSET $4",
+                gender, item_type, limit, offset
+            )
+        return [(r["id"], r["title"]) for r in rows]
+    except Exception as e:
+        logging.error(f"БД недоступна при чтении списка товаров: {e}")
+        return []
+
+
+async def get_shop_item(item_id: int):
+    """Карточка товара: (title, description, photo_file_id, link_url)"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                f"SELECT title, description, photo_file_id, link_url "
+                f"FROM {SCHEMA}.shop_items WHERE id = $1", item_id
+            )
+        if not row:
+            return None
+        return (row["title"], row["description"], row["photo_file_id"], row["link_url"])
+    except Exception as e:
+        logging.error(f"БД недоступна при чтении товара: {e}")
         return None
 
 
