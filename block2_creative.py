@@ -1,4 +1,6 @@
 # handlers/block2_creative.py
+import logging
+
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, Message, InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
@@ -300,7 +302,7 @@ async def view_single_recipe(call: CallbackQuery):
     if not recipe:
         return
 
-    text, video_id, link = recipe
+    text, video_id, link, photo_id = recipe
     final_text = text
 
     need_translation = user_lang != "ru"
@@ -322,8 +324,21 @@ async def view_single_recipe(call: CallbackQuery):
 
     caption = f"{final_text}\n\n🔗 Original: {link}" if link else final_text
 
-    if video_id:
-        await call.message.answer_video(video=video_id, caption=caption)
+    # Подпись к медиа в Telegram ограничена 1024 символами, обычное сообщение —
+    # 4096. Длинный рецепт с картинкой шлём двумя сообщениями, иначе Telegram
+    # отклонит отправку целиком.
+    if video_id or photo_id:
+        if len(caption) <= 1024:
+            if video_id:
+                await call.message.answer_video(video=video_id, caption=caption)
+            else:
+                await call.message.answer_photo(photo=photo_id, caption=caption)
+        else:
+            if video_id:
+                await call.message.answer_video(video=video_id)
+            else:
+                await call.message.answer_photo(photo=photo_id)
+            await call.message.answer(caption)
     else:
         await call.message.answer(caption)
 
@@ -355,32 +370,75 @@ def _has_culinary_hashtag(message: Message) -> bool:
     return any(tag in text for tag in CULINARY_HASHTAGS)
 
 
-@router.channel_post(_has_culinary_hashtag)
-async def auto_listen_culinary_channel(message: Message):
-    text_to_check = message.text or message.caption or ""
-    hashtag_map = CULINARY_HASHTAGS
+def detect_culinary_category(message: Message):
+    """Категория рецепта по хэштегу в тексте или подписи поста"""
+    text = (message.text or message.caption or "").lower()
+    for hashtag, category in CULINARY_HASHTAGS.items():
+        if hashtag in text:
+            return category
+    return None
 
-    detected_category = None
-    for hashtag, cat_name in hashtag_map.items():
-        if hashtag in text_to_check.lower():
-            detected_category = cat_name
+
+def extract_recipe(message: Message) -> dict:
+    """Вытаскивает из поста всё, что нужно рецепту: текст, видео, фото, ссылку.
+
+    Ссылку ищем и в entities, и в caption_entities: у постов с видео или фото
+    разметка лежит именно во второй, поэтому раньше ссылки на видеорецептах и
+    в разделе «Полезное» терялись. Учитываем и text_link — ссылку, спрятанную
+    под текстом: её адрес хранится в самой сущности, а не в тексте поста.
+    """
+    text = message.text or message.caption or ""
+
+    link = None
+    for entity in list(message.entities or []) + list(message.caption_entities or []):
+        if entity.type == "text_link" and entity.url:
+            link = entity.url
+            break
+        if entity.type == "url":
+            link = text[entity.offset:entity.offset + entity.length]
             break
 
-    if detected_category:
-        video_id = message.video.file_id if message.video else None
-        extracted_link = None
-        if message.entities:
-            for entity in message.entities:
-                if entity.type == "url":
-                    extracted_link = text_to_check[entity.offset:entity.offset + entity.length]
-                    break
+    first_line = text.strip().split("\n")[0].strip()
+    title = first_line if first_line and not first_line.startswith("#") else "Рецепт"
+    if len(title) > 60:
+        title = title[:57].rstrip() + "…"
 
-        # Заголовок для списка — первая строка поста (без хэштегов, если та строка их содержит)
-        first_line = text_to_check.strip().split("\n")[0].strip()
-        title = first_line if first_line and not first_line.startswith("#") else "Рецепт"
+    return {
+        "text": text,
+        "title": title,
+        "video_id": message.video.file_id if message.video else None,
+        "photo_id": message.photo[-1].file_id if message.photo else None,
+        "link": link,
+    }
 
-        await database.add_recipe(detected_category, title, text_to_check, video_id, extracted_link)
-        print(f"🍏 АВТО-СИНХРОНИЗАЦИЯ: Добавлен лот категории {detected_category}!")
+
+def recipe_source_key(message: Message) -> str:
+    """Отпечаток исходного поста, чтобы одна и та же публикация не задвоилась.
+
+    У пересланного сообщения берём координаты оригинала, у поста в канале —
+    его собственные.
+    """
+    origin_chat, origin_id = message.chat.id, message.message_id
+    fwd = getattr(message, "forward_from_chat", None)
+    if fwd is not None:
+        origin_chat = fwd.id
+        origin_id = getattr(message, "forward_from_message_id", None) or origin_id
+    return f"{origin_chat}:{origin_id}"
+
+
+@router.channel_post(_has_culinary_hashtag)
+async def auto_listen_culinary_channel(message: Message):
+    category = detect_culinary_category(message)
+    if not category:
+        return
+
+    data = extract_recipe(message)
+    result = await database.add_recipe(
+        category, data["title"], data["text"], data["video_id"],
+        data["link"], data["photo_id"], recipe_source_key(message)
+    )
+    if result == "added":
+        logging.info(f"🍏 АВТО-СИНХРОНИЗАЦИЯ: добавлен рецепт категории {category}")
 
 # =====================================================================
 # 🎨 FSM-СБОРЩИК: АНКЕТА КАРТИНЫ ХУДОЖНИКА (ИСПРАВЛЕНА СТРУКТУРА)
@@ -463,3 +521,144 @@ async def process_price_final(message: Message, state: FSMContext):
     
     summary_sale = f"✅ **Заявка на продажу создана!**\n• 🖼 Название: {data_inner['title']}\n• 💵 Цена: {price_val}" if user_lang_i == "ru" else f"✅ **Sale created!**\n• Title: {data_inner['title']}\n• Price: {price_val}"
     await message.answer_photo(photo=data_inner['photo_id'], caption=summary_sale, parse_mode="Markdown")
+
+
+# =====================================================================
+# 📥 ИМПОРТ РЕЦЕПТОВ ПЕРЕСЫЛКОЙ (только для владельца бота)
+# =====================================================================
+# Историю канала Bot API читать не умеет, поэтому уже опубликованные рецепты
+# попадают в бота только так: админ пересылает посты в личку.
+
+CATEGORY_TITLES = {
+    "video": "🎬 Видеорецепты",
+    "recipes": "📖 Рецепты",
+    "useful": "💪 Полезное",
+}
+
+
+class RecipeImportStates(StatesGroup):
+    collecting = State()
+    choosing_category = State()
+
+
+def _category_markup() -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton(text=title, callback_data=f"imp_cat_{key}")]
+            for key, title in CATEGORY_TITLES.items()]
+    rows.append([InlineKeyboardButton(text="⏭ Пропустить пост", callback_data="imp_cat_skip")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def _import_summary() -> str:
+    parts = []
+    for key, title in CATEGORY_TITLES.items():
+        parts.append(f"{title}: <b>{await database.count_recipes(key)}</b>")
+    return " · ".join(parts)
+
+
+@router.message(F.text == "/recipes")
+async def recipes_import_start(message: Message, state: FSMContext):
+    if not config.is_admin(message.from_user.id):
+        return
+
+    await state.set_state(RecipeImportStates.collecting)
+    await message.answer(
+        "🍳 <b>Режим импорта рецептов включён.</b>\n\n"
+        f"Сейчас в базе — {await _import_summary()}\n\n"
+        "Пересылайте сюда посты из кулинарного канала: по одному или пачкой. "
+        "Категорию я определяю по хэштегу:\n"
+        "• <code>#видеорецепты</code> → Видеорецепты\n"
+        "• <code>#рецепты</code> → Рецепты\n"
+        "• <code>#полезное</code> → Полезное\n\n"
+        "Если хэштега в посте нет, спрошу категорию кнопками.\n\n"
+        "Когда закончите — отправьте /recipes_done"
+    )
+
+
+@router.message(F.text == "/recipes_done", RecipeImportStates.collecting)
+@router.message(F.text == "/recipes_done", RecipeImportStates.choosing_category)
+async def recipes_import_stop(message: Message, state: FSMContext):
+    if not config.is_admin(message.from_user.id):
+        return
+    await state.clear()
+    await message.answer(f"✅ Импорт завершён. В базе — {await _import_summary()}")
+
+
+async def _save_imported(message: Message, category: str, source: Message) -> str:
+    data = extract_recipe(source)
+    result = await database.add_recipe(
+        category, data["title"], data["text"], data["video_id"],
+        data["link"], data["photo_id"], recipe_source_key(source)
+    )
+
+    marks = []
+    if data["video_id"]:
+        marks.append("видео")
+    if data["photo_id"]:
+        marks.append("фото")
+    if data["link"]:
+        marks.append("ссылка")
+    extra = f" ({', '.join(marks)})" if marks else ""
+
+    if result == "added":
+        return (f"✅ <b>{CATEGORY_TITLES[category]}</b>{extra}\n"
+                f"«{data['title']}»\n\nВ базе — {await _import_summary()}")
+    if result == "duplicate":
+        return f"↩️ Этот пост уже импортирован. В базе — {await _import_summary()}"
+    return "⚠️ База недоступна, рецепт не сохранён."
+
+
+# ~F.text.startswith("/") обязателен: без него хендлер съедал бы /start и любую
+# другую команду, а пользователь оставался бы заперт в режиме импорта.
+@router.message(RecipeImportStates.collecting, F.text | F.caption, ~F.text.startswith("/"))
+async def recipes_import_post(message: Message, state: FSMContext):
+    if not config.is_admin(message.from_user.id):
+        return
+
+    category = detect_culinary_category(message)
+    if category:
+        await message.answer(await _save_imported(message, category, message))
+        return
+
+    # Хэштега нет — спрашиваем категорию и запоминаем сам пост, чтобы потом
+    # разобрать его целиком: пересланное сообщение в состоянии не сохранить.
+    await state.set_state(RecipeImportStates.choosing_category)
+    await state.update_data(pending_message_id=message.message_id)
+    _pending_posts[message.from_user.id] = message
+
+    preview = (message.text or message.caption or "").strip().split("\n")[0][:60]
+    await message.answer(
+        f"❓ В посте «{preview}» нет знакомого хэштега.\n\nВ какой раздел его положить?",
+        reply_markup=_category_markup()
+    )
+
+
+# Пересланный пост целиком нужен, чтобы достать из него видео, фото и ссылку.
+# FSM-хранилище держит только простые значения, поэтому держим объект рядом.
+_pending_posts: dict[int, Message] = {}
+
+
+@router.callback_query(F.data.startswith("imp_cat_"), RecipeImportStates.choosing_category)
+async def recipes_import_choose_category(call: CallbackQuery, state: FSMContext):
+    if not config.is_admin(call.from_user.id):
+        return
+    await call.answer()
+
+    choice = call.data.removeprefix("imp_cat_")
+    source = _pending_posts.pop(call.from_user.id, None)
+    await state.set_state(RecipeImportStates.collecting)
+
+    if choice == "skip" or source is None:
+        await call.message.edit_text("⏭ Пост пропущен. Пересылайте следующий.")
+        return
+
+    await call.message.edit_text(await _save_imported(call.message, choice, source))
+
+
+@router.message(RecipeImportStates.collecting, ~F.text.startswith("/"))
+async def recipes_import_hint(message: Message):
+    if not config.is_admin(message.from_user.id):
+        return
+    await message.answer(
+        "В этом посте нет ни текста, ни подписи — сохранять нечего. "
+        "Перешлите пост с текстом или отправьте /recipes_done, чтобы выйти."
+    )

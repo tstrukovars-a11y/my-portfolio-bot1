@@ -155,6 +155,20 @@ async def init_db():
             video_file_id TEXT,
             link_url TEXT
         )""")
+        # Фото добавлено позже: у таблиц, созданных раньше, колонки нет,
+        # а CREATE TABLE IF NOT EXISTS её не дорисует.
+        await conn.execute(
+            f"ALTER TABLE {SCHEMA}.recipes ADD COLUMN IF NOT EXISTS photo_file_id TEXT"
+        )
+        # Один и тот же пост не должен попасть в банк дважды — ни из канала,
+        # ни при импорте пересылкой.
+        await conn.execute(
+            f"ALTER TABLE {SCHEMA}.recipes ADD COLUMN IF NOT EXISTS source_key TEXT"
+        )
+        await conn.execute(
+            f"CREATE UNIQUE INDEX IF NOT EXISTS recipes_source_key_idx "
+            f"ON {SCHEMA}.recipes (source_key) WHERE source_key IS NOT NULL"
+        )
         await conn.execute(f"""
         CREATE TABLE IF NOT EXISTS {SCHEMA}.books (
             id SERIAL PRIMARY KEY,
@@ -468,18 +482,52 @@ async def get_game_partners(sport: str, limit: int = 50):
 
 # --- ФУНКЦИИ ДЛЯ РЕЦЕПТОВ (блок кулинарии) ---
 
-async def add_recipe(category: str, title: str, text_content: str, video_file_id: str, link_url: str):
-    """Сохраняет новый рецепт (добавляется автоматически при публикации в канале)"""
+async def add_recipe(category: str, title: str, text_content: str, video_file_id: str,
+                     link_url: str, photo_file_id: str = None, source_key: str = None) -> str:
+    """Сохраняет рецепт. Возвращает 'added', 'duplicate' или 'error'.
+
+    source_key — отпечаток исходного поста, чтобы повторная пересылка того же
+    рецепта не плодила дубли.
+    """
     try:
         pool = await get_pool()
         async with pool.acquire() as conn:
+            if source_key:
+                inserted = await conn.fetchval(
+                    f"INSERT INTO {SCHEMA}.recipes "
+                    "(category, title, text_content, video_file_id, link_url, photo_file_id, source_key) "
+                    "VALUES ($1, $2, $3, $4, $5, $6, $7) "
+                    "ON CONFLICT (source_key) DO NOTHING RETURNING id",
+                    category, title, text_content, video_file_id, link_url,
+                    photo_file_id, source_key
+                )
+                return "added" if inserted else "duplicate"
+
             await conn.execute(
-                f"INSERT INTO {SCHEMA}.recipes (category, title, text_content, video_file_id, link_url) "
-                "VALUES ($1, $2, $3, $4, $5)",
-                category, title, text_content, video_file_id, link_url
+                f"INSERT INTO {SCHEMA}.recipes "
+                "(category, title, text_content, video_file_id, link_url, photo_file_id) "
+                "VALUES ($1, $2, $3, $4, $5, $6)",
+                category, title, text_content, video_file_id, link_url, photo_file_id
             )
+            return "added"
     except Exception as e:
-        logging.error(f"БД недоступна, рецепт из канала не сохранён: {e}")
+        logging.error(f"БД недоступна, рецепт не сохранён: {e}")
+        return "error"
+
+
+async def count_recipes(category: str = None) -> int:
+    """Сколько рецептов в банке — всего или в одной категории"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            if category:
+                return await conn.fetchval(
+                    f"SELECT COUNT(*) FROM {SCHEMA}.recipes WHERE category = $1", category
+                ) or 0
+            return await conn.fetchval(f"SELECT COUNT(*) FROM {SCHEMA}.recipes") or 0
+    except Exception as e:
+        logging.error(f"БД недоступна при подсчёте рецептов: {e}")
+        return 0
 
 async def get_recipe_titles(category: str, limit: int = 15):
     """Возвращает список (id, title) для отображения кликабельного списка рецептов"""
@@ -497,15 +545,18 @@ async def get_recipe_titles(category: str, limit: int = 15):
         return []
 
 async def get_recipe_by_id(recipe_id: int):
-    """Возвращает (text_content, video_file_id, link_url) конкретного рецепта по id"""
+    """Возвращает (text_content, video_file_id, link_url, photo_file_id) рецепта по id"""
     try:
         pool = await get_pool()
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
-                f"SELECT text_content, video_file_id, link_url FROM {SCHEMA}.recipes WHERE id = $1",
+                f"SELECT text_content, video_file_id, link_url, photo_file_id "
+                f"FROM {SCHEMA}.recipes WHERE id = $1",
                 recipe_id
             )
-        return (row["text_content"], row["video_file_id"], row["link_url"]) if row else None
+        if not row:
+            return None
+        return (row["text_content"], row["video_file_id"], row["link_url"], row["photo_file_id"])
     except Exception as e:
         logging.error(f"БД недоступна при чтении рецепта: {e}")
         return None
