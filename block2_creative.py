@@ -257,44 +257,119 @@ async def open_creative_culinary_main(call: CallbackQuery):
     except TelegramBadRequest:
         pass
 
-async def show_recipe_list(call: CallbackQuery, category_key: str):
-    user_lang = await database.get_user_language(call.from_user.id)
+PAGE_SIZE = 15
 
-    rows = await database.get_recipe_titles(category_key, limit=15)
+LIST_HEADER = {
+    "ru": "👇 Выберите рецепт из списка:",
+    "en": "👇 Choose a recipe from the list:",
+    "fr": "👇 Choisissez une recette dans la liste :",
+    "he": "👇 בחר מתכון מהרשימה:"
+}
 
-    if not rows:
-        empty_txt = menu_texts.CULINARY_EMPTY_TEXTS.get(user_lang, menu_texts.CULINARY_EMPTY_TEXTS["en"])
-        await call.message.answer(empty_txt)
-        return
+LIST_HEADER_PAGED = {
+    "ru": "👇 Выберите рецепт — страница {page} из {pages}, всего {total}:",
+    "en": "👇 Choose a recipe — page {page} of {pages}, {total} in total:",
+    "fr": "👇 Choisissez une recette — page {page} sur {pages}, {total} au total :",
+    "he": "👇 בחרו מתכון — עמוד {page} מתוך {pages}, סה\"כ {total}:"
+}
+
+
+async def build_recipe_list(user_lang: str, category_key: str, page: int = 0):
+    """Собирает страницу алфавитного списка рецептов: (текст, клавиатура).
+
+    Возвращает (None, None), если в категории пока пусто.
+    """
+    total = await database.count_recipes(category_key)
+    if not total:
+        return None, None
+
+    pages = max(1, -(-total // PAGE_SIZE))     # округление вверх
+    page = max(0, min(page, pages - 1))
+
+    rows = await database.get_recipe_titles(
+        category_key, limit=PAGE_SIZE, offset=page * PAGE_SIZE
+    )
 
     buttons = []
     for recipe_id, title in rows:
         label = (title or "Рецепт").strip()
         if len(label) > 60:
             label = label[:57].rstrip() + "…"
-        buttons.append([InlineKeyboardButton(text=label, callback_data=f"recipe_view_{recipe_id}")])
+        buttons.append([InlineKeyboardButton(
+            text=label, callback_data=f"rv_{category_key}_{page}_{recipe_id}"
+        )])
+
+    if pages > 1:
+        nav = []
+        if page > 0:
+            nav.append(InlineKeyboardButton(
+                text="⬅", callback_data=f"culpage_{category_key}_{page - 1}"
+            ))
+        nav.append(InlineKeyboardButton(
+            text=f"{page + 1}/{pages}", callback_data="noop"
+        ))
+        if page < pages - 1:
+            nav.append(InlineKeyboardButton(
+                text="➡", callback_data=f"culpage_{category_key}_{page + 1}"
+            ))
+        buttons.append(nav)
 
     back_text = "🔙 Назад" if user_lang == "ru" else "🔙 Back"
     buttons.append([InlineKeyboardButton(text=back_text, callback_data="creative_culinary")])
 
-    list_header = {
-        "ru": "👇 Выберите рецепт из списка:",
-        "en": "👇 Choose a recipe from the list:",
-        "fr": "👇 Choisissez une recette dans la liste :",
-        "he": "👇 בחר מתכון מהרשימה:"
-    }
-    header_text = list_header.get(user_lang, list_header["en"])
+    if pages > 1:
+        header = LIST_HEADER_PAGED.get(user_lang, LIST_HEADER_PAGED["en"]).format(
+            page=page + 1, pages=pages, total=total
+        )
+    else:
+        header = LIST_HEADER.get(user_lang, LIST_HEADER["en"])
 
-    await call.message.answer(header_text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    return header, InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-@router.callback_query(F.data.startswith("recipe_view_"))
+async def show_recipe_list(call: CallbackQuery, category_key: str):
+    user_lang = await database.get_user_language(call.from_user.id)
+    header, markup = await build_recipe_list(user_lang, category_key, page=0)
+
+    if header is None:
+        empty_txt = menu_texts.CULINARY_EMPTY_TEXTS.get(user_lang, menu_texts.CULINARY_EMPTY_TEXTS["en"])
+        await call.message.answer(empty_txt)
+        return
+
+    await call.message.answer(header, reply_markup=markup)
+
+
+@router.callback_query(F.data == "noop")
+async def ignore_page_counter(call: CallbackQuery):
+    """Счётчик страниц — не кнопка, но Telegram ждёт ответа на любое нажатие"""
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("culpage_"))
+async def turn_recipe_page(call: CallbackQuery):
+    await call.answer()
+    _, category_key, page = call.data.split("_", 2)
+    user_lang = await database.get_user_language(call.from_user.id)
+    header, markup = await build_recipe_list(user_lang, category_key, page=int(page))
+
+    if header is None:
+        return
+    try:
+        await call.message.edit_text(header, reply_markup=markup)
+    except TelegramBadRequest:
+        await call.message.answer(header, reply_markup=markup)
+
+
+@router.callback_query(F.data.startswith("rv_"))
 async def view_single_recipe(call: CallbackQuery):
     await call.answer()
     user_lang = await database.get_user_language(call.from_user.id)
 
+    # rv_<категория>_<страница>_<id>: категория и страница нужны, чтобы кнопка
+    # «К списку» вернула ровно на ту страницу, с которой рецепт открыли.
     try:
-        recipe_id = int(call.data.split("_")[-1])
+        _, category_key, page, raw_id = call.data.split("_", 3)
+        recipe_id = int(raw_id)
     except ValueError:
         return
 
@@ -324,23 +399,30 @@ async def view_single_recipe(call: CallbackQuery):
 
     caption = f"{final_text}\n\n🔗 Original: {link}" if link else final_text
 
+    back_texts = {"ru": "🔙 К списку", "en": "🔙 Back to list",
+                  "fr": "🔙 Retour à la liste", "he": "🔙 חזרה לרשימה"}
+    back = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
+        text=back_texts.get(user_lang, back_texts["en"]),
+        callback_data=f"culpage_{category_key}_{page}"
+    )]])
+
     # Подпись к медиа в Telegram ограничена 1024 символами, обычное сообщение —
     # 4096. Длинный рецепт с картинкой шлём двумя сообщениями, иначе Telegram
-    # отклонит отправку целиком.
+    # отклонит отправку целиком. Кнопка возврата — всегда на последнем.
     if video_id or photo_id:
         if len(caption) <= 1024:
             if video_id:
-                await call.message.answer_video(video=video_id, caption=caption)
+                await call.message.answer_video(video=video_id, caption=caption, reply_markup=back)
             else:
-                await call.message.answer_photo(photo=photo_id, caption=caption)
+                await call.message.answer_photo(photo=photo_id, caption=caption, reply_markup=back)
         else:
             if video_id:
                 await call.message.answer_video(video=video_id)
             else:
                 await call.message.answer_photo(photo=photo_id)
-            await call.message.answer(caption)
+            await call.message.answer(caption, reply_markup=back)
     else:
-        await call.message.answer(caption)
+        await call.message.answer(caption, reply_markup=back)
 
 @router.callback_query(F.data == "culinary_cat_video")
 async def view_video_recipes(call: CallbackQuery):
@@ -360,6 +442,8 @@ async def view_useful_recipes(call: CallbackQuery):
 # =====================================================================
 # 🤖 РОБОТ-АВТОМАТИЗАТОР: МОНИТОРИНГ КАНАЛА
 # =====================================================================
+# Порядок значим: «#рецепты» — часть слова «#видеорецепты», поэтому длинный
+# хэштег обязан проверяться первым, иначе видеорецепты уедут в обычные рецепты.
 CULINARY_HASHTAGS = {"#видеорецепты": "video", "#рецепты": "recipes", "#полезное": "useful"}
 
 

@@ -529,15 +529,18 @@ async def count_recipes(category: str = None) -> int:
         logging.error(f"БД недоступна при подсчёте рецептов: {e}")
         return 0
 
-async def get_recipe_titles(category: str, limit: int = 15):
-    """Возвращает список (id, title) для отображения кликабельного списка рецептов"""
+async def get_recipe_titles(category: str, limit: int = 15, offset: int = 0):
+    """Страница списка рецептов: (id, title), отсортированные по названию.
+
+    lower() нужен, чтобы «Борщ» и «борщ» стояли рядом, а не двумя группами.
+    """
     try:
         pool = await get_pool()
         async with pool.acquire() as conn:
             rows = await conn.fetch(
                 f"SELECT id, title FROM {SCHEMA}.recipes "
-                "WHERE category = $1 ORDER BY id DESC LIMIT $2",
-                category, limit
+                "WHERE category = $1 ORDER BY lower(title), id LIMIT $2 OFFSET $3",
+                category, limit, offset
             )
         return [(r["id"], r["title"]) for r in rows]
     except Exception as e:
