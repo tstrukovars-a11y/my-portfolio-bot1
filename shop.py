@@ -22,7 +22,7 @@ PAGE_SIZE = 15
 GENDERS = {
     "men": {"ru": "👔 Мужское", "en": "👔 Men"},
     "women": {"ru": "👗 Женское", "en": "👗 Women"},
-    "acc": {"ru": "🎒 Аксессуары", "en": "🎒 Accessories"},
+    "acc": {"ru": "🧢 Аксессуары", "en": "🧢 Accessories"},
 }
 
 # Типы вещей внутри каждого раздела
@@ -41,6 +41,7 @@ TYPES = {
     },
     "acc": {
         "rackets": {"ru": "🎾 Ракетки", "en": "🎾 Rackets"},
+        "bags": {"ru": "🎒 Сумки и рюкзаки", "en": "🎒 Bags & backpacks"},
         "balls": {"ru": "🟡 Мячи", "en": "🟡 Balls"},
         "grips": {"ru": "🧵 Намотки", "en": "🧵 Grips & overgrips"},
     },
@@ -49,6 +50,9 @@ TYPES = {
 # Ключевые слова для автоматической раскладки пересланного поста.
 # Порядок важен: более длинные и специфичные слова проверяются раньше.
 TYPE_KEYWORDS = {
+    # Сумки проверяются РАНЬШЕ ракеток: «сумка для ракеток» и «чехол для
+    # ракетки» — это сумки, а не ракетки.
+    "bags": ["сумк", "рюкзак", "чехол", "тубус", "backpack", "bag"],
     "rackets": ["ракетк", "ракета", "racket", "racquet"],
     "grips": ["намотк", "обмотк", "овергрип", "грип", "overgrip", "grip"],
     "balls": ["мяч", "ball"],
@@ -63,7 +67,7 @@ WOMEN_KEYWORDS = ["женск", "жен.", "women", "woman", "female", "wmn"]
 MEN_KEYWORDS = ["мужск", "муж.", "men's", "mens", "male"]
 
 # Типы, которые сами по себе определяют раздел, без слов о поле
-ACCESSORY_TYPES = {"rackets", "balls", "grips"}
+ACCESSORY_TYPES = {"rackets", "bags", "balls", "grips"}
 WOMEN_ONLY_TYPES = {"dresses", "skirts"}
 
 
