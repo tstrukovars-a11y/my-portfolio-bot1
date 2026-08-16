@@ -520,8 +520,10 @@ async def add_recipe(category: str, title: str, text_content: str, video_file_id
             )
             return "added"
     except Exception as e:
+        # Точный текст возвращаем наверх, а не прячем за общим «ошибка базы»:
+        # админ увидит причину сразу в чате, без похода в логи Render.
         logging.error(f"Не удалось сохранить рецепт: {type(e).__name__}: {e}")
-        return "error"
+        return f"error:{type(e).__name__}: {e}"
 
 
 async def count_recipes(category: str = None) -> int:

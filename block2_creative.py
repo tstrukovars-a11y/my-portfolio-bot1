@@ -504,12 +504,23 @@ def recipe_source_key(message: Message) -> str:
     У пересланного сообщения берём координаты оригинала, у поста в канале —
     его собственные.
     """
-    origin_chat, origin_id = message.chat.id, message.message_id
-    fwd = getattr(message, "forward_from_chat", None)
-    if fwd is not None:
-        origin_chat = fwd.id
-        origin_id = getattr(message, "forward_from_message_id", None) or origin_id
-    return f"{origin_chat}:{origin_id}"
+    # Начиная с Bot API 7.0 источник пересылки лежит в forward_origin, а старые
+    # поля forward_from_chat Telegram больше не заполняет. Читаем сначала новое,
+    # затем прежнее — иначе один и тот же пост, пересланный дважды, считался бы
+    # разными рецептами.
+    origin = getattr(message, "forward_origin", None)
+    if origin is not None:
+        origin_chat = getattr(origin, "chat", None)
+        origin_id = getattr(origin, "message_id", None)
+        if origin_chat is not None and origin_id is not None:
+            return f"{origin_chat.id}:{origin_id}"
+
+    legacy = getattr(message, "forward_from_chat", None)
+    if legacy is not None:
+        legacy_id = getattr(message, "forward_from_message_id", None) or message.message_id
+        return f"{legacy.id}:{legacy_id}"
+
+    return f"{message.chat.id}:{message.message_id}"
 
 
 @router.channel_post(_is_culinary_post)
@@ -690,8 +701,9 @@ async def _save_imported(message: Message, category: str, source: Message) -> st
                 f"«{data['title']}»\n\nВ базе — {await _import_summary()}")
     if result == "duplicate":
         return f"↩️ Этот пост уже импортирован. В базе — {await _import_summary()}"
-    return ("⚠️ Рецепт не сохранён — ошибка базы. "
-            "Точная причина в логах Render, строка «Не удалось сохранить рецепт».")
+
+    detail = result.split(":", 1)[1] if result.startswith("error:") else "причина неизвестна"
+    return f"⚠️ Рецепт не сохранён.\n\n<code>{detail[:600]}</code>"
 
 
 # ~F.text.startswith("/") обязателен: без него хендлер съедал бы /start и любую
