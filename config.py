@@ -1,20 +1,40 @@
 # config.py
+import logging
 import os
 from aiogram.types import FSInputFile
 from dotenv import load_dotenv
 
 load_dotenv()
 
+
+def env_int(name: str, default: int = 0) -> int:
+    """Читает числовую переменную окружения, не роняя бот на пустом значении.
+
+    os.getenv(name, default) подставляет default, только если переменной нет
+    вовсе. Заведённая, но пустая переменная возвращает "" — и int("") валит
+    весь процесс ещё на импорте конфига, до запуска бота. Пустое, пробельное
+    и нечисловое значение здесь трактуются как «не задано».
+    """
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        logging.warning(f"Переменная {name}={raw!r} не число — использую {default}")
+        return default
+
+
 TOKEN = os.getenv("BOT_TOKEN")
 ANTHROPIC_API_KEY = os.getenv("CLAUDE_KEY")
-REQUIRED_CHANNEL = int(os.getenv("REQUIRED_CHANNEL", -1001234567890))
-QUIZ_CHANNEL = int(os.getenv("QUIZ_CHANNEL", -1002648861151))
+REQUIRED_CHANNEL = env_int("REQUIRED_CHANNEL", -1001234567890)
+QUIZ_CHANNEL = env_int("QUIZ_CHANNEL", -1002648861151)
 
 # Telegram-id владельца бота. Нужен для импорта головоломок: только этот
 # пользователь может пересылать боту опросы из канала и пополнять банк задач.
 # На Render эта переменная называется ORGANIZER_TELEGRAM_ID, поэтому читаем оба
 # имени. Пока ни одно не задано (0), режим импорта выключен целиком.
-ADMIN_ID = int(os.getenv("ORGANIZER_TELEGRAM_ID") or os.getenv("ADMIN_ID") or 0)
+ADMIN_ID = env_int("ORGANIZER_TELEGRAM_ID") or env_int("ADMIN_ID")
 
 
 def is_admin(user_id: int) -> bool:
@@ -25,8 +45,8 @@ def is_admin(user_id: int) -> bool:
 # Один бот сидит админом в нескольких каналах, поэтому каждый сборщик слушает
 # только свой. Если переменная не задана (0), фильтр по каналу отключён и пост
 # принимается откуда угодно — так поведение не ломается, пока id не проставлены.
-CULINARY_CHANNEL = int(os.getenv("CULINARY_CHANNEL", 0))
-BOOKS_CHANNEL = int(os.getenv("BOOKS_CHANNEL", 0))
+CULINARY_CHANNEL = env_int("CULINARY_CHANNEL")
+BOOKS_CHANNEL = env_int("BOOKS_CHANNEL")
 
 
 def channel_allowed(configured_channel: int, chat_id: int) -> bool:
