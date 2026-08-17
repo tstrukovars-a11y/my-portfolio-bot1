@@ -400,28 +400,27 @@ async def show_country_news(call: CallbackQuery):
 
 ORDER_PITCH = {
     "ru": ("🧪 **Исследование и расшифровка генов**\n\n"
-           "Разбор готового генетического теста, подбор панели под задачу, "
-           "объяснение результатов человеческим языком — без диагнозов и обещаний, "
-           "только то, что действительно следует из данных.\n\n"
-           "Опишите задачу в заявке, и я отвечу лично: что реально сделать, "
-           "в какие сроки и на каких условиях.\n\n"
-           "_Это не медицинская услуга и не замена консультации врача._"),
-    "en": ("🧪 **Genetic research and sequencing**\n\n"
-           "Interpreting an existing genetic test, choosing a panel for your question, "
-           "explaining results in plain language — no diagnoses and no promises, only "
-           "what the data actually supports.\n\n"
-           "Describe your task in the request and I will reply personally: what is "
-           "feasible, in what timeframe and on what terms.\n\n"
-           "_This is not a medical service and does not replace a doctor's consultation._"),
-    "fr": ("🧪 **Recherche génétique et séquençage**\n\n"
-           "Interprétation d'un test existant, choix d'un panel, explication des "
-           "résultats en langage clair — sans diagnostic ni promesses.\n\n"
-           "Décrivez votre besoin et je répondrai personnellement.\n\n"
-           "_Ceci n'est pas un service médical._"),
+           "Консультирует врач-генетик. Разбор готового генетического теста, "
+           "подбор панели под конкретную задачу, объяснение результатов понятным "
+           "языком — что данные действительно показывают, а что нет.\n\n"
+           "В заявке опишите: что уже сделано, какие анализы на руках и что хотите "
+           "понять. Отвечу лично — что реально сделать, в какие сроки и на каких условиях."),
+    "en": ("🧪 **Genetic research and interpretation**\n\n"
+           "Consultation by a medical geneticist. Interpreting an existing genetic test, "
+           "choosing a panel for your specific question, explaining the results in plain "
+           "language — what the data actually shows and what it does not.\n\n"
+           "In your request describe what has already been done, which results you have "
+           "and what you want to understand. I reply personally: what is feasible, in what "
+           "timeframe and on what terms."),
+    "fr": ("🧪 **Recherche génétique et interprétation**\n\n"
+           "Consultation assurée par un médecin généticien. Interprétation d'un test "
+           "existant, choix d'un panel adapté, explication claire des résultats.\n\n"
+           "Décrivez ce qui a déjà été fait et ce que vous souhaitez comprendre — "
+           "je réponds personnellement."),
     "he": ("🧪 **מחקר גנטי ופענוח**\n\n"
-           "פענוח בדיקה גנטית קיימת, בחירת פאנל מתאים והסבר התוצאות בשפה ברורה — "
-           "בלי אבחנות ובלי הבטחות.\n\nתארו את הצורך ואענה אישית.\n\n"
-           "_זהו אינו שירות רפואי._")
+           "הייעוץ ניתן על ידי רופא גנטיקאי. פענוח בדיקה גנטית קיימת, בחירת פאנל "
+           "מתאים והסבר התוצאות בשפה ברורה.\n\n"
+           "תארו מה כבר נעשה ומה תרצו להבין — אענה אישית.")
 }
 
 BTN_ORDER = {"ru": "✉️ Оставить заявку", "en": "✉️ Send a request",
