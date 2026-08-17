@@ -81,6 +81,7 @@ async def show_analytics_dashboard(call: CallbackQuery):
     
     back_markup = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📊 Web App: Графики (Mini App)" if user_lang == "ru" else "📊 Open Mini App Charts", web_app=WebAppInfo(url=web_app_url))],
+        [InlineKeyboardButton(text="🎯 Реклама в каналах" if user_lang == "ru" else "🎯 Channel advertising", callback_data="analytics_ads")],
         [InlineKeyboardButton(text="⇦ В главное меню" if user_lang == "ru" else "⇦ Main Menu", callback_data="go_home")]
     ])
     
@@ -88,3 +89,100 @@ async def show_analytics_dashboard(call: CallbackQuery):
         await call.message.edit_caption(caption=final_caption, reply_markup=back_markup, parse_mode="Markdown")
     except Exception:
         await call.message.answer(text=final_caption, reply_markup=back_markup, parse_mode="Markdown")
+
+
+# =====================================================================
+# 🎯 ПОДКЛЮЧЕНИЕ РЕКЛАМЫ К КАНАЛАМ
+# =====================================================================
+# Намеренно без конкретных сумм и процентов: пороги входа, минимальные бюджеты
+# и доля выплат у Telegram менялись уже не раз. Даём маршрут и официальные
+# ссылки, где условия всегда актуальны, — цифры пусть читаются там.
+
+ADS_TEXTS = {
+    "ru": (
+        "🎯 **Реклама в Telegram-каналах: как подключить**\n\n"
+        "Два принципиально разных сценария — их часто путают.\n\n"
+        "**1. Зарабатывать на своём канале**\n"
+        "Официальный путь — Ad Revenue Sharing: Telegram сам показывает рекламу "
+        "в канале, владелец получает долю. Подключается в самом канале: "
+        "«Управление каналом» → «Монетизация». Нужен порог по числу подписчиков "
+        "и кошелёк TON — выплаты идут в нём.\n\n"
+        "**2. Покупать рекламу для продвижения**\n"
+        "• *Официальная площадка* — Telegram Ad Platform. Объявление до 160 знаков, "
+        "без картинок, ведёт на канал или бота. Таргет по темам каналов и языку, "
+        "не по интересам пользователя: Telegram не строит профиль читателя.\n"
+        "• *Прямые закупки у каналов* — договорённость с владельцем о посте. "
+        "Дешевле на старте и позволяет нативный формат, но проверять статистику "
+        "придётся самостоятельно.\n"
+        "• *Биржи размещений* — посредники между рекламодателем и каналами, "
+        "берут комиссию, зато дают отчётность и защиту сделки.\n\n"
+        "**Что считать до запуска**\n"
+        "Ключевая метрика — не охват, а стоимость целевого действия. "
+        "Для бота это подписка или первый диалог. "
+        "CPM без конверсии в подписку ничего не говорит: канал на 100 тысяч "
+        "с вовлечённостью 2% проигрывает каналу на 10 тысяч с 15%.\n\n"
+        "**Как мерить**\n"
+        "Deep link вида `t.me/ваш_бот?start=канал1` — параметр приходит в /start, "
+        "и источник видно поимённо. Разные метки на разные размещения — "
+        "и вы сравниваете их не на глаз, а по цифрам.\n\n"
+        "_Пороги, минимальные бюджеты и доля выплат периодически меняются — "
+        "актуальные смотрите по ссылкам ниже._"
+    ),
+    "en": (
+        "🎯 **Advertising in Telegram channels: how to set it up**\n\n"
+        "Two different scenarios, often confused.\n\n"
+        "**1. Earning from your own channel**\n"
+        "The official route is Ad Revenue Sharing: Telegram places ads in the "
+        "channel and the owner gets a share. Enable it in the channel itself: "
+        "Manage Channel → Monetization. A subscriber threshold and a TON wallet "
+        "are required — payouts are made in TON.\n\n"
+        "**2. Buying ads to promote something**\n"
+        "• *Official platform* — Telegram Ad Platform. Up to 160 characters, no "
+        "images, linking to a channel or bot. Targeting is by channel topic and "
+        "language, not by user interests: Telegram does not profile readers.\n"
+        "• *Direct deals with channels* — arrange a post with the owner. Cheaper "
+        "to start and allows native formats, but you verify the stats yourself.\n"
+        "• *Placement marketplaces* — intermediaries that take a commission and "
+        "provide reporting and deal protection in return.\n\n"
+        "**What to calculate first**\n"
+        "The metric that matters is cost per action, not reach. For a bot that "
+        "means a subscription or a first dialogue. CPM without conversion says "
+        "nothing: a 100k channel at 2% engagement loses to a 10k channel at 15%.\n\n"
+        "**How to measure**\n"
+        "A deep link like `t.me/your_bot?start=channel1` passes the tag into "
+        "/start, so each source is identified by name. Different tags per "
+        "placement turn guesswork into numbers.\n\n"
+        "_Thresholds, minimum budgets and revenue shares change periodically — "
+        "check the current terms via the links below._"
+    )
+}
+
+
+@router.callback_query(F.data == "analytics_ads")
+async def show_ads_guide(call: CallbackQuery):
+    await call.answer()
+    try:
+        user_lang = await database.get_user_language(call.from_user.id)
+    except Exception:
+        user_lang = "ru"
+
+    text = ADS_TEXTS.get(user_lang, ADS_TEXTS["en"])
+    is_ru = user_lang == "ru"
+
+    markup = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="📢 Telegram Ad Platform" if is_ru else "📢 Telegram Ad Platform",
+            url="https://ads.telegram.org")],
+        [InlineKeyboardButton(
+            text="💰 Монетизация каналов" if is_ru else "💰 Channel monetization",
+            url="https://telegram.org/blog/ad-revenue-sharing")],
+        [InlineKeyboardButton(
+            text="⇦ К аналитике" if is_ru else "⇦ Back to analytics",
+            callback_data="menu_analytics")]
+    ])
+
+    try:
+        await call.message.edit_caption(caption=text, reply_markup=markup, parse_mode="Markdown")
+    except Exception:
+        await call.message.answer(text=text, reply_markup=markup,
+                                  parse_mode="Markdown", disable_web_page_preview=True)
