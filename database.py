@@ -100,9 +100,34 @@ async def get_pool():
     raise last_error
 
 
+async def measure_latency() -> float:
+    """Время простейшего запроса к базе, в миллисекундах.
+
+    Один этот замер отвечает на вопрос «тормозит сеть или код»: внутренний адрес
+    Render в том же регионе даёт единицы миллисекунд, внешний — сотни, и тогда
+    каждое обращение к базе видно на глаз.
+    """
+    import time
+    pool = await get_pool()
+    started = time.perf_counter()
+    async with pool.acquire() as conn:
+        await conn.fetchval("SELECT 1")
+    return (time.perf_counter() - started) * 1000
+
+
 async def init_db():
     """Инициализация базы данных и создание всех необходимых таблиц"""
     pool = await get_pool()
+
+    try:
+        latency = await measure_latency()
+        verdict = ("внутренний адрес, быстро" if latency < 20 else
+                   "терпимо" if latency < 80 else
+                   "МЕДЛЕННО — похоже на внешний адрес базы, отклик бота будет вязким")
+        logging.info(f"Задержка до базы: {latency:.0f} мс ({verdict})")
+    except Exception as e:
+        logging.warning(f"Не удалось измерить задержку до базы: {e}")
+
     async with pool.acquire() as conn:
         # Одноразовая очистка "недоделанных" таблиц от прошлых прерванных попыток
         # деплоя. Срабатывает только один раз благодаря маркеру _schema_version —
