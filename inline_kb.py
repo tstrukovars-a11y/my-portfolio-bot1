@@ -369,7 +369,9 @@ def get_genetics_hub_menu(lang):
     b = "🧬 Базовый контур" if lang == "ru" else "🧬 Core Level"
     a = "🧬 Продвинутый уровень" if lang == "ru" else "🧬 Advanced Level"
     r = "🔬 Исследования & Новости" if lang == "ru" else "🔬 Research & News"
+    k = "📚 База знаний канала" if lang == "ru" else "📚 Channel knowledge base"
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=k, callback_data="genetics_channel_base")],
         [InlineKeyboardButton(text=b, callback_data="genetics_view_base")],
         [InlineKeyboardButton(text=a, callback_data="genetics_view_advanced")],
         [InlineKeyboardButton(text=r, callback_data="genetics_view_research")],

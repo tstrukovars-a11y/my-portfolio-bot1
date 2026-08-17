@@ -296,7 +296,26 @@ async def init_db():
             PRIMARY KEY (country, day)
         )""")
 
-        # 14. Анкеты поиска партнёра для игры
+        # 14. Посты из тематических каналов, разложенные по разделам бота.
+        # Сейчас это генетика; таблица общая, чтобы так же подключить другие темы.
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.articles (
+            id SERIAL PRIMARY KEY,
+            section TEXT,
+            title TEXT,
+            text_content TEXT,
+            photo_file_id TEXT,
+            video_file_id TEXT,
+            link_url TEXT,
+            source_key TEXT,
+            added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+        await conn.execute(
+            f"CREATE UNIQUE INDEX IF NOT EXISTS articles_source_uniq "
+            f"ON {SCHEMA}.articles (source_key)"
+        )
+
+        # 15. Анкеты поиска партнёра для игры
         await conn.execute(f"""
         CREATE TABLE IF NOT EXISTS {SCHEMA}.game_partners (
             id SERIAL PRIMARY KEY,
@@ -607,6 +626,72 @@ async def get_recipe_by_id(recipe_id: int):
         return (row["text_content"], row["video_file_id"], row["link_url"], row["photo_file_id"])
     except Exception as e:
         logging.error(f"БД недоступна при чтении рецепта: {e}")
+        return None
+
+
+# --- ПОСТЫ ТЕМАТИЧЕСКИХ КАНАЛОВ (база знаний по разделам) ---
+
+async def add_article(section: str, title: str, text_content: str, photo_file_id: str,
+                      video_file_id: str, link_url: str, source_key: str) -> str:
+    """Сохраняет пост в базу знаний раздела. 'added' | 'duplicate' | 'error:<причина>'"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            inserted = await conn.fetchval(
+                f"INSERT INTO {SCHEMA}.articles "
+                "(section, title, text_content, photo_file_id, video_file_id, link_url, source_key) "
+                "VALUES ($1, $2, $3, $4, $5, $6, $7) "
+                "ON CONFLICT (source_key) DO NOTHING RETURNING id",
+                section, title, text_content, photo_file_id, video_file_id, link_url, source_key
+            )
+        return "added" if inserted else "duplicate"
+    except Exception as e:
+        logging.error(f"Не удалось сохранить пост раздела: {type(e).__name__}: {e}")
+        return f"error:{type(e).__name__}: {e}"
+
+
+async def count_articles(section: str) -> int:
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            return await conn.fetchval(
+                f"SELECT COUNT(*) FROM {SCHEMA}.articles WHERE section = $1", section) or 0
+    except Exception as e:
+        logging.error(f"БД недоступна при подсчёте постов раздела: {e}")
+        return 0
+
+
+async def get_article_titles(section: str, limit: int = 15, offset: int = 0):
+    """Страница списка заголовков по алфавиту"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT id, title FROM {SCHEMA}.articles WHERE section = $1 "
+                "ORDER BY lower(title), id LIMIT $2 OFFSET $3",
+                section, limit, offset
+            )
+        return [(r["id"], r["title"]) for r in rows]
+    except Exception as e:
+        logging.error(f"БД недоступна при чтении заголовков раздела: {e}")
+        return []
+
+
+async def get_article(article_id: int):
+    """(title, text_content, photo_file_id, video_file_id, link_url)"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                f"SELECT title, text_content, photo_file_id, video_file_id, link_url "
+                f"FROM {SCHEMA}.articles WHERE id = $1", article_id
+            )
+        if not row:
+            return None
+        return (row["title"], row["text_content"], row["photo_file_id"],
+                row["video_file_id"], row["link_url"])
+    except Exception as e:
+        logging.error(f"БД недоступна при чтении поста раздела: {e}")
         return None
 
 

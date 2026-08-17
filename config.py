@@ -47,6 +47,7 @@ def is_admin(user_id: int) -> bool:
 # принимается откуда угодно — так поведение не ломается, пока id не проставлены.
 CULINARY_CHANNEL = env_int("CULINARY_CHANNEL")
 BOOKS_CHANNEL = env_int("BOOKS_CHANNEL")
+GENETICS_CHANNEL = env_int("GENETICS_CHANNEL")
 
 
 # Пригласительная ссылка в закрытый гольф-канал и пароль к ней. Держим в

@@ -1,0 +1,307 @@
+# genetics.py — база знаний раздела «Генетика»: посты из тематического канала,
+# разложенные кликабельным списком по заголовкам.
+import logging
+
+from aiogram import Router, F
+from aiogram.types import (
+    CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
+)
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import StatesGroup, State
+from aiogram.exceptions import TelegramBadRequest
+
+import config
+import database
+
+router = Router()
+
+SECTION = "genetics"
+PAGE_SIZE = 15
+MAX_CAPTION = 1024      # предел подписи к медиа в Telegram
+MAX_MESSAGE = 4096      # предел обычного сообщения
+
+EMPTY = {
+    "ru": "🧬 База знаний пока пуста. Материалы подтягиваются из канала — загляните позже.",
+    "en": "🧬 The knowledge base is empty for now. Material is pulled from the channel — check back later.",
+    "fr": "🧬 La base de connaissances est vide pour l'instant. Revenez plus tard.",
+    "he": "🧬 מאגר הידע ריק כרגע. החומרים נמשכים מהערוץ — בדקו מאוחר יותר."
+}
+
+PICK = {
+    "ru": "🧬 **База знаний по генетике**\n\n👇 Выберите материал:",
+    "en": "🧬 **Genetics knowledge base**\n\n👇 Choose an article:",
+    "fr": "🧬 **Base de connaissances en génétique**\n\n👇 Choisissez un article :",
+    "he": "🧬 **מאגר הידע בגנטיקה**\n\n👇 בחרו חומר:"
+}
+
+PICK_PAGED = {
+    "ru": "🧬 **База знаний по генетике**\n\n👇 Страница {page} из {pages}, всего материалов: {total}",
+    "en": "🧬 **Genetics knowledge base**\n\n👇 Page {page} of {pages}, {total} articles in total",
+    "fr": "🧬 **Base de connaissances**\n\n👇 Page {page} sur {pages}, {total} articles",
+    "he": "🧬 **מאגר הידע**\n\n👇 עמוד {page} מתוך {pages}, סה\"כ {total}"
+}
+
+BACK = {"ru": "🔙 Назад", "en": "🔙 Back", "fr": "🔙 Retour", "he": "🔙 חזרה"}
+TO_LIST = {"ru": "🔙 К списку", "en": "🔙 Back to list",
+           "fr": "🔙 Retour à la liste", "he": "🔙 חזרה לרשימה"}
+SOURCE = {"ru": "🔗 Читать в канале", "en": "🔗 Read in the channel",
+          "fr": "🔗 Lire dans le canal", "he": "🔗 קראו בערוץ"}
+
+
+def _t(mapping: dict, lang: str) -> str:
+    return mapping.get(lang, mapping["en"])
+
+
+# =====================================================================
+# СПИСОК И ЧТЕНИЕ
+# =====================================================================
+
+async def build_list(lang: str, page: int):
+    total = await database.count_articles(SECTION)
+    if not total:
+        return None, None
+
+    pages = max(1, -(-total // PAGE_SIZE))
+    page = max(0, min(page, pages - 1))
+    rows = await database.get_article_titles(SECTION, PAGE_SIZE, page * PAGE_SIZE)
+
+    buttons = []
+    for article_id, title in rows:
+        label = (title or "Материал").strip()
+        if len(label) > 60:
+            label = label[:57].rstrip() + "…"
+        buttons.append([InlineKeyboardButton(
+            text=label, callback_data=f"genitem_{page}_{article_id}")])
+
+    if pages > 1:
+        nav = []
+        if page > 0:
+            nav.append(InlineKeyboardButton(text="⬅", callback_data=f"genlist_{page - 1}"))
+        nav.append(InlineKeyboardButton(text=f"{page + 1}/{pages}", callback_data="noop"))
+        if page < pages - 1:
+            nav.append(InlineKeyboardButton(text="➡", callback_data=f"genlist_{page + 1}"))
+        buttons.append(nav)
+
+    buttons.append([InlineKeyboardButton(
+        text=_t(BACK, lang), callback_data="intellect_genetics")])
+
+    header = (_t(PICK_PAGED, lang).format(page=page + 1, pages=pages, total=total)
+              if pages > 1 else _t(PICK, lang))
+    return header, InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+@router.callback_query(F.data == "genetics_channel_base")
+async def open_knowledge_base(call: CallbackQuery):
+    await call.answer()
+    lang = await database.get_user_language(call.from_user.id)
+    header, markup = await build_list(lang, 0)
+
+    if header is None:
+        await call.message.answer(_t(EMPTY, lang))
+        return
+    await call.message.answer(header, parse_mode="Markdown", reply_markup=markup)
+
+
+@router.callback_query(F.data.startswith("genlist_"))
+async def turn_page(call: CallbackQuery):
+    await call.answer()
+    lang = await database.get_user_language(call.from_user.id)
+    header, markup = await build_list(lang, int(call.data.removeprefix("genlist_")))
+    if header is None:
+        return
+    try:
+        await call.message.edit_text(header, parse_mode="Markdown", reply_markup=markup)
+    except TelegramBadRequest:
+        await call.message.answer(header, parse_mode="Markdown", reply_markup=markup)
+
+
+@router.callback_query(F.data.startswith("genitem_"))
+async def open_article(call: CallbackQuery):
+    await call.answer()
+    try:
+        _, page, raw_id = call.data.split("_", 2)
+        article_id = int(raw_id)
+    except ValueError:
+        return
+
+    lang = await database.get_user_language(call.from_user.id)
+    article = await database.get_article(article_id)
+    if not article:
+        return
+
+    title, text, photo_id, video_id, link = article
+    body = text or title
+
+    rows = []
+    if link:
+        rows.append([InlineKeyboardButton(text=_t(SOURCE, lang), url=link)])
+    rows.append([InlineKeyboardButton(text=_t(TO_LIST, lang), callback_data=f"genlist_{page}")])
+    markup = InlineKeyboardMarkup(inline_keyboard=rows)
+
+    # Длинный материал не помещается ни в подпись, ни иногда в одно сообщение,
+    # поэтому режем по границам абзацев и кнопку вешаем на последний кусок.
+    media_id = video_id or photo_id
+    if media_id and len(body) <= MAX_CAPTION:
+        if video_id:
+            await call.message.answer_video(video=video_id, caption=body, reply_markup=markup)
+        else:
+            await call.message.answer_photo(photo=photo_id, caption=body, reply_markup=markup)
+        return
+
+    if media_id:
+        if video_id:
+            await call.message.answer_video(video=video_id)
+        else:
+            await call.message.answer_photo(photo=photo_id)
+
+    chunks = _split(body, MAX_MESSAGE)
+    for index, chunk in enumerate(chunks):
+        is_last = index == len(chunks) - 1
+        await call.message.answer(chunk, reply_markup=markup if is_last else None)
+
+
+def _split(text: str, limit: int):
+    """Режет длинный текст по абзацам, не разрывая слова"""
+    if len(text) <= limit:
+        return [text]
+    chunks, current = [], ""
+    for paragraph in text.split("\n\n"):
+        candidate = f"{current}\n\n{paragraph}" if current else paragraph
+        if len(candidate) <= limit:
+            current = candidate
+            continue
+        if current:
+            chunks.append(current)
+        while len(paragraph) > limit:
+            cut = paragraph.rfind(" ", 0, limit)
+            cut = cut if cut > limit // 2 else limit
+            chunks.append(paragraph[:cut])
+            paragraph = paragraph[cut:].lstrip()
+        current = paragraph
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+# =====================================================================
+# НАПОЛНЕНИЕ
+# =====================================================================
+
+class GeneticsImport(StatesGroup):
+    collecting = State()
+
+
+def extract_article(message: Message) -> dict:
+    text = (message.text or message.caption or "").strip()
+    first_line = text.split("\n")[0].strip() if text else ""
+    title = first_line.lstrip("#").strip() or "Материал"
+    if len(title) > 80:
+        title = title[:77].rstrip() + "…"
+
+    link = None
+    for entity in list(message.entities or []) + list(message.caption_entities or []):
+        if entity.type == "text_link" and entity.url:
+            link = entity.url
+            break
+        if entity.type == "url":
+            link = text[entity.offset:entity.offset + entity.length]
+            break
+
+    return {
+        "title": title,
+        "text": text,
+        "photo_id": message.photo[-1].file_id if message.photo else None,
+        "video_id": message.video.file_id if message.video else None,
+        "link": link,
+    }
+
+
+def source_key(message: Message) -> str:
+    origin = getattr(message, "forward_origin", None)
+    chat = getattr(origin, "chat", None) if origin is not None else None
+    message_id = getattr(origin, "message_id", None) if origin is not None else None
+    if chat is None:
+        chat = getattr(message, "forward_from_chat", None)
+        message_id = getattr(message, "forward_from_message_id", None)
+    if chat is None or message_id is None:
+        return f"{message.chat.id}:{message.message_id}"
+    return f"{chat.id}:{message_id}"
+
+
+async def _save(message: Message) -> str:
+    data = extract_article(message)
+    result = await database.add_article(
+        SECTION, data["title"], data["text"], data["photo_id"],
+        data["video_id"], data["link"], source_key(message)
+    )
+    total = await database.count_articles(SECTION)
+
+    if result == "added":
+        marks = [name for name, value in
+                 (("фото", data["photo_id"]), ("видео", data["video_id"]), ("ссылка", data["link"]))
+                 if value]
+        extra = f" ({', '.join(marks)})" if marks else ""
+        return f"✅ «{data['title']}»{extra}\n\nВ базе знаний: <b>{total}</b>"
+    if result == "duplicate":
+        return f"↩️ Этот пост уже добавлен. Всего: <b>{total}</b>"
+
+    detail = result.split(":", 1)[1] if result.startswith("error:") else "причина неизвестна"
+    return f"⚠️ Не сохранено.\n\n<code>{detail[:600]}</code>"
+
+
+@router.message(F.text == "/genetics")
+async def import_start(message: Message, state: FSMContext):
+    if not config.is_admin(message.from_user.id):
+        return
+    await state.set_state(GeneticsImport.collecting)
+    await message.answer(
+        "🧬 <b>Режим импорта материалов по генетике включён.</b>\n\n"
+        f"Сейчас в базе знаний: <b>{await database.count_articles(SECTION)}</b>\n\n"
+        "Пересылайте посты из канала — по одному или пачкой. Заголовком станет "
+        "первая строка поста, по ней материал и будет виден в списке.\n\n"
+        "Когда закончите — отправьте /genetics_done"
+    )
+
+
+@router.message(F.text == "/genetics_done", GeneticsImport.collecting)
+async def import_stop(message: Message, state: FSMContext):
+    if not config.is_admin(message.from_user.id):
+        return
+    await state.clear()
+    await message.answer(
+        f"✅ Импорт завершён. В базе знаний: <b>{await database.count_articles(SECTION)}</b>")
+
+
+@router.message(GeneticsImport.collecting, F.text | F.caption, ~F.text.startswith("/"))
+async def import_post(message: Message):
+    if not config.is_admin(message.from_user.id):
+        return
+    await message.answer(await _save(message))
+
+
+@router.message(GeneticsImport.collecting, ~F.text.startswith("/"))
+async def import_hint(message: Message):
+    if not config.is_admin(message.from_user.id):
+        return
+    await message.answer(
+        "В посте нет ни текста, ни подписи — сохранять нечего. "
+        "Перешлите пост с текстом или отправьте /genetics_done."
+    )
+
+
+def _is_genetics_post(message: Message) -> bool:
+    """Только свой канал: без этого материалы одного канала попадали бы в чужой раздел"""
+    return bool(config.GENETICS_CHANNEL) and message.chat.id == config.GENETICS_CHANNEL
+
+
+@router.channel_post(_is_genetics_post)
+async def auto_collect(message: Message):
+    if not (message.text or message.caption):
+        return
+    data = extract_article(message)
+    result = await database.add_article(
+        SECTION, data["title"], data["text"], data["photo_id"],
+        data["video_id"], data["link"], source_key(message)
+    )
+    if result == "added":
+        logging.info(f"🧬 АВТО-ГЕНЕТИКА: добавлен материал «{data['title']}»")
