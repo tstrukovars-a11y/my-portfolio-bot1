@@ -305,3 +305,147 @@ async def auto_collect(message: Message):
     )
     if result == "added":
         logging.info(f"🧬 АВТО-ГЕНЕТИКА: добавлен материал «{data['title']}»")
+
+
+# =====================================================================
+# 🌍 НОВОСТИ ГЕНЕТИКИ ПО СТРАНАМ
+# =====================================================================
+
+NEWS_COUNTRIES = {
+    "gen_us": {"flag": "🇺🇸", "ru": "США", "en": "USA"},
+    "gen_kr": {"flag": "🇰🇷", "ru": "Корея", "en": "South Korea"},
+    "gen_il": {"flag": "🇮🇱", "ru": "Израиль", "en": "Israel"},
+    "gen_cn": {"flag": "🇨🇳", "ru": "Китай", "en": "China"},
+}
+
+NEWS_HUB = {
+    "ru": "🌍 **Новости генетики**\n\nСвежие научные публикации четырёх стран. Выберите страну:",
+    "en": "🌍 **Genetics news**\n\nRecent research coverage from four countries. Pick one:",
+    "fr": "🌍 **Actualités de la génétique**\n\nPublications récentes de quatre pays. Choisissez :",
+    "he": "🌍 **חדשות גנטיקה**\n\nפרסומים מדעיים עדכניים מארבע מדינות. בחרו מדינה:"
+}
+
+NEWS_HEADER = {
+    "ru": "{flag} **Генетика — {name}**\n\n",
+    "en": "{flag} **Genetics — {name}**\n\n",
+}
+
+NEWS_EMPTY = {
+    "ru": "Заголовки появятся здесь после ближайшего обновления — оно идёт раз в сутки.",
+    "en": "Headlines will appear here after the next daily update.",
+    "fr": "Les titres apparaîtront après la prochaine mise à jour quotidienne.",
+    "he": "הכותרות יופיעו כאן לאחר העדכון היומי הבא."
+}
+
+# Заголовки лент приходят на английском намеренно: корейские и китайские
+# оригиналы читатель бота не разберёт, а перевод исказил бы термины.
+NEWS_NOTE = {
+    "ru": "\n\n_Источники англоязычные — так термины остаются точными._",
+    "en": "",
+    "fr": "\n\n_Sources en anglais._",
+    "he": "\n\n_המקורות באנגלית._"
+}
+
+
+@router.callback_query(F.data == "genetics_news")
+async def open_news_hub(call: CallbackQuery):
+    await call.answer()
+    lang = await database.get_user_language(call.from_user.id)
+    name_key = "ru" if lang == "ru" else "en"
+
+    rows = [[InlineKeyboardButton(
+        text=f"{meta['flag']} {meta[name_key]}", callback_data=f"gennews_{key}")]
+        for key, meta in NEWS_COUNTRIES.items()]
+    rows.append([InlineKeyboardButton(text=_t(BACK, lang), callback_data="intellect_genetics")])
+
+    try:
+        await call.message.edit_caption(
+            caption=_t(NEWS_HUB, lang), parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=rows)
+        )
+    except TelegramBadRequest:
+        await call.message.answer(
+            _t(NEWS_HUB, lang), parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=rows)
+        )
+
+
+@router.callback_query(F.data.startswith("gennews_"))
+async def show_country_news(call: CallbackQuery):
+    await call.answer()
+    key = call.data.removeprefix("gennews_")
+    if key not in NEWS_COUNTRIES:
+        return
+
+    lang = await database.get_user_language(call.from_user.id)
+    meta = NEWS_COUNTRIES[key]
+    name_key = "ru" if lang == "ru" else "en"
+
+    content, _ = await database.get_daily_news(key)
+    header = NEWS_HEADER.get(lang, NEWS_HEADER["en"]).format(
+        flag=meta["flag"], name=meta[name_key])
+    body = (content + _t(NEWS_NOTE, lang)) if content else _t(NEWS_EMPTY, lang)
+
+    markup = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
+        text=_t(BACK, lang), callback_data="genetics_news")]])
+    await call.message.answer(
+        header + body, parse_mode="Markdown",
+        disable_web_page_preview=True, reply_markup=markup
+    )
+
+
+# =====================================================================
+# 🧪 ЗАКАЗ ИССЛЕДОВАНИЯ ИЛИ РАСШИФРОВКИ
+# =====================================================================
+
+ORDER_PITCH = {
+    "ru": ("🧪 **Исследование и расшифровка генов**\n\n"
+           "Разбор готового генетического теста, подбор панели под задачу, "
+           "объяснение результатов человеческим языком — без диагнозов и обещаний, "
+           "только то, что действительно следует из данных.\n\n"
+           "Опишите задачу в заявке, и я отвечу лично: что реально сделать, "
+           "в какие сроки и на каких условиях.\n\n"
+           "_Это не медицинская услуга и не замена консультации врача._"),
+    "en": ("🧪 **Genetic research and sequencing**\n\n"
+           "Interpreting an existing genetic test, choosing a panel for your question, "
+           "explaining results in plain language — no diagnoses and no promises, only "
+           "what the data actually supports.\n\n"
+           "Describe your task in the request and I will reply personally: what is "
+           "feasible, in what timeframe and on what terms.\n\n"
+           "_This is not a medical service and does not replace a doctor's consultation._"),
+    "fr": ("🧪 **Recherche génétique et séquençage**\n\n"
+           "Interprétation d'un test existant, choix d'un panel, explication des "
+           "résultats en langage clair — sans diagnostic ni promesses.\n\n"
+           "Décrivez votre besoin et je répondrai personnellement.\n\n"
+           "_Ceci n'est pas un service médical._"),
+    "he": ("🧪 **מחקר גנטי ופענוח**\n\n"
+           "פענוח בדיקה גנטית קיימת, בחירת פאנל מתאים והסבר התוצאות בשפה ברורה — "
+           "בלי אבחנות ובלי הבטחות.\n\nתארו את הצורך ואענה אישית.\n\n"
+           "_זהו אינו שירות רפואי._")
+}
+
+BTN_ORDER = {"ru": "✉️ Оставить заявку", "en": "✉️ Send a request",
+             "fr": "✉️ Envoyer une demande", "he": "✉️ שלחו בקשה"}
+
+
+@router.callback_query(F.data == "genetics_order")
+async def open_order_pitch(call: CallbackQuery):
+    await call.answer()
+    lang = await database.get_user_language(call.from_user.id)
+
+    rows = []
+    if config.ADMIN_ID:
+        rows.append([InlineKeyboardButton(
+            text=_t(BTN_ORDER, lang), callback_data="ads_order")])
+    rows.append([InlineKeyboardButton(text=_t(BACK, lang), callback_data="intellect_genetics")])
+
+    try:
+        await call.message.edit_caption(
+            caption=_t(ORDER_PITCH, lang), parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=rows)
+        )
+    except TelegramBadRequest:
+        await call.message.answer(
+            _t(ORDER_PITCH, lang), parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=rows)
+        )

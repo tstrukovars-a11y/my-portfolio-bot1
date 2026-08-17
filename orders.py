@@ -26,6 +26,8 @@ class OrderStates(StatesGroup):
 
 # Варианты запроса. Ключ уходит в заявку, чтобы вы сразу видели тип обращения.
 NEEDS = {
+    "gene_research": {"ru": "🧪 Исследование или расшифровка генов",
+                      "en": "🧪 Genetic research or sequencing"},
     "shop_support": {"ru": "🛍 Сопровождение магазина", "en": "🛍 Store support"},
     "channel_ads": {"ru": "📢 Реклама в моём канале", "en": "📢 Ads in my channel"},
     "bot_link": {"ru": "🔗 Встроить ссылку в бота", "en": "🔗 Embed a link in a bot"},

@@ -50,6 +50,17 @@ FEEDS = {
     ],
 }
 
+# Ленты по генетике для раздела «Новости генетики». Запросы намеренно на
+# английском: корейские и китайские заголовки читатель бота не разберёт, а так
+# материал остаётся понятным на любом языке интерфейса. Ключи с префиксом gen_
+# не пересекаются с деловыми новостями в той же таблице.
+GENETICS_FEEDS = {
+    "gen_us": "https://news.google.com/rss/search?q=genetics+genomics+research+United+States&hl=en-US&gl=US&ceid=US:en",
+    "gen_kr": "https://news.google.com/rss/search?q=South+Korea+genetics+genomics+research&hl=en-US&gl=US&ceid=US:en",
+    "gen_il": "https://news.google.com/rss/search?q=Israel+genetics+genomics+research&hl=en-US&gl=US&ceid=US:en",
+    "gen_cn": "https://news.google.com/rss/search?q=China+genetics+genomics+research&hl=en-US&gl=US&ceid=US:en",
+}
+
 # Темы, которые всегда исключаются из подборки, даже если попали в экономический раздел ленты
 EXCLUDE_KEYWORDS = [
     "сво", "спецоперация", "специальная военная операция",
@@ -133,6 +144,19 @@ async def refresh_all_news(database_module):
                 logging.warning(f"Не удалось обновить новости: {country}")
 
 
+async def refresh_genetics_news(database_module):
+    """Свежие заголовки по генетике для четырёх стран"""
+    async with httpx.AsyncClient(follow_redirects=True) as client:
+        keys = list(GENETICS_FEEDS.keys())
+        results = await asyncio.gather(
+            *[fetch_country_news(client, k, [(GENETICS_FEEDS[k], None)]) for k in keys]
+        )
+        for key, content in zip(keys, results):
+            if content:
+                await database_module.save_daily_news(key, content)
+                logging.info(f"Новости генетики обновлены: {key}")
+
+
 async def news_scheduler(database_module, index_module=None, claude_client=None):
     """Фоновая задача: обновляет новости сразу при старте бота, затем каждые 24 часа.
 
@@ -144,6 +168,11 @@ async def news_scheduler(database_module, index_module=None, claude_client=None)
             await refresh_all_news(database_module)
         except Exception as e:
             logging.error(f"Ошибка планировщика новостей: {e}")
+
+        try:
+            await refresh_genetics_news(database_module)
+        except Exception as e:
+            logging.error(f"Ошибка загрузки новостей генетики: {e}")
 
         if index_module is not None:
             try:

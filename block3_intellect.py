@@ -126,35 +126,11 @@ async def open_diary_engineering(call: CallbackQuery):
 # ==========================================================
 @router.callback_query(F.data == "intellect_genetics")
 async def open_menu_intellect_genetics(call: CallbackQuery):
+    """Раздел открыт для всех: платной осталась только услуга — заказ
+    исследования или расшифровки, он живёт на отдельной кнопке."""
     await call.answer()
-    user_id = call.from_user.id
-    user_lang = await database.get_user_language(user_id)
-    
-    # 🔒 Проверка Premium-подписки в базе данных перед выдачей контента
-    has_premium = await database.check_subscription(user_id)
-    if not has_premium:
-        # Тексты-уведомления об ограничении доступа на 4 языках
-        limit_warnings = {
-            "ru": "⚠️ **Раздел Premium-доступ**\n\nЭтот подблок содержит научные исследования, чек-листы и защищенные материалы. Пожалуйста, оформите подписку для продолжения.",
-            "en": "⚠️ **Premium Access Only**\n\nThis subsection contains research data, check-lists, and locked assets. Please buy a subscription to proceed.",
-            "fr": "⚠️ **Accès Premium Uniquement**\n\nCette sous-section contient des données de recherche et des fiches pratiques. Veuillez vous abonner pour continuer.",
-            "he": "⚠️ **גישת פריмиיום בלבד**\n\nתת-סעיף זה מכיל נתוני מחקר, צ'ק-ליסטים וחומרים מוגנים. אנא רכוש מנוי כדי להמשיך."
-        }
-        caption_limit = limit_warnings.get(user_lang, limit_warnings["en"])
-        
-        # Подгружаем правильные 4-язычные тарифные сетки (Все на месте)
-        if user_lang == "ru": current_pay_markup = inline_kb.get_claude_pay_menu(user_lang)
-        elif user_lang == "fr": current_pay_markup = inline_kb.get_claude_pay_menu(user_lang)
-        elif user_lang == "he": current_pay_markup = inline_kb.get_claude_pay_menu(user_lang)
-        else: current_pay_markup = inline_kb.get_claude_pay_menu(user_lang)
-            
-        await call.message.edit_media(
-            media=InputMediaPhoto(media=config.CLOD_BANNER, caption=caption_limit, parse_mode="Markdown"),
-            reply_markup=current_pay_markup
-        )
-        return
-
     try:
+        user_lang = await database.get_user_language(call.from_user.id)
         caption_text = menu_texts.GENETICS_MAIN_TEXTS.get(user_lang, menu_texts.GENETICS_MAIN_TEXTS["en"])
         await call.message.edit_media(
             media=InputMediaPhoto(media=config.GENETICS_BANNER, caption=caption_text, parse_mode="Markdown"),
