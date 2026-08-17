@@ -26,6 +26,7 @@ class OrderStates(StatesGroup):
 
 # Варианты запроса. Ключ уходит в заявку, чтобы вы сразу видели тип обращения.
 NEEDS = {
+    "shop_support": {"ru": "🛍 Сопровождение магазина", "en": "🛍 Store support"},
     "channel_ads": {"ru": "📢 Реклама в моём канале", "en": "📢 Ads in my channel"},
     "bot_link": {"ru": "🔗 Встроить ссылку в бота", "en": "🔗 Embed a link in a bot"},
     "bot_build": {"ru": "🤖 Нужен бот под задачу", "en": "🤖 Need a bot built"},

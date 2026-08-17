@@ -84,11 +84,41 @@ def category_title(gender: str, item_type: str, lang: str) -> str:
 # =====================================================================
 
 SHOP_INTRO = {
-    "ru": "🛍 **Pro-Shop**\n\nПодборка теннисной экипировки от партнёрского магазина. Выберите раздел:",
-    "en": "🛍 **Pro-Shop**\n\nA curated tennis gear selection from our partner store. Choose a section:",
-    "fr": "🛍 **Pro-Shop**\n\nUne sélection d'équipement de tennis de notre boutique partenaire. Choisissez :",
+    "ru": ("🛍 **Pro-Shop**\n\nПодборка теннисной экипировки от партнёрского магазина. "
+           "Выберите раздел:"),
+    "en": ("🛍 **Pro-Shop**\n\nA curated tennis gear selection from our partner store. "
+           "Choose a section:"),
+    "fr": ("🛍 **Pro-Shop**\n\nUne sélection d'équipement de tennis de notre boutique "
+           "partenaire. Choisissez :"),
     "he": "🛍 **Pro-Shop**\n\nמבחר ציוד טניס מחנות שותפה. בחרו מדור:"
 }
+
+# Обращение к владельцам магазинов. Показывается под витриной — там, где человек
+# уже увидел, как устроен каталог, и может примерить его на себя.
+OWNER_PITCH = {
+    "ru": ("\n\n———\n💼 **Владельцам магазинов**\n\n"
+           "Хотите, чтобы ваш магазин работал лучше? Соберу такую же витрину под ваш "
+           "ассортимент и возьму на себя полное сопровождение: раскладка по категориям, "
+           "размётка ссылок, прозрачная аналитика переходов — видно, какие товары "
+           "смотрят, а какие лежат мёртвым грузом.\n\n"
+           "По сотрудничеству — кнопка «Оставить заявку» ниже."),
+    "en": ("\n\n———\n💼 **For store owners**\n\n"
+           "Want your store to work better? I can build the same storefront around your "
+           "range and take on full support: category structure, link tagging and "
+           "transparent click analytics — you see which items get looked at and which "
+           "just sit there.\n\n"
+           "For partnership, use the request button below."),
+    "fr": ("\n\n———\n💼 **Pour les propriétaires de boutiques**\n\n"
+           "Je peux construire la même vitrine pour votre catalogue et en assurer le suivi "
+           "complet : structure par catégories, marquage des liens, analyse transparente "
+           "des clics.\n\nPour toute collaboration, utilisez le bouton ci-dessous."),
+    "he": ("\n\n———\n💼 **לבעלי חנויות**\n\n"
+           "אבנה חלון ראווה כזה עבור המגוון שלכם ואקח על עצמי ליווי מלא: חלוקה לקטגוריות, "
+           "תיוג קישורים וניתוח שקוף של הקליקים.\n\nלשיתוף פעולה — הכפתור למטה.")
+}
+
+BTN_REQUEST = {"ru": "✉️ Оставить заявку", "en": "✉️ Send a request",
+               "fr": "✉️ Envoyer une demande", "he": "✉️ שלחו בקשה"}
 
 EMPTY_SHOP = {
     "ru": "🛍 Каталог пока пуст. Товары появятся здесь совсем скоро.",
@@ -144,6 +174,13 @@ async def open_shop(call: CallbackQuery):
             )])
 
     caption = _label(SHOP_INTRO, lang) if rows else _label(EMPTY_SHOP, lang)
+
+    # Кнопку заявки показываем только когда заявке есть куда прийти
+    if config.ADMIN_ID:
+        caption += _label(OWNER_PITCH, lang)
+        rows.append([InlineKeyboardButton(
+            text=_label(BTN_REQUEST, lang), callback_data="ads_order")])
+
     rows.append([InlineKeyboardButton(text=_label(BACK, lang), callback_data="sport_tennis")])
     markup = InlineKeyboardMarkup(inline_keyboard=rows)
 
