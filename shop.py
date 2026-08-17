@@ -161,12 +161,14 @@ async def open_shop(call: CallbackQuery):
     await call.answer()
     lang = await database.get_user_language(call.from_user.id)
 
+    # Один запрос на всю витрину вместо запроса на каждую категорию.
+    # Считаем по известным типам: если категорию когда-нибудь уберут, её товары
+    # не должны раздувать счётчик сверху, оставаясь недоступными в списках.
+    counts = await database.get_shop_counts()
+
     rows = []
     for gender in GENDERS:
-        # Считаем по известным типам, а не по разделу целиком: если категорию
-        # когда-нибудь уберут, её товары не должны раздувать счётчик сверху,
-        # оставаясь при этом недоступными ни в одном списке.
-        count = sum([await database.count_shop_items(gender, t) for t in TYPES[gender]])
+        count = sum(counts.get((gender, t), 0) for t in TYPES[gender])
         if count:
             rows.append([InlineKeyboardButton(
                 text=f"{_label(GENDERS[gender], lang)} ({count})",
@@ -205,9 +207,11 @@ async def open_gender_section(call: CallbackQuery):
 
     lang = await database.get_user_language(call.from_user.id)
 
+    counts = await database.get_shop_counts()
+
     rows = []
     for item_type in TYPES[gender]:
-        count = await database.count_shop_items(gender, item_type)
+        count = counts.get((gender, item_type), 0)
         if count:
             rows.append([InlineKeyboardButton(
                 text=f"{_label(TYPES[gender][item_type], lang)} ({count})",

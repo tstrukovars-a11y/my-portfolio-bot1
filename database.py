@@ -353,6 +353,13 @@ async def get_user_language(user_id: int) -> str:
     НЕ пробрасывается наружу: этот вызов стоит первой строкой почти в каждом
     хендлере, и исключение делало неработающим всё меню целиком.
     """
+    # Кэш проверяем ПЕРВЫМ. Эта функция стоит в начале почти каждого хендлера и
+    # ещё раз в middleware аналитики: без кэша получалось по два обращения к базе
+    # на каждое нажатие, а по внешнему адресу это заметная задержка отклика.
+    cached = _lang_cache.get(user_id)
+    if cached:
+        return cached
+
     try:
         pool = await get_pool()
         async with pool.acquire() as conn:
@@ -363,7 +370,7 @@ async def get_user_language(user_id: int) -> str:
     except Exception as e:
         logging.error(f"БД недоступна при чтении языка, работаем из памяти: {e}")
 
-    return _lang_cache.get(user_id, "en")
+    return "en"
 
 
 # --- ФУНКЦИИ ДЛЯ РАБОТЫ С ПОДПИСКАМИ ---
@@ -804,6 +811,25 @@ async def move_shop_item(item_id: int, gender: str, item_type: str) -> bool:
     except Exception as e:
         logging.error(f"Не удалось перенести товар: {type(e).__name__}: {e}")
         return False
+
+
+async def get_shop_counts() -> dict:
+    """Счётчики всех категорий одним запросом: {(пол, тип): количество}.
+
+    Раньше витрина спрашивала количество отдельно по каждой категории — это
+    полтора десятка обращений к базе на одно открытие раздела.
+    """
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT gender, item_type, COUNT(*) AS n FROM {SCHEMA}.shop_items "
+                "GROUP BY gender, item_type"
+            )
+        return {(r["gender"], r["item_type"]): r["n"] for r in rows}
+    except Exception as e:
+        logging.error(f"БД недоступна при подсчёте витрины: {e}")
+        return {}
 
 
 async def count_shop_items(gender: str = None, item_type: str = None) -> int:
