@@ -248,6 +248,8 @@ BACK = {"ru": "🔙 Назад", "en": "🔙 Back", "fr": "🔙 Retour", "he": "
 PRIME_SPORT_URL = "https://vk.com/tennisprimesport"
 BOLSHE_URL = "https://vk.com/tennis_bolshe"
 
+BTN_WATCH = {"ru": "📺 Где смотреть", "en": "📺 Where to watch",
+             "fr": "📺 Où regarder", "he": "📺 איפה לצפות"}
 BTN_RANKING = {"ru": "📈 Рейтинг участниц", "en": "📈 WTA live ranking",
                "fr": "📈 Classement WTA", "he": "📈 דירוג WTA"}
 BTN_HIGHLIGHTS = {"ru": "🎬 Хайлайты игр", "en": "🎬 Match highlights",
