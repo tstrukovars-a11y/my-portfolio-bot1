@@ -35,8 +35,28 @@ def _make_webhook_secret() -> str:
 WEBHOOK_SECRET = _make_webhook_secret()
 
 
+# Номера недавно обработанных апдейтов. Telegram (или прокси перед ботом) может
+# доставить один и тот же апдейт дважды — тогда на одну команду /start приходило
+# два меню. Номер апдейта уникален, поэтому повтор видно сразу.
+_seen_updates: set = set()
+_seen_order: list = []
+
+
+def _already_processed(update_id: int) -> bool:
+    if update_id in _seen_updates:
+        return True
+    _seen_updates.add(update_id)
+    _seen_order.append(update_id)
+    if len(_seen_order) > 1000:
+        _seen_updates.discard(_seen_order.pop(0))
+    return False
+
+
 async def _process_update(bot: Bot, dp: Dispatcher, update: Update):
     """Прогоняет апдейт через роутеры, не давая исключению потеряться молча"""
+    if _already_processed(update.update_id):
+        logging.warning(f"Апдейт {update.update_id} пришёл повторно — пропускаю")
+        return
     try:
         await dp.feed_update(bot=bot, update=update)
     except Exception as e:

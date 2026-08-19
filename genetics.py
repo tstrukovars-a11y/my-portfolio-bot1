@@ -159,6 +159,9 @@ async def open_article(call: CallbackQuery):
     lang = await database.get_user_language(call.from_user.id)
     article = await database.get_article(article_id)
     if not article:
+        # Кнопка из старого сообщения может указывать на удалённую главу.
+        # Молчаливый выход выглядел как «кнопка не работает».
+        await call.answer("Глава не найдена — откройте список заново", show_alert=True)
         return
 
     title, text, photo_id, video_id, link = article
@@ -187,27 +190,35 @@ async def open_article(call: CallbackQuery):
     # приходит из канала как есть: любой символ «<» — например «p<0.05» — Telegram
     # принимает за начало тега и отклоняет сообщение целиком, текст пропадает.
     media_id = video_id or photo_id
-    if media_id:
-        # Подписью идёт только начало текста, остаток режется по лимиту обычного
-        # сообщения. Если резать весь текст по лимиту подписи, глава рассыпается
-        # на семь огрызков вместо двух.
-        caption, remainder = _cut_caption(body)
-        # Клавиатура вешается и на медиа тоже: при длинной главе кнопки под
-        # последним сообщением просто не находятся.
-        if video_id:
-            await call.message.answer_video(video=video_id, caption=caption,
-                                            parse_mode=None, reply_markup=markup)
+    try:
+        if media_id:
+            # Подписью идёт только начало текста, остаток режется по лимиту обычного
+            # сообщения. Если резать весь текст по лимиту подписи, глава рассыпается
+            # на семь огрызков вместо двух.
+            caption, remainder = _cut_caption(body)
+            # Клавиатура вешается и на медиа тоже: при длинной главе кнопки под
+            # последним сообщением просто не находятся.
+            if video_id:
+                await call.message.answer_video(video=video_id, caption=caption,
+                                                parse_mode=None, reply_markup=markup)
+            else:
+                await call.message.answer_photo(photo=photo_id, caption=caption,
+                                                parse_mode=None, reply_markup=markup)
+            chunks = _split(remainder, MAX_MESSAGE) if remainder.strip() else []
         else:
-            await call.message.answer_photo(photo=photo_id, caption=caption,
-                                            parse_mode=None, reply_markup=markup)
-        chunks = _split(remainder, MAX_MESSAGE) if remainder.strip() else []
-    else:
-        chunks = _split(body, MAX_MESSAGE)
+            chunks = _split(body, MAX_MESSAGE)
 
-    for index, chunk in enumerate(chunks):
-        is_last = index == len(chunks) - 1
-        await call.message.answer(chunk, parse_mode=None,
-                                  reply_markup=markup if is_last else None)
+        for index, chunk in enumerate(chunks):
+            is_last = index == len(chunks) - 1
+            await call.message.answer(chunk, parse_mode=None,
+                                      reply_markup=markup if is_last else None)
+    except TelegramBadRequest as e:
+        # Чаще всего это битый file_id картинки. Без сообщения глава выглядела
+        # как кнопка, которая ничего не делает.
+        logging.error(f"Глава {article_id} не отправилась: {e}")
+        note = f"⚠️ Материал не удалось показать: {e.message}" if config.is_admin(
+            call.from_user.id) else "⚠️ Не удалось показать материал."
+        await call.message.answer(note, reply_markup=markup)
 
 
 def _cut_caption(text: str):
