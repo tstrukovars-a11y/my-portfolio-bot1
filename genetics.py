@@ -56,6 +56,16 @@ SOURCE = {"ru": "🔗 Читать в канале", "en": "🔗 Read in the cha
           "fr": "🔗 Lire dans le canal", "he": "🔗 קראו בערוץ"}
 CHAPTER = {"ru": "Глава", "en": "Chapter", "fr": "Chapitre", "he": "פרק"}
 
+NO_TEXT_YET = {
+    "ru": "📷 В этой главе пока только изображение — текст ещё не добавлен.",
+    "en": "📷 This chapter has only an image so far — the text has not been added yet.",
+    "fr": "📷 Ce chapitre ne contient qu'une image pour l'instant.",
+    "he": "📷 בפרק הזה יש בינתיים רק תמונה — הטקסט טרם נוסף."
+}
+
+UNTITLED = {"ru": "Без названия", "en": "Untitled",
+            "fr": "Sans titre", "he": "ללא כותרת"}
+
 
 def _t(mapping: dict, lang: str) -> str:
     return mapping.get(lang, mapping["en"])
@@ -83,7 +93,8 @@ async def build_list(lang: str, page: int):
     lines, number_buttons = [], []
     for index, (article_id, title) in enumerate(rows):
         number = page * PAGE_SIZE + index + 1
-        lines.append(f"{number}. {(title or 'Материал').strip()}")
+        label = (title or "").strip() or _t(UNTITLED, lang)
+        lines.append(f"{number}. {label}")
         number_buttons.append(InlineKeyboardButton(
             text=str(number), callback_data=f"genitem_{page}_{article_id}"))
 
@@ -151,7 +162,13 @@ async def open_article(call: CallbackQuery):
         return
 
     title, text, photo_id, video_id, link = article
-    body = text or title
+
+    # Пост может состоять из одной картинки — тогда ни текста, ни заголовка нет.
+    # Пустое сообщение Telegram не принимает, а None ломает подсчёт длины, так
+    # что карточка падала и до кнопок правки было не добраться.
+    body = (text or "").strip() or (title or "").strip()
+    if not body:
+        body = _t(NO_TEXT_YET, lang)
 
     rows = []
     if link:
