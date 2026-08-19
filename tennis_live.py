@@ -222,6 +222,17 @@ BTN_DRAW = {"ru": "🗓 Расписание и сетка", "en": "🗓 Schedul
             "fr": "🗓 Programme", "he": "🗓 לוח משחקים"}
 BACK = {"ru": "🔙 Назад", "en": "🔙 Back", "fr": "🔙 Retour", "he": "🔙 חזרה"}
 
+# Проверенные площадки, которые ведёт владелец бота
+PRIME_SPORT_URL = "https://vk.com/tennisprimesport"
+BOLSHE_URL = "https://vk.com/tennis_bolshe"
+RANKING_URL = "https://live-tennis.eu/ru/wta-live-ranking"
+HIGHLIGHTS_URL = "https://youtube.com/@wta?feature=shared"
+
+BTN_RANKING = {"ru": "📈 Рейтинг участниц", "en": "📈 WTA live ranking",
+               "fr": "📈 Classement WTA", "he": "📈 דירוג WTA"}
+BTN_HIGHLIGHTS = {"ru": "🎬 Хайлайты игр", "en": "🎬 Match highlights",
+                  "fr": "🎬 Résumés des matchs", "he": "🎬 תקצירי משחקים"}
+
 
 def _t(mapping: dict, lang: str) -> str:
     return mapping.get(lang, mapping["en"])
@@ -236,6 +247,8 @@ async def open_hub(call: CallbackQuery):
         [InlineKeyboardButton(text=_t(BTN_RESULTS, lang), callback_data="wta_results")],
         [InlineKeyboardButton(text=_t(BTN_DRAW, lang), callback_data="wta_draw")],
         [InlineKeyboardButton(text=_t(BTN_WATCH, lang), callback_data="wta_watch")],
+        [InlineKeyboardButton(text=_t(BTN_RANKING, lang), url=RANKING_URL)],
+        [InlineKeyboardButton(text=_t(BTN_HIGHLIGHTS, lang), url=HIGHLIGHTS_URL)],
         [InlineKeyboardButton(text=_t(BACK, lang), callback_data="sport_tennis")],
     ])
     try:
@@ -329,6 +342,9 @@ async def show_draw(call: CallbackQuery):
 WHERE_TO_WATCH = {
     "ru": (
         "📺 <b>Видеотрансляции WTA</b>\n\n"
+        "<b>Прайм спорт</b> и канал <b>«Больше»</b> — трансляции и разборы матчей "
+        "на русском. Начинать проще с них: смотреть можно без подписки и "
+        "региональных ограничений.\n\n"
         "<b>WTA TV</b> — единственный сервис, который показывает <b>весь</b> женский тур, "
         "включая ранние круги. Нужны аккаунт и подписка, платится картой.\n\n"
         "<b>Турниры Большого шлема идут не там.</b> У них отдельные правообладатели:\n"
@@ -375,6 +391,8 @@ async def where_to_watch(call: CallbackQuery):
     text = WHERE_TO_WATCH.get(lang, WHERE_TO_WATCH["en"])
 
     markup = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📡 Прайм спорт", url=PRIME_SPORT_URL)],
+        [InlineKeyboardButton(text="📡 Канал «Больше»", url=BOLSHE_URL)],
         [InlineKeyboardButton(text="🔗 WTA TV", url="https://www.wtatv.com")],
         [InlineKeyboardButton(text="🔗 Календарь WTA" if lang == "ru" else "🔗 WTA calendar",
                               url="https://www.wtatennis.com/tournaments")],
