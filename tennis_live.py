@@ -5,6 +5,7 @@
 # RSS-лентам новостей, где браузерный заголовок обязателен.
 import html
 import logging
+import re
 import time
 
 import httpx
@@ -77,6 +78,24 @@ def _score(left, right) -> str:
     return " ".join(f"{x}-{y}" for x, y in zip(a, b))
 
 
+def _women_links(event, women_id):
+    """Ссылки на ЖЕНСКУЮ сетку.
+
+    ESPN отдаёт ссылки турнира всегда с type=1 — это мужской разряд. Номер
+    разряда берём из самой группировки («Women's Singles» = 2) и подставляем,
+    иначе кнопка «Сетка» уводила на мужскую таблицу.
+    """
+    if not women_id:
+        return event.get("links") or []
+    fixed = []
+    for link in event.get("links") or []:
+        href = link.get("href") or ""
+        href = re.sub(r"/type/\d+", f"/type/{women_id}", href)
+        href = re.sub(r"competitionType/\d+", f"competitionType/{women_id}", href)
+        fixed.append({**link, "href": href})
+    return fixed
+
+
 def _women_matches(data):
     """Матчи женского одиночного разряда с названием турнира и раундом"""
     result = []
@@ -93,7 +112,7 @@ def _women_matches(data):
                     continue
                 result.append({
                     "tournament": tournament,
-                    "links": event.get("links") or [],
+                    "links": _women_links(event, (grouping.get("grouping") or {}).get("id")),
                     "round": (match.get("grouping") or {}).get("displayName") or name,
                     "sides": sides,
                     "completed": bool(status.get("completed")),
