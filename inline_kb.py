@@ -366,18 +366,12 @@ def get_diary_menu(lang):
     ])
 
 def get_genetics_hub_menu(lang):
-    b = "🧬 Базовый контур" if lang == "ru" else "🧬 Core Level"
-    a = "🧬 Продвинутый уровень" if lang == "ru" else "🧬 Advanced Level"
-    r = "🔬 Исследования & Новости" if lang == "ru" else "🔬 Research & News"
     k = "📚 База знаний канала" if lang == "ru" else "📚 Channel knowledge base"
     n = "🌍 Новости генетики" if lang == "ru" else "🌍 Genetics news"
     o = "🧪 Заказать исследование" if lang == "ru" else "🧪 Order research"
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=k, callback_data="genetics_channel_base")],
         [InlineKeyboardButton(text=n, callback_data="genetics_news")],
-        [InlineKeyboardButton(text=b, callback_data="genetics_view_base")],
-        [InlineKeyboardButton(text=a, callback_data="genetics_view_advanced")],
-        [InlineKeyboardButton(text=r, callback_data="genetics_view_research")],
         [InlineKeyboardButton(text=o, callback_data="genetics_order")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="menu_intellect")]
     ])

@@ -144,62 +144,9 @@ async def open_menu_intellect_genetics(call: CallbackQuery):
             parse_mode="Markdown", reply_markup=inline_kb.get_genetics_hub_menu(user_lang)
         )
 
-# 🧬 3.1 Экран: База
-@router.callback_query(F.data == "genetics_view_base")
-async def open_genetics_base(call: CallbackQuery):
-    await call.answer()
-    try:
-        user_id = call.from_user.id
-        user_lang = await database.get_user_language(user_id)
-        caption_text = menu_texts.GENETICS_BASE_TEXTS.get(user_lang, menu_texts.GENETICS_BASE_TEXTS["en"])
-        back_markup = get_back_markup(user_lang, "intellect_genetics")
-        
-        await call.message.edit_media(
-            media=InputMediaPhoto(media=config.GENETICS_BANNER, caption=caption_text, parse_mode="Markdown"),
-            reply_markup=back_markup
-        )
-    except TelegramBadRequest:
-        pass
-
-# 🧬 3.2 Экран: Продвинутый
-@router.callback_query(F.data == "genetics_view_advanced")
-async def open_genetics_advanced(call: CallbackQuery):
-    await call.answer()
-    try:
-        user_id = call.from_user.id
-        user_lang = await database.get_user_language(user_id)
-        caption_text = menu_texts.GENETICS_ADVANCED_TEXTS.get(user_lang, menu_texts.GENETICS_ADVANCED_TEXTS["en"])
-        back_markup = get_back_markup(user_lang, "intellect_genetics")
-        
-        await call.message.edit_media(
-            media=InputMediaPhoto(media=config.GENETICS_BANNER, caption=caption_text, parse_mode="Markdown"),
-            reply_markup=back_markup
-        )
-    except TelegramBadRequest:
-        pass
-
-# 🧬 3.3 Экран: Научные исследования и новости
-@router.callback_query(F.data == "genetics_view_research")
-async def open_genetics_research(call: CallbackQuery):
-    await call.answer()
-    try:
-        user_id = call.from_user.id
-        user_lang = await database.get_user_language(user_id)
-        caption_text = menu_texts.GENETICS_RESEARCH_TEXTS.get(user_lang, menu_texts.GENETICS_RESEARCH_TEXTS["en"])
-        back_markup = get_back_markup(user_lang, "intellect_genetics")
-        
-        await call.message.edit_media(
-            media=InputMediaPhoto(media=config.GENETICS_BANNER, caption=caption_text, parse_mode="Markdown"),
-            reply_markup=back_markup
-        )
-    except TelegramBadRequest:
-        pass
-
-
-
-# Раздел «Головоломка» целиком переехал в puzzles.py: там банк задач из канала,
-# случайный порядок, итоговый балл, повторные прохождения и статистика.
-
+# Экраны «Базовый контур», «Продвинутый уровень» и «Исследования & Новости»
+# убраны: содержимое покрыто базой знаний канала и лентой новостей
+# генетики, а сами экраны стояли пустыми.
 
 # ==========================================================
 # 📚 ПОДБЛОК: МОЯ БИБЛИОТЕКА (ГЛАВНЫЙ ЭКРАН ПОЛКИ)
