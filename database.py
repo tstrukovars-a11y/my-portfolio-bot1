@@ -709,6 +709,33 @@ async def get_article_titles(section: str, limit: int = 15, offset: int = 0):
         return []
 
 
+async def update_article_title(article_id: int, title: str) -> bool:
+    """Переименовывает материал — заголовки из постов не всегда читаемы"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"UPDATE {SCHEMA}.articles SET title = $1 WHERE id = $2", title, article_id)
+        return True
+    except Exception as e:
+        logging.error(f"Не удалось переименовать материал: {type(e).__name__}: {e}")
+        return False
+
+
+async def get_articles_raw(section: str):
+    """(id, title, text_content) всех материалов — для пересчёта заголовков"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT id, title, text_content FROM {SCHEMA}.articles WHERE section = $1 ORDER BY id",
+                section)
+        return [(r["id"], r["title"], r["text_content"]) for r in rows]
+    except Exception as e:
+        logging.error(f"БД недоступна при чтении материалов: {e}")
+        return []
+
+
 async def get_article(article_id: int):
     """(title, text_content, photo_file_id, video_file_id, link_url)"""
     try:

@@ -1,6 +1,7 @@
 # genetics.py — база знаний раздела «Генетика»: посты из тематического канала,
 # разложенные кликабельным списком по заголовкам.
 import logging
+import re
 
 from aiogram import Router, F
 from aiogram.types import (
@@ -135,6 +136,9 @@ async def open_article(call: CallbackQuery):
     rows = []
     if link:
         rows.append([InlineKeyboardButton(text=_t(SOURCE, lang), url=link)])
+    if config.is_admin(call.from_user.id):
+        rows.append([InlineKeyboardButton(
+            text="✏️ Переименовать", callback_data=f"genrename_{article_id}")])
     rows.append([InlineKeyboardButton(text=_t(TO_LIST, lang), callback_data=f"genlist_{page}")])
     markup = InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -191,12 +195,36 @@ class GeneticsImport(StatesGroup):
     collecting = State()
 
 
+def derive_title(text: str) -> str:
+    """Достаёт читаемый заголовок из поста.
+
+    Первая строка «как есть» не годится: в кнопках Telegram разметка не
+    работает, поэтому `**Заголовок**` показывался бы со звёздочками. Кроме
+    того, посты часто начинаются со строки хэштегов, декоративного разделителя
+    или ряда эмодзи — такие строки пропускаем и берём первую осмысленную.
+    """
+    for raw in (text or "").split("\n"):
+        line = raw.strip()
+        if not line:
+            continue
+
+        line = re.sub(r"<[^>]+>", "", line)          # html-теги
+        line = re.sub(r"#\S+", "", line)             # хэштеги
+        line = re.sub(r"[*_`~]", "", line)           # markdown
+        line = re.sub(r"\s+", " ", line).strip(" -—–·•|:>")
+
+        # Строка из одних эмодзи или символов заголовком быть не может
+        if len(re.sub(r"[^\w]", "", line, flags=re.UNICODE)) < 3:
+            continue
+
+        return line[:77].rstrip() + "…" if len(line) > 80 else line
+
+    return "Материал"
+
+
 def extract_article(message: Message) -> dict:
     text = (message.text or message.caption or "").strip()
-    first_line = text.split("\n")[0].strip() if text else ""
-    title = first_line.lstrip("#").strip() or "Материал"
-    if len(title) > 80:
-        title = title[:77].rstrip() + "…"
+    title = derive_title(text)
 
     link = None
     for entity in list(message.entities or []) + list(message.caption_entities or []):
@@ -448,3 +476,71 @@ async def open_order_pitch(call: CallbackQuery):
             _t(ORDER_PITCH, lang), parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=rows)
         )
+
+
+# =====================================================================
+# ✏️ ПРАВКА ЗАГОЛОВКОВ
+# =====================================================================
+
+class RenameState(StatesGroup):
+    waiting_title = State()
+
+
+@router.message(F.text == "/genetics_retitle")
+async def retitle_all(message: Message):
+    """Пересчитывает заголовки всех материалов по текущим правилам.
+
+    Нужна потому, что посты уже импортированы со старыми, нечитаемыми
+    заголовками, и переливать их заново было бы глупо.
+    """
+    if not config.is_admin(message.from_user.id):
+        return
+
+    rows = await database.get_articles_raw(SECTION)
+    if not rows:
+        await message.answer("Материалов пока нет.")
+        return
+
+    changed = []
+    for article_id, old_title, text in rows:
+        new_title = derive_title(text)
+        if new_title != old_title:
+            if await database.update_article_title(article_id, new_title):
+                changed.append((old_title, new_title))
+
+    if not changed:
+        await message.answer(f"Все {len(rows)} заголовков уже в порядке.")
+        return
+
+    preview = "\n".join(f"• <s>{old[:40]}</s> → <b>{new[:40]}</b>" for old, new in changed[:12])
+    tail = f"\n\n…и ещё {len(changed) - 12}" if len(changed) > 12 else ""
+    await message.answer(
+        f"✅ Обновлено заголовков: <b>{len(changed)}</b> из {len(rows)}\n\n{preview}{tail}"
+    )
+
+
+@router.callback_query(F.data.startswith("genrename_"))
+async def ask_new_title(call: CallbackQuery, state: FSMContext):
+    if not config.is_admin(call.from_user.id):
+        return
+    await call.answer()
+
+    article_id = call.data.removeprefix("genrename_")
+    await state.set_state(RenameState.waiting_title)
+    await state.update_data(article_id=int(article_id))
+    await call.message.answer("✏️ Пришлите новый заголовок одной строкой:")
+
+
+@router.message(RenameState.waiting_title, F.text, ~F.text.startswith("/"))
+async def apply_new_title(message: Message, state: FSMContext):
+    if not config.is_admin(message.from_user.id):
+        return
+
+    data = await state.get_data()
+    await state.clear()
+    title = re.sub(r"\s+", " ", message.text).strip()[:80]
+
+    if await database.update_article_title(data["article_id"], title):
+        await message.answer(f"✅ Заголовок изменён на «{title}»")
+    else:
+        await message.answer("⚠️ Не удалось сохранить — ошибка базы.")
