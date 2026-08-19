@@ -137,7 +137,12 @@ async def open_menu_intellect_genetics(call: CallbackQuery):
             reply_markup=inline_kb.get_genetics_hub_menu(user_lang)
         )
     except TelegramBadRequest:
-        pass
+        # Список глав приходит текстовым сообщением, а в текст картинку не
+        # вставить. Раньше ошибка молча глоталась и «Назад» не работал.
+        await call.message.answer_photo(
+            photo=config.GENETICS_BANNER, caption=caption_text,
+            parse_mode="Markdown", reply_markup=inline_kb.get_genetics_hub_menu(user_lang)
+        )
 
 # 🧬 3.1 Экран: База
 @router.callback_query(F.data == "genetics_view_base")

@@ -187,22 +187,22 @@ async def open_article(call: CallbackQuery):
     # приходит из канала как есть: любой символ «<» — например «p<0.05» — Telegram
     # принимает за начало тега и отклоняет сообщение целиком, текст пропадает.
     media_id = video_id or photo_id
-    if media_id and len(body) <= MAX_CAPTION:
-        if video_id:
-            await call.message.answer_video(video=video_id, caption=body,
-                                            parse_mode=None, reply_markup=markup)
-        else:
-            await call.message.answer_photo(photo=photo_id, caption=body,
-                                            parse_mode=None, reply_markup=markup)
-        return
+    chunks = _split(body, MAX_CAPTION if media_id else MAX_MESSAGE)
 
     if media_id:
+        # Первый кусок уходит подписью к медиа: голая картинка без единой строки
+        # и без кнопок выглядит как сбой.
+        caption = chunks[0]
+        rest = chunks[1:]
+        only = not rest
         if video_id:
-            await call.message.answer_video(video=video_id)
+            await call.message.answer_video(video=video_id, caption=caption, parse_mode=None,
+                                            reply_markup=markup if only else None)
         else:
-            await call.message.answer_photo(photo=photo_id)
+            await call.message.answer_photo(photo=photo_id, caption=caption, parse_mode=None,
+                                            reply_markup=markup if only else None)
+        chunks = rest
 
-    chunks = _split(body, MAX_MESSAGE)
     for index, chunk in enumerate(chunks):
         is_last = index == len(chunks) - 1
         await call.message.answer(chunk, parse_mode=None,
@@ -606,14 +606,23 @@ async def offer_text_edit(call: CallbackQuery):
     current = (article[1] or "") if article else ""
     size = f"{len(current)} знаков" if current else "текста нет"
 
+    has_media = bool(article and (article[2] or article[3]))
+
+    rows = [
+        [InlineKeyboardButton(text="➕ Дописать в конец",
+                              callback_data=f"genappend_{article_id}")],
+        [InlineKeyboardButton(text="🔁 Заменить целиком",
+                              callback_data=f"genreplace_{article_id}")],
+    ]
+    if has_media:
+        rows.append([InlineKeyboardButton(text="🖼 Убрать картинку",
+                                          callback_data=f"gennomedia_{article_id}")])
+    rows.append([InlineKeyboardButton(text="🗑 Удалить главу",
+                                      callback_data=f"gendelete_{article_id}")])
+
     await call.message.answer(
         f"📝 Сейчас в главе: {size}.\n\nЧто сделать?",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="➕ Дописать в конец",
-                                  callback_data=f"genappend_{article_id}")],
-            [InlineKeyboardButton(text="🔁 Заменить целиком",
-                                  callback_data=f"genreplace_{article_id}")],
-        ])
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows)
     )
 
 
@@ -676,3 +685,49 @@ async def finish_text_edit(message: Message, state: FSMContext):
         return
     await state.clear()
     await message.answer("✅ Правка текста завершена.")
+
+
+@router.callback_query(F.data.startswith("gennomedia_"))
+async def drop_article_media(call: CallbackQuery):
+    if not config.is_admin(call.from_user.id):
+        return
+    await call.answer()
+
+    article_id = int(call.data.removeprefix("gennomedia_"))
+    if await database.clear_article_media(article_id):
+        await call.message.edit_text(
+            "🖼 Картинка убрана. Глава стала обычным текстовым материалом.")
+    else:
+        await call.message.edit_text("⚠️ Не удалось убрать — ошибка базы.")
+
+
+@router.callback_query(F.data.startswith("gendelete_"))
+async def confirm_delete(call: CallbackQuery):
+    if not config.is_admin(call.from_user.id):
+        return
+    await call.answer()
+
+    article_id = call.data.removeprefix("gendelete_")
+    await call.message.edit_text(
+        "🗑 Удалить главу целиком? Отменить будет нельзя.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Да, удалить",
+                                  callback_data=f"gendelyes_{article_id}")],
+            [InlineKeyboardButton(text="⛔ Отмена", callback_data="genlist_0")],
+        ])
+    )
+
+
+@router.callback_query(F.data.startswith("gendelyes_"))
+async def do_delete(call: CallbackQuery):
+    if not config.is_admin(call.from_user.id):
+        return
+    await call.answer()
+
+    article_id = int(call.data.removeprefix("gendelyes_"))
+    if await database.delete_article(article_id):
+        # Нумерация глав считается от позиции, так что после удаления
+        # оставшиеся автоматически перенумеруются.
+        await call.message.edit_text("🗑 Глава удалена. Остальные перенумерованы.")
+    else:
+        await call.message.edit_text("⚠️ Не удалось удалить — ошибка базы.")
