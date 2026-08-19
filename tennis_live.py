@@ -31,6 +31,8 @@ TOURS = {
         "singles": "women's singles",
         "title": "WTA",
         "ranking": "https://live-tennis.eu/ru/wta-live-ranking",
+        "ranking_ru": "📈 Рейтинг теннисисток",
+        "ranking_en": "📈 WTA live ranking",
         "highlights": "https://youtube.com/@wta?feature=shared",
     },
     "atp": {
@@ -38,6 +40,8 @@ TOURS = {
         "singles": "men's singles",
         "title": "ATP",
         "ranking": "https://live-tennis.eu/ru/atp-live-ranking",
+        "ranking_ru": "📈 Рейтинг теннисистов",
+        "ranking_en": "📈 ATP live ranking",
         "highlights": "https://youtube.com/@atptour",
     },
 }
@@ -250,8 +254,6 @@ BOLSHE_URL = "https://vk.com/tennis_bolshe"
 
 BTN_WATCH = {"ru": "📺 Где смотреть", "en": "📺 Where to watch",
              "fr": "📺 Où regarder", "he": "📺 איפה לצפות"}
-BTN_RANKING = {"ru": "📈 Рейтинг участниц", "en": "📈 WTA live ranking",
-               "fr": "📈 Classement WTA", "he": "📈 דירוג WTA"}
 BTN_HIGHLIGHTS = {"ru": "🎬 Хайлайты игр", "en": "🎬 Match highlights",
                   "fr": "🎬 Résumés des matchs", "he": "🎬 תקצירי משחקים"}
 
@@ -278,7 +280,10 @@ async def open_hub(call: CallbackQuery):
         [InlineKeyboardButton(text=_t(BTN_RESULTS, lang), callback_data=f"{tour}_results")],
         [InlineKeyboardButton(text=_t(BTN_DRAW, lang), callback_data=f"{tour}_draw")],
         [InlineKeyboardButton(text=_t(BTN_WATCH, lang), callback_data=f"{tour}_watch")],
-        [InlineKeyboardButton(text=_t(BTN_RANKING, lang), url=meta["ranking"])],
+        # Подпись рейтинга своя у каждого тура: «участниц» на мужском туре — ляп
+        [InlineKeyboardButton(
+            text=meta["ranking_ru"] if lang == "ru" else meta["ranking_en"],
+            url=meta["ranking"])],
         [InlineKeyboardButton(text=_t(BTN_HIGHLIGHTS, lang), url=meta["highlights"])],
         [InlineKeyboardButton(text=_t(BACK, lang), callback_data="sport_tennis")],
     ])
