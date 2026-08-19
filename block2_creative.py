@@ -483,7 +483,10 @@ def extract_recipe(message: Message) -> dict:
             link = entity.url
             break
         if entity.type == "url":
-            link = text[entity.offset:entity.offset + entity.length]
+            # extract_from, а не срез по offset: Telegram считает смещения в
+            # кодовых единицах UTF-16, и каждое эмодзи перед ссылкой сдвигало
+            # срез — из «https://…» получалось «ttps://…».
+            link = entity.extract_from(text)
             break
 
     first_line = text.strip().split("\n")[0].strip()

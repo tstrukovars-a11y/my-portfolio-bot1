@@ -71,6 +71,24 @@ def _t(mapping: dict, lang: str) -> str:
     return mapping.get(lang, mapping["en"])
 
 
+def normalize_link(link):
+    """Отдаёт ссылку, годную для кнопки, либо None.
+
+    Материалы, импортированные до починки смещений, хранят обрубки вида
+    «ttps://…» — Telegram отвергает такую кнопку и вся глава не открывается.
+    Схему восстанавливаем, а всё непонятное отбрасываем: лучше глава без
+    ссылки, чем глава, которую нельзя открыть.
+    """
+    if not link:
+        return None
+    link = link.strip()
+    if link.startswith(("http://", "https://", "tg://")):
+        return link
+    if "://" in link:
+        return "https://" + link.split("://", 1)[1]
+    return None
+
+
 # =====================================================================
 # СПИСОК И ЧТЕНИЕ
 # =====================================================================
@@ -174,8 +192,9 @@ async def open_article(call: CallbackQuery):
         body = _t(NO_TEXT_YET, lang)
 
     rows = []
-    if link:
-        rows.append([InlineKeyboardButton(text=_t(SOURCE, lang), url=link)])
+    safe_link = normalize_link(link)
+    if safe_link:
+        rows.append([InlineKeyboardButton(text=_t(SOURCE, lang), url=safe_link)])
     if config.is_admin(call.from_user.id):
         rows.append([
             InlineKeyboardButton(text="✏️ Переименовать", callback_data=f"genrename_{article_id}"),
@@ -301,7 +320,10 @@ def extract_article(message: Message) -> dict:
             link = entity.url
             break
         if entity.type == "url":
-            link = text[entity.offset:entity.offset + entity.length]
+            # extract_from, а не срез по offset: Telegram считает смещения в
+            # кодовых единицах UTF-16, и каждое эмодзи перед ссылкой сдвигало
+            # срез — из «https://…» получалось «ttps://…».
+            link = entity.extract_from(text)
             break
 
     return {

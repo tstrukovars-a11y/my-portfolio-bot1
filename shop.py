@@ -318,8 +318,11 @@ async def show_item_card(call: CallbackQuery):
     caption = f"<b>{safe_title}</b>\n\n{safe_description}" if description else f"<b>{safe_title}</b>"
 
     rows = []
-    if link:
-        rows.append([InlineKeyboardButton(text=_label(OPEN_IN_CHANNEL, lang), url=link)])
+    safe_link = (link or "").strip()
+    if not safe_link.startswith(("http://", "https://", "tg://")):
+        safe_link = ""
+    if safe_link:
+        rows.append([InlineKeyboardButton(text=_label(OPEN_IN_CHANNEL, lang), url=safe_link)])
     rows.append([InlineKeyboardButton(
         text=_label(BACK, lang), callback_data=f"shoplist_{gender}_{item_type}_{page}")])
     markup = InlineKeyboardMarkup(inline_keyboard=rows)
