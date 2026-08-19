@@ -35,10 +35,10 @@ _cache = {"at": 0.0, "data": None}
 # ДАННЫЕ
 # =====================================================================
 
-async def fetch_scoreboard():
+async def fetch_scoreboard(force: bool = False):
     """Табло WTA. Держим короткий кэш, чтобы раздел открывался мгновенно."""
     now = time.time()
-    if _cache["data"] is not None and now - _cache["at"] < CACHE_TTL:
+    if not force and _cache["data"] is not None and now - _cache["at"] < CACHE_TTL:
         return _cache["data"]
 
     try:
@@ -127,7 +127,12 @@ def _women_matches(data):
 
 def _when(match) -> str:
     """Время начала в UTC: часовой пояс читателя Telegram боту неизвестен,
-    поэтому подписываем явно, а не показываем «как есть» неизвестно чей час."""
+    поэтому подписываем явно, а не показываем «как есть» неизвестно чей час.
+
+    В теннисе точное время есть только у первого матча сессии. Остальные идут
+    «не ранее»: корт освобождается, когда закончится предыдущий матч, а он может
+    затянуться на три сета. Поэтому время помечается как ориентир.
+    """
     raw = match.get("date") or ""
     try:
         moment = datetime.strptime(raw.replace("Z", "+0000"), "%Y-%m-%dT%H:%M%z")
@@ -153,7 +158,7 @@ def _format(match) -> str:
         return f"🔴 <b>идёт</b>  {names}{tail}"
 
     when = _when(match)
-    tail = f"  <code>{when}</code>" if when else ""
+    tail = f"  <code>не ранее {when}</code>" if when else ""
     return f"🕐 {names}{tail}"
 
 
@@ -218,6 +223,7 @@ async def open_hub(call: CallbackQuery):
     markup = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=_t(BTN_RESULTS, lang), callback_data="wta_results")],
         [InlineKeyboardButton(text=_t(BTN_DRAW, lang), callback_data="wta_draw")],
+        [InlineKeyboardButton(text=_t(BTN_WATCH, lang), callback_data="wta_watch")],
         [InlineKeyboardButton(text=_t(BACK, lang), callback_data="sport_tennis")],
     ])
     try:
@@ -230,8 +236,24 @@ async def open_hub(call: CallbackQuery):
         await call.message.answer(_t(HUB, lang), parse_mode="Markdown", reply_markup=markup)
 
 
-async def _send(call: CallbackQuery, lang: str, heading: str, matches):
+SCHEDULE_NOTE = {
+    "ru": ("\n\n<i>Время — ориентир, а не расписание. Точное начало есть только у "
+           "первого матча сессии: следующий выходит на корт, когда закончится "
+           "предыдущий. Сдвиг на час-два — обычное дело.</i>"),
+    "en": ("\n\n<i>Times are estimates. Only the first match of a session has a fixed "
+           "start; the next one begins when the previous ends. An hour or two of drift "
+           "is normal.</i>"),
+    "fr": "\n\n<i>Les horaires sont indicatifs : seul le premier match a une heure fixe.</i>",
+    "he": "\n\n<i>הזמנים הם הערכה בלבד — רק המשחק הראשון מתחיל בשעה קבועה.</i>"
+}
+
+
+async def _send(call: CallbackQuery, lang: str, heading: str, matches, note: str = "",
+                refresh: str = None):
     rows = _tournament_links(matches, lang)
+    if refresh:
+        rows.insert(0, [InlineKeyboardButton(
+            text="🔄 Обновить" if lang == "ru" else "🔄 Refresh", callback_data=refresh)])
     rows.append([InlineKeyboardButton(text=_t(BACK, lang), callback_data="tennis_wta")])
     back = InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -246,7 +268,7 @@ async def _send(call: CallbackQuery, lang: str, heading: str, matches):
     if len(matches) > MAX_MATCHES:
         lines.append(f"\n<i>…и ещё {len(matches) - MAX_MATCHES}</i>")
 
-    await call.message.answer("\n".join(lines), parse_mode="HTML",
+    await call.message.answer("\n".join(lines) + note, parse_mode="HTML",
                               disable_web_page_preview=True, reply_markup=back)
 
 
@@ -265,7 +287,7 @@ async def show_results(call: CallbackQuery):
     tournament = matches[0]["tournament"] if matches else ""
     heading = (f"🏆 <b>Итоги дня — {html.escape(tournament)}</b>" if lang == "ru"
                else f"🏆 <b>Results — {html.escape(tournament)}</b>")
-    await _send(call, lang, heading, matches)
+    await _send(call, lang, heading, matches, refresh="wta_results")
 
 
 @router.callback_query(F.data == "wta_draw")
@@ -284,4 +306,75 @@ async def show_draw(call: CallbackQuery):
     tournament = matches[0]["tournament"] if matches else ""
     heading = (f"🗓 <b>Расписание — {html.escape(tournament)}</b>" if lang == "ru"
                else f"🗓 <b>Schedule — {html.escape(tournament)}</b>")
-    await _send(call, lang, heading, matches)
+    await _send(call, lang, heading, matches,
+                note=_t(SCHEDULE_NOTE, lang), refresh="wta_draw")
+
+
+# =====================================================================
+# 📺 ГДЕ СМОТРЕТЬ
+# =====================================================================
+# Вещателей в ленте ESPN нет — поля broadcasts приходят пустыми, поэтому раздел
+# содержательный, а не сгенерированный. Конкретных цен и стран умышленно нет:
+# права на показ пересматриваются каждый сезон, и устаревшая цифра хуже её
+# отсутствия.
+
+WHERE_TO_WATCH = {
+    "ru": (
+        "📺 <b>Где смотреть WTA</b>\n\n"
+        "<b>WTA TV</b> — официальный сервис тура. Показывает большинство турниров WTA, "
+        "включая ранние круги, которые не берут телеканалы. Нужен аккаунт и подписка.\n"
+        "⚠️ Матчи, права на которые куплены местным вещателем, в вашей стране будут "
+        "закрыты даже при активной подписке — это обычное условие таких сервисов.\n\n"
+        "<b>Tennis Channel</b> — сильное покрытие тенниса, но привязан к США.\n\n"
+        "<b>Местный вещатель</b> — у крупных турниров права обычно выкупает "
+        "спортивный канал вашей страны, и это чаще всего самый дешёвый и стабильный путь.\n\n"
+        "❗️ <b>Частая путаница:</b> Tennis TV — это <b>ATP</b>, мужской тур. "
+        "Женских матчей там нет, подписка на него для WTA бесполезна.\n\n"
+        "<b>Что нужно</b>\n"
+        "• аккаунт и активная подписка сервиса;\n"
+        "• проверить, доступен ли конкретный турнир в вашей стране — это видно "
+        "на странице турнира до оплаты;\n"
+        "• для больших турниров сперва посмотреть, не показывает ли его местный "
+        "канал: часто дешевле и без ограничений.\n\n"
+        "<i>Права на трансляции пересматриваются каждый сезон, поэтому проверяйте "
+        "актуальность на странице самого турнира.</i>"
+    ),
+    "en": (
+        "📺 <b>Where to watch WTA</b>\n\n"
+        "<b>WTA TV</b> — the tour's official service, covering most WTA events including "
+        "early rounds that television skips. Requires an account and a subscription.\n"
+        "⚠️ Matches licensed to a local broadcaster stay blocked in your country even "
+        "with an active subscription — that is standard for such services.\n\n"
+        "<b>Tennis Channel</b> — strong tennis coverage, tied to the US.\n\n"
+        "<b>Your local broadcaster</b> — for big events the rights usually go to a "
+        "national sports channel, which is often the cheapest and most reliable route.\n\n"
+        "❗️ <b>Common mix-up:</b> Tennis TV is <b>ATP</b>, the men's tour. It carries no "
+        "women's matches, so it is useless for WTA.\n\n"
+        "<b>What you need</b>\n"
+        "• an account and an active subscription;\n"
+        "• a check that the specific tournament is available in your country — shown on "
+        "the tournament page before you pay;\n"
+        "• for major events, check the national channel first.\n\n"
+        "<i>Broadcast rights are renegotiated every season, so verify on the "
+        "tournament's own page.</i>"
+    )
+}
+
+BTN_WATCH = {"ru": "📺 Где смотреть", "en": "📺 Where to watch",
+             "fr": "📺 Où regarder", "he": "📺 איפה לצפות"}
+
+
+@router.callback_query(F.data == "wta_watch")
+async def where_to_watch(call: CallbackQuery):
+    await call.answer()
+    lang = await database.get_user_language(call.from_user.id)
+    text = WHERE_TO_WATCH.get(lang, WHERE_TO_WATCH["en"])
+
+    markup = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔗 WTA TV", url="https://www.wtatv.com")],
+        [InlineKeyboardButton(text="🔗 Календарь WTA" if lang == "ru" else "🔗 WTA calendar",
+                              url="https://www.wtatennis.com/tournaments")],
+        [InlineKeyboardButton(text=_t(BACK, lang), callback_data="tennis_wta")],
+    ])
+    await call.message.answer(text, parse_mode="HTML",
+                              disable_web_page_preview=True, reply_markup=markup)
