@@ -6,6 +6,7 @@
 import html
 import logging
 import re
+from datetime import datetime
 import time
 
 import httpx
@@ -107,6 +108,7 @@ def _women_matches(data):
                 continue
             for match in grouping.get("competitions", []):
                 status = ((match.get("status") or {}).get("type") or {})
+                state = status.get("state")
                 sides = match.get("competitors") or []
                 if len(sides) < 2:
                     continue
@@ -116,21 +118,43 @@ def _women_matches(data):
                     "round": (match.get("grouping") or {}).get("displayName") or name,
                     "sides": sides,
                     "completed": bool(status.get("completed")),
+                    "live": state == "in",
+                    "date": match.get("date"),
                     "state": status.get("description") or "",
                 })
     return result
 
 
+def _when(match) -> str:
+    """Время начала в UTC: часовой пояс читателя Telegram боту неизвестен,
+    поэтому подписываем явно, а не показываем «как есть» неизвестно чей час."""
+    raw = match.get("date") or ""
+    try:
+        moment = datetime.strptime(raw.replace("Z", "+0000"), "%Y-%m-%dT%H:%M%z")
+    except ValueError:
+        return ""
+    return moment.strftime("%d.%m %H:%M UTC")
+
+
 def _format(match) -> str:
-    """Строка матча: победитель первым, счёт, ссылка на матч"""
+    """Матч одной строкой: состояние, участники, счёт или время начала"""
     sides = sorted(match["sides"], key=lambda s: not s.get("winner"))
     left, right = sides[0], sides[1]
-
     names = f"{html.escape(_player(left))} — {html.escape(_player(right))}"
-    score = _score(left, right)
-    tail = f"  <code>{html.escape(score)}</code>" if score else ""
-    mark = "🏆 " if match["completed"] else "▶️ "
-    return f"{mark}{names}{tail}"
+
+    if match["completed"]:
+        score = _score(left, right)
+        tail = f"  <code>{html.escape(score)}</code>" if score else ""
+        return f"🏆 {names}{tail}"
+
+    if match["live"]:
+        score = _score(left, right)
+        tail = f"  <code>{html.escape(score)}</code>" if score else ""
+        return f"🔴 <b>идёт</b>  {names}{tail}"
+
+    when = _when(match)
+    tail = f"  <code>{when}</code>" if when else ""
+    return f"🕐 {names}{tail}"
 
 
 def _tournament_links(matches, lang: str):
@@ -177,8 +201,8 @@ NO_MATCHES = {
 
 BTN_RESULTS = {"ru": "🏆 Итоги дня", "en": "🏆 Today's results",
                "fr": "🏆 Résultats du jour", "he": "🏆 תוצאות היום"}
-BTN_DRAW = {"ru": "🗓 Сетка турнира", "en": "🗓 Tournament draw",
-            "fr": "🗓 Tableau", "he": "🗓 המערכת"}
+BTN_DRAW = {"ru": "🗓 Расписание и сетка", "en": "🗓 Schedule & draw",
+            "fr": "🗓 Programme", "he": "🗓 לוח משחקים"}
 BACK = {"ru": "🔙 Назад", "en": "🔙 Back", "fr": "🔙 Retour", "he": "🔙 חזרה"}
 
 
@@ -254,9 +278,10 @@ async def show_draw(call: CallbackQuery):
         await call.message.answer(_t(UNAVAILABLE, lang))
         return
 
-    # В сетке интересны те, кто ещё играет: незавершённые матчи текущего круга
+    # Расписание: сначала то, что идёт прямо сейчас, затем ближайшие по времени
     matches = [m for m in _women_matches(data) if not m["completed"]]
+    matches.sort(key=lambda m: (not m["live"], m.get("date") or ""))
     tournament = matches[0]["tournament"] if matches else ""
-    heading = (f"🗓 <b>Сетка — {html.escape(tournament)}</b>" if lang == "ru"
-               else f"🗓 <b>Draw — {html.escape(tournament)}</b>")
+    heading = (f"🗓 <b>Расписание — {html.escape(tournament)}</b>" if lang == "ru"
+               else f"🗓 <b>Schedule — {html.escape(tournament)}</b>")
     await _send(call, lang, heading, matches)
