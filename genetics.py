@@ -157,8 +157,10 @@ async def open_article(call: CallbackQuery):
     if link:
         rows.append([InlineKeyboardButton(text=_t(SOURCE, lang), url=link)])
     if config.is_admin(call.from_user.id):
-        rows.append([InlineKeyboardButton(
-            text="✏️ Переименовать", callback_data=f"genrename_{article_id}")])
+        rows.append([
+            InlineKeyboardButton(text="✏️ Переименовать", callback_data=f"genrename_{article_id}"),
+            InlineKeyboardButton(text="📝 Текст", callback_data=f"gentext_{article_id}"),
+        ])
     rows.append([InlineKeyboardButton(text=_t(TO_LIST, lang), callback_data=f"genlist_{page}")])
     markup = InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -570,3 +572,90 @@ async def apply_new_title(message: Message, state: FSMContext):
         await message.answer(f"✅ Заголовок изменён на «{title}»")
     else:
         await message.answer("⚠️ Не удалось сохранить — ошибка базы.")
+
+
+class TextEditState(StatesGroup):
+    waiting_text = State()
+
+
+@router.callback_query(F.data.startswith("gentext_"))
+async def offer_text_edit(call: CallbackQuery):
+    if not config.is_admin(call.from_user.id):
+        return
+    await call.answer()
+
+    article_id = call.data.removeprefix("gentext_")
+    article = await database.get_article(int(article_id))
+    current = (article[1] or "") if article else ""
+    size = f"{len(current)} знаков" if current else "текста нет"
+
+    await call.message.answer(
+        f"📝 Сейчас в главе: {size}.\n\nЧто сделать?",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="➕ Дописать в конец",
+                                  callback_data=f"genappend_{article_id}")],
+            [InlineKeyboardButton(text="🔁 Заменить целиком",
+                                  callback_data=f"genreplace_{article_id}")],
+        ])
+    )
+
+
+@router.callback_query(F.data.startswith(("genappend_", "genreplace_")))
+async def ask_article_text(call: CallbackQuery, state: FSMContext):
+    if not config.is_admin(call.from_user.id):
+        return
+    await call.answer()
+
+    append = call.data.startswith("genappend_")
+    article_id = int(call.data.split("_", 1)[1])
+    await state.set_state(TextEditState.waiting_text)
+    await state.update_data(article_id=article_id, append=append)
+
+    prompt = ("➕ Пришлите текст, который дописать в конец главы."
+              if append else
+              "🔁 Пришлите новый текст главы — он заменит нынешний целиком.")
+    await call.message.edit_text(
+        f"{prompt}\n\nМожно прислать несколько сообщений подряд — каждое "
+        f"добавится следом. Когда закончите, отправьте /genetics_done"
+    )
+
+
+@router.message(TextEditState.waiting_text, F.text | F.caption, ~F.text.startswith("/"))
+async def save_article_text(message: Message, state: FSMContext):
+    if not config.is_admin(message.from_user.id):
+        return
+
+    data = await state.get_data()
+    article_id = data["article_id"]
+    incoming = (message.text or message.caption or "").strip()
+
+    article = await database.get_article(article_id)
+    if not article:
+        await state.clear()
+        await message.answer("⚠️ Материал не найден.")
+        return
+
+    current = article[1] or ""
+    if data.get("append") and current:
+        new_text = f"{current}\n\n{incoming}"
+    else:
+        new_text = incoming
+
+    if not await database.update_article_text(article_id, new_text):
+        await message.answer("⚠️ Не удалось сохранить — ошибка базы.")
+        return
+
+    # Следующее сообщение дописываем к уже сохранённому, а не затираем его
+    await state.update_data(append=True)
+    await message.answer(
+        f"✅ Сохранено. В главе теперь {len(new_text)} знаков.\n"
+        f"Пришлите ещё текст или отправьте /genetics_done"
+    )
+
+
+@router.message(F.text == "/genetics_done", TextEditState.waiting_text)
+async def finish_text_edit(message: Message, state: FSMContext):
+    if not config.is_admin(message.from_user.id):
+        return
+    await state.clear()
+    await message.answer("✅ Правка текста завершена.")

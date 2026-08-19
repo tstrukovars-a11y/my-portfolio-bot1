@@ -730,6 +730,20 @@ async def update_article_title(article_id: int, title: str) -> bool:
         return False
 
 
+async def update_article_text(article_id: int, text_content: str) -> bool:
+    """Заменяет текст материала — им правят главы, импортированные неполностью"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"UPDATE {SCHEMA}.articles SET text_content = $1 WHERE id = $2",
+                text_content, article_id)
+        return True
+    except Exception as e:
+        logging.error(f"Не удалось изменить текст материала: {type(e).__name__}: {e}")
+        return False
+
+
 async def get_articles_raw(section: str):
     """(id, title, text_content) всех материалов — для пересчёта заголовков"""
     try:
