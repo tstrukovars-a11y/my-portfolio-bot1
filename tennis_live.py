@@ -5,7 +5,6 @@
 # RSS-лентам новостей, где браузерный заголовок обязателен.
 import html
 import logging
-import re
 from datetime import datetime, timezone
 import time
 
@@ -33,6 +32,8 @@ TOURS = {
         "ranking": "https://live-tennis.eu/ru/wta-live-ranking",
         "ranking_ru": "📈 Рейтинг теннисисток",
         "ranking_en": "📈 WTA live ranking",
+        "draws": "https://live-tennis.eu/ru/wta-singles-draws",
+        "schedule": "https://live-tennis.eu/ru/wta-schedule",
         "highlights": "https://youtube.com/@wta?feature=shared",
     },
     "atp": {
@@ -42,6 +43,8 @@ TOURS = {
         "ranking": "https://live-tennis.eu/ru/atp-live-ranking",
         "ranking_ru": "📈 Рейтинг теннисистов",
         "ranking_en": "📈 ATP live ranking",
+        "draws": "https://live-tennis.eu/ru/atp-singles-draws",
+        "schedule": "https://live-tennis.eu/ru/atp-schedule",
         "highlights": "https://youtube.com/@atptour",
     },
 }
@@ -102,24 +105,6 @@ def _score(left, right) -> str:
     return " ".join(f"{x}-{y}" for x, y in zip(a, b))
 
 
-def _discipline_links(event, discipline_id):
-    """Ссылки на ЖЕНСКУЮ сетку.
-
-    ESPN отдаёт ссылки турнира всегда с type=1 — это мужская одиночка. Номер
-    разряда берём из самой группировки и подставляем, иначе на экране WTA
-    кнопка «Сетка» уводила на мужскую таблицу.
-    """
-    if not discipline_id:
-        return event.get("links") or []
-    fixed = []
-    for link in event.get("links") or []:
-        href = link.get("href") or ""
-        href = re.sub(r"/type/\d+", f"/type/{discipline_id}", href)
-        href = re.sub(r"competitionType/\d+", f"competitionType/{discipline_id}", href)
-        fixed.append({**link, "href": href})
-    return fixed
-
-
 def _singles(data, tour: str):
     """Матчи одиночного разряда нужного тура с турниром и раундом"""
     result = []
@@ -137,7 +122,6 @@ def _singles(data, tour: str):
                     continue
                 result.append({
                     "tournament": tournament,
-                    "links": _discipline_links(event, (grouping.get("grouping") or {}).get("id")),
                     "round": (match.get("grouping") or {}).get("displayName") or name,
                     "sides": sides,
                     "completed": bool(status.get("completed")),
@@ -200,21 +184,17 @@ def _format(match, lang: str = "ru") -> str:
     return f"🕐 {names}{tail}"
 
 
-def _tournament_links(matches, lang: str):
-    """ESPN не даёт ссылок на отдельные матчи, зато даёт на турнир: сводное
-    табло и настоящую сетку. Их и предлагаем — это полезнее ссылки на матч."""
-    rows = []
-    for link in (matches[0]["links"] if matches else []):
-        text, href = link.get("text"), link.get("href")
-        if not href:
-            continue
-        if text == "Bracket":
-            rows.append([InlineKeyboardButton(
-                text="🔗 Сетка турнира" if lang == "ru" else "🔗 Full bracket", url=href)])
-        elif text == "Summary":
-            rows.append([InlineKeyboardButton(
-                text="🔗 Табло матчей" if lang == "ru" else "🔗 Scoreboard", url=href)])
-    return rows
+def _tournament_links(tour: str, lang: str):
+    """Полная сетка и расписание — на live-tennis.eu. Раньше вели на ESPN, но
+    там страницы англоязычные и с чужой навигацией."""
+    meta = TOURS[tour]
+    return [
+        [InlineKeyboardButton(
+            text="🔗 Полная сетка" if lang == "ru" else "🔗 Full draw", url=meta["draws"])],
+        [InlineKeyboardButton(
+            text="🔗 Расписание всех матчей" if lang == "ru" else "🔗 Full schedule",
+            url=meta["schedule"])],
+    ]
 
 
 # =====================================================================
@@ -297,6 +277,14 @@ async def open_hub(call: CallbackQuery):
         await call.message.answer(caption, parse_mode="Markdown", reply_markup=markup)
 
 
+def _fallback_markup(tour: str, lang: str) -> InlineKeyboardMarkup:
+    """Когда источник молчит, экран всё равно должен вести дальше: ссылки на
+    сетку и расписание плюс возврат. Иначе получается тупик."""
+    rows = _tournament_links(tour, lang)
+    rows.append([InlineKeyboardButton(text=_t(BACK, lang), callback_data=f"tennis_{tour}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 SCHEDULE_NOTE = {
     "ru": "\n\n<i>Обновляется вместе с источником — жмите «Обновить» перед началом матча.</i>",
     "en": "\n\n<i>Updates with the source — tap Refresh right before a match.</i>",
@@ -307,7 +295,7 @@ SCHEDULE_NOTE = {
 
 async def _send(call: CallbackQuery, lang: str, tour: str, heading: str, matches,
                 note: str = "", refresh: str = None):
-    rows = _tournament_links(matches, lang)
+    rows = _tournament_links(tour, lang)
     if refresh:
         rows.insert(0, [InlineKeyboardButton(
             text="🔄 Обновить" if lang == "ru" else "🔄 Refresh", callback_data=refresh)])
@@ -337,7 +325,7 @@ async def show_results(call: CallbackQuery):
 
     data = await fetch_scoreboard(tour)
     if data is None:
-        await call.message.answer(_t(UNAVAILABLE, lang))
+        await call.message.answer(_t(UNAVAILABLE, lang), reply_markup=_fallback_markup(tour, lang))
         return
 
     matches = [m for m in _singles(data, tour) if m["completed"]]
@@ -357,7 +345,7 @@ async def show_draw(call: CallbackQuery):
     # Расписание всегда свежее: время старта пересматривается по ходу дня
     data = await fetch_scoreboard(tour, force=True)
     if data is None:
-        await call.message.answer(_t(UNAVAILABLE, lang))
+        await call.message.answer(_t(UNAVAILABLE, lang), reply_markup=_fallback_markup(tour, lang))
         return
 
     matches = [m for m in _singles(data, tour) if not m["completed"]]
