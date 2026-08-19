@@ -1,6 +1,7 @@
 # shop.py — раздел «Pro-Shop» внутри тенниса: каталог одежды и аксессуаров,
 # собранный из постов партнёрского канала. Структура: пол → тип вещи → список
 # → карточка со ссылкой на оригинальный пост.
+import html
 import logging
 
 from aiogram import Router, F
@@ -310,7 +311,11 @@ async def show_item_card(call: CallbackQuery):
         return
 
     title, description, photo_id, link = item
-    caption = f"<b>{title}</b>\n\n{description}" if description else f"<b>{title}</b>"
+    # Описание берётся из чужого поста: без экранирования любой «<» ломает
+    # HTML-разбор, и Telegram отвергает всю карточку.
+    safe_title = html.escape(title or "")
+    safe_description = html.escape(description or "")
+    caption = f"<b>{safe_title}</b>\n\n{safe_description}" if description else f"<b>{safe_title}</b>"
 
     rows = []
     if link:

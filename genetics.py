@@ -150,12 +150,17 @@ async def open_article(call: CallbackQuery):
 
     # Длинный материал не помещается ни в подпись, ни иногда в одно сообщение,
     # поэтому режем по границам абзацев и кнопку вешаем на последний кусок.
+    # parse_mode=None обязателен. По умолчанию у бота включён HTML, а текст поста
+    # приходит из канала как есть: любой символ «<» — например «p<0.05» — Telegram
+    # принимает за начало тега и отклоняет сообщение целиком, текст пропадает.
     media_id = video_id or photo_id
     if media_id and len(body) <= MAX_CAPTION:
         if video_id:
-            await call.message.answer_video(video=video_id, caption=body, reply_markup=markup)
+            await call.message.answer_video(video=video_id, caption=body,
+                                            parse_mode=None, reply_markup=markup)
         else:
-            await call.message.answer_photo(photo=photo_id, caption=body, reply_markup=markup)
+            await call.message.answer_photo(photo=photo_id, caption=body,
+                                            parse_mode=None, reply_markup=markup)
         return
 
     if media_id:
@@ -167,7 +172,8 @@ async def open_article(call: CallbackQuery):
     chunks = _split(body, MAX_MESSAGE)
     for index, chunk in enumerate(chunks):
         is_last = index == len(chunks) - 1
-        await call.message.answer(chunk, reply_markup=markup if is_last else None)
+        await call.message.answer(chunk, parse_mode=None,
+                                  reply_markup=markup if is_last else None)
 
 
 def _split(text: str, limit: int):

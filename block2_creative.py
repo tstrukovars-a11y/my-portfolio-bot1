@@ -412,17 +412,19 @@ async def view_single_recipe(call: CallbackQuery):
     if video_id or photo_id:
         if len(caption) <= 1024:
             if video_id:
-                await call.message.answer_video(video=video_id, caption=caption, reply_markup=back)
+                await call.message.answer_video(video=video_id, caption=caption,
+                                                parse_mode=None, reply_markup=back)
             else:
-                await call.message.answer_photo(photo=photo_id, caption=caption, reply_markup=back)
+                await call.message.answer_photo(photo=photo_id, caption=caption,
+                                                parse_mode=None, reply_markup=back)
         else:
             if video_id:
                 await call.message.answer_video(video=video_id)
             else:
                 await call.message.answer_photo(photo=photo_id)
-            await call.message.answer(caption, reply_markup=back)
+            await call.message.answer(caption, parse_mode=None, reply_markup=back)
     else:
-        await call.message.answer(caption, reply_markup=back)
+        await call.message.answer(caption, parse_mode=None, reply_markup=back)
 
 @router.callback_query(F.data == "culinary_cat_video")
 async def view_video_recipes(call: CallbackQuery):
