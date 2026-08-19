@@ -28,18 +28,25 @@ EMPTY = {
     "he": "🧬 מאגר הידע ריק כרגע. החומרים נמשכים מהערוץ — בדקו מאוחר יותר."
 }
 
-PICK = {
-    "ru": "🧬 **База знаний по генетике**\n\n👇 Выберите материал:",
-    "en": "🧬 **Genetics knowledge base**\n\n👇 Choose an article:",
-    "fr": "🧬 **Base de connaissances en génétique**\n\n👇 Choisissez un article :",
-    "he": "🧬 **מאגר הידע בגנטיקה**\n\n👇 בחרו חומר:"
+LIST_HEADING = {
+    "ru": "🧬 База знаний по генетике",
+    "en": "🧬 Genetics knowledge base",
+    "fr": "🧬 Base de connaissances en génétique",
+    "he": "🧬 מאגר הידע בגנטיקה"
 }
 
-PICK_PAGED = {
-    "ru": "🧬 **База знаний по генетике**\n\n👇 Страница {page} из {pages}, всего материалов: {total}",
-    "en": "🧬 **Genetics knowledge base**\n\n👇 Page {page} of {pages}, {total} articles in total",
-    "fr": "🧬 **Base de connaissances**\n\n👇 Page {page} sur {pages}, {total} articles",
-    "he": "🧬 **מאגר הידע**\n\n👇 עמוד {page} מתוך {pages}, סה\"כ {total}"
+PAGE_NOTE = {
+    "ru": "   ·   страница {page} из {pages}, всего {total}",
+    "en": "   ·   page {page} of {pages}, {total} in total",
+    "fr": "   ·   page {page} sur {pages}, {total} au total",
+    "he": "   ·   עמוד {page} מתוך {pages}, סה\"כ {total}"
+}
+
+PICK_NUMBER = {
+    "ru": "👇 Нажмите номер главы",
+    "en": "👇 Tap a chapter number",
+    "fr": "👇 Appuyez sur le numéro du chapitre",
+    "he": "👇 לחצו על מספר הפרק"
 }
 
 BACK = {"ru": "🔙 Назад", "en": "🔙 Back", "fr": "🔙 Retour", "he": "🔙 חזרה"}
@@ -59,6 +66,12 @@ def _t(mapping: dict, lang: str) -> str:
 # =====================================================================
 
 async def build_list(lang: str, page: int):
+    """Список глав.
+
+    Названия идут текстом сообщения, а не подписями кнопок: Telegram всегда
+    центрирует текст на кнопке и выровнять его по левому краю невозможно.
+    Поэтому кнопки — компактные номера, а читается список слева направо.
+    """
     total = await database.count_articles(SECTION)
     if not total:
         return None, None
@@ -67,18 +80,15 @@ async def build_list(lang: str, page: int):
     page = max(0, min(page, pages - 1))
     rows = await database.get_article_titles(SECTION, PAGE_SIZE, page * PAGE_SIZE)
 
-    # Номер главы считается от позиции в общем списке, а не хранится в базе:
-    # добавится материал в середину — нумерация пересоберётся сама.
-    word = _t(CHAPTER, lang)
-    buttons = []
+    lines, number_buttons = [], []
     for index, (article_id, title) in enumerate(rows):
-        prefix = f"{word} {page * PAGE_SIZE + index + 1}. "
-        label = (title or "Материал").strip()
-        room = 60 - len(prefix)
-        if len(label) > room:
-            label = label[:room - 1].rstrip() + "…"
-        buttons.append([InlineKeyboardButton(
-            text=prefix + label, callback_data=f"genitem_{page}_{article_id}")])
+        number = page * PAGE_SIZE + index + 1
+        lines.append(f"{number}. {(title or 'Материал').strip()}")
+        number_buttons.append(InlineKeyboardButton(
+            text=str(number), callback_data=f"genitem_{page}_{article_id}"))
+
+    # Номера — по пять в ряд, чтобы кнопки оставались крупными и попадаемыми
+    buttons = [number_buttons[i:i + 5] for i in range(0, len(number_buttons), 5)]
 
     if pages > 1:
         nav = []
@@ -92,9 +102,13 @@ async def build_list(lang: str, page: int):
     buttons.append([InlineKeyboardButton(
         text=_t(BACK, lang), callback_data="intellect_genetics")])
 
-    header = (_t(PICK_PAGED, lang).format(page=page + 1, pages=pages, total=total)
-              if pages > 1 else _t(PICK, lang))
-    return header, InlineKeyboardMarkup(inline_keyboard=buttons)
+    heading = _t(LIST_HEADING, lang)
+    if pages > 1:
+        heading += _t(PAGE_NOTE, lang).format(page=page + 1, pages=pages, total=total)
+    body = "\n".join(lines)
+    hint = _t(PICK_NUMBER, lang)
+
+    return f"{heading}\n\n{body}\n\n{hint}", InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 @router.callback_query(F.data == "genetics_channel_base")
@@ -106,7 +120,7 @@ async def open_knowledge_base(call: CallbackQuery):
     if header is None:
         await call.message.answer(_t(EMPTY, lang))
         return
-    await call.message.answer(header, parse_mode="Markdown", reply_markup=markup)
+    await call.message.answer(header, parse_mode=None, reply_markup=markup)
 
 
 @router.callback_query(F.data.startswith("genlist_"))
@@ -117,9 +131,9 @@ async def turn_page(call: CallbackQuery):
     if header is None:
         return
     try:
-        await call.message.edit_text(header, parse_mode="Markdown", reply_markup=markup)
+        await call.message.edit_text(header, parse_mode=None, reply_markup=markup)
     except TelegramBadRequest:
-        await call.message.answer(header, parse_mode="Markdown", reply_markup=markup)
+        await call.message.answer(header, parse_mode=None, reply_markup=markup)
 
 
 @router.callback_query(F.data.startswith("genitem_"))
