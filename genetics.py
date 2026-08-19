@@ -47,6 +47,7 @@ TO_LIST = {"ru": "🔙 К списку", "en": "🔙 Back to list",
            "fr": "🔙 Retour à la liste", "he": "🔙 חזרה לרשימה"}
 SOURCE = {"ru": "🔗 Читать в канале", "en": "🔗 Read in the channel",
           "fr": "🔗 Lire dans le canal", "he": "🔗 קראו בערוץ"}
+CHAPTER = {"ru": "Глава", "en": "Chapter", "fr": "Chapitre", "he": "פרק"}
 
 
 def _t(mapping: dict, lang: str) -> str:
@@ -66,13 +67,18 @@ async def build_list(lang: str, page: int):
     page = max(0, min(page, pages - 1))
     rows = await database.get_article_titles(SECTION, PAGE_SIZE, page * PAGE_SIZE)
 
+    # Номер главы считается от позиции в общем списке, а не хранится в базе:
+    # добавится материал в середину — нумерация пересоберётся сама.
+    word = _t(CHAPTER, lang)
     buttons = []
-    for article_id, title in rows:
+    for index, (article_id, title) in enumerate(rows):
+        prefix = f"{word} {page * PAGE_SIZE + index + 1}. "
         label = (title or "Материал").strip()
-        if len(label) > 60:
-            label = label[:57].rstrip() + "…"
+        room = 60 - len(prefix)
+        if len(label) > room:
+            label = label[:room - 1].rstrip() + "…"
         buttons.append([InlineKeyboardButton(
-            text=label, callback_data=f"genitem_{page}_{article_id}")])
+            text=prefix + label, callback_data=f"genitem_{page}_{article_id}")])
 
     if pages > 1:
         nav = []

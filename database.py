@@ -694,13 +694,21 @@ async def count_articles(section: str) -> int:
 
 
 async def get_article_titles(section: str, limit: int = 15, offset: int = 0):
-    """Страница списка заголовков по алфавиту"""
+    """Страница заголовков в порядке публикации в канале.
+
+    Сортируем по номеру исходного сообщения, зашитому в source_key
+    («<чат>:<message_id>»), а не по id записи: порядок пересылки может быть
+    любым, а номера сообщений в канале всегда идут по возрастанию. Материалы
+    без source_key уходят в конец и упорядочиваются по id.
+    """
     try:
         pool = await get_pool()
         async with pool.acquire() as conn:
             rows = await conn.fetch(
                 f"SELECT id, title FROM {SCHEMA}.articles WHERE section = $1 "
-                "ORDER BY lower(title), id LIMIT $2 OFFSET $3",
+                "ORDER BY CASE WHEN source_key ~ ':[0-9]+$' "
+                "THEN split_part(source_key, ':', 2)::bigint END "
+                "NULLS LAST, id LIMIT $2 OFFSET $3",
                 section, limit, offset
             )
         return [(r["id"], r["title"]) for r in rows]
