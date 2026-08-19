@@ -210,23 +210,29 @@ async def open_article(call: CallbackQuery):
     # принимает за начало тега и отклоняет сообщение целиком, текст пропадает.
     media_id = video_id or photo_id
     try:
-        if media_id:
-            # Подписью идёт только начало текста, остаток режется по лимиту обычного
-            # сообщения. Если резать весь текст по лимиту подписи, глава рассыпается
-            # на семь огрызков вместо двух.
-            caption, remainder = _cut_caption(body)
-            # Клавиатура вешается и на медиа тоже: при длинной главе кнопки под
-            # последним сообщением просто не находятся.
+        # Текст никогда не рвётся по границе подписи. Либо он целиком влезает
+        # в подпись — тогда глава это одно сообщение, — либо уходит целиком
+        # отдельным сообщением, а под картинкой остаётся только заголовок.
+        if media_id and len(body) <= MAX_CAPTION:
             if video_id:
-                await call.message.answer_video(video=video_id, caption=caption,
+                await call.message.answer_video(video=video_id, caption=body,
                                                 parse_mode=None, reply_markup=markup)
             else:
-                await call.message.answer_photo(photo=photo_id, caption=caption,
+                await call.message.answer_photo(photo=photo_id, caption=body,
                                                 parse_mode=None, reply_markup=markup)
-            chunks = _split(remainder, MAX_MESSAGE) if remainder.strip() else []
-        else:
-            chunks = _split(body, MAX_MESSAGE)
+            return
 
+        if media_id:
+            head = (title or "").strip()[:MAX_CAPTION] or None
+            if video_id:
+                await call.message.answer_video(video=video_id, caption=head,
+                                                parse_mode=None, reply_markup=markup)
+            else:
+                await call.message.answer_photo(photo=photo_id, caption=head,
+                                                parse_mode=None, reply_markup=markup)
+
+        # Один кусок на всё, пока текст влезает в обычное сообщение (4096)
+        chunks = _split(body, MAX_MESSAGE)
         for index, chunk in enumerate(chunks):
             is_last = index == len(chunks) - 1
             await call.message.answer(chunk, parse_mode=None,
@@ -238,18 +244,6 @@ async def open_article(call: CallbackQuery):
         note = f"⚠️ Материал не удалось показать: {e.message}" if config.is_admin(
             call.from_user.id) else "⚠️ Не удалось показать материал."
         await call.message.answer(note, reply_markup=markup)
-
-
-def _cut_caption(text: str):
-    """Делит текст на подпись к медиа и остаток, по границе абзаца"""
-    if len(text) <= MAX_CAPTION:
-        return text, ""
-    cut = text.rfind("\n\n", 0, MAX_CAPTION)
-    if cut < MAX_CAPTION // 3:
-        cut = text.rfind(" ", 0, MAX_CAPTION)
-    if cut <= 0:
-        cut = MAX_CAPTION
-    return text[:cut].rstrip(), text[cut:].lstrip()
 
 
 def _split(text: str, limit: int):
