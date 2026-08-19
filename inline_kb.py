@@ -234,11 +234,16 @@ def get_tennis_shop_action_menu(lang):
         [InlineKeyboardButton(text="⇦ Назад", callback_data="sport_tennis")]
     ])
 
+# Авторский канал о турнирах и трансляциях. Ссылка одна, поэтому держим её
+# рядом с кнопкой, а не разбросанной по коду.
+REVANCHE_CHANNEL_URL = "https://t.me/playintennisagain"
+
+
 def get_tennis_live_action_menu(lang):
-    channel_text = "📺 Канал с трансляциями" if lang == "ru" else "📺 Live Streams Channel"
+    channel_text = "📺 Канал «Реванш»" if lang == "ru" else "📺 Revanche channel"
     back_text = "⇦ Назад" if lang == "ru" else "⇦ Back"
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=channel_text, url="https://t.me/playintennisagain")],
+        [InlineKeyboardButton(text=channel_text, url=REVANCHE_CHANNEL_URL)],
         [InlineKeyboardButton(text=back_text, callback_data="sport_tennis")]
     ])
 
