@@ -103,12 +103,14 @@ def get_tennis_main_menu(lang):
     l = "🏆 Турниры & Стримы" if lang == "ru" else "🏆 Live Tournaments"
     s = "🛍 Реферальный Pro-Shop" if lang == "ru" else "🛍 Referral Pro-Shop"
     t = "🔒 Теория и Лайфхаки" if lang == "ru" else "🔒 Tennis Theory"
-    w = "🎾 WTA: сетка и итоги" if lang == "ru" else "🎾 WTA: draw & results"
+    w = "🎾 WTA: расписание и итоги" if lang == "ru" else "🎾 WTA: schedule & results"
+    a = "🎾 ATP: расписание и итоги" if lang == "ru" else "🎾 ATP: schedule & results"
     b = "🔙 Назад" if lang == "ru" else "🔙 Back"
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=g, callback_data="tennis_geography")],
         [InlineKeyboardButton(text=l, callback_data="tennis_live_matches")],
         [InlineKeyboardButton(text=w, callback_data="tennis_wta")],
+        [InlineKeyboardButton(text=a, callback_data="tennis_atp")],
         [InlineKeyboardButton(text=s, callback_data="tennis_shop_referral")],
         [InlineKeyboardButton(text=t, callback_data="tennis_premium_theory")],
         [InlineKeyboardButton(text=b, callback_data="menu_sport")]
