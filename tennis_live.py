@@ -6,7 +6,7 @@
 import html
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 import time
 
 import httpx
@@ -25,7 +25,8 @@ router = Router()
 SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/tennis/wta/scoreboard"
 API_HEADERS = {"Accept": "application/json"}
 
-CACHE_TTL = 600          # секунд: счёт меняется не ежесекундно, а ходить в сеть на каждое нажатие незачем
+CACHE_TTL = 60           # секунд. Время старта у источника пересматривается по ходу дня,
+                         # поэтому кэш короткий — иначе бот показывает вчерашний прогноз
 MAX_MATCHES = 12         # длиннее списка сообщение становится нечитаемым
 
 _cache = {"at": 0.0, "data": None}
@@ -125,23 +126,34 @@ def _women_matches(data):
     return result
 
 
-def _when(match) -> str:
-    """Время начала в UTC: часовой пояс читателя Telegram боту неизвестен,
-    поэтому подписываем явно, а не показываем «как есть» неизвестно чей час.
+def _when(match, lang: str) -> str:
+    """Когда начнётся — так, как это показывает поисковик: «через 5 мин».
 
-    В теннисе точное время есть только у первого матча сессии. Остальные идут
-    «не ранее»: корт освобождается, когда закончится предыдущий матч, а он может
-    затянуться на три сета. Поэтому время помечается как ориентир.
+    Абсолютное время бесполезно, пока неизвестен часовой пояс читателя, а
+    относительное понятно всем. Источник пересматривает время по ходу дня, и с
+    коротким кэшем бот показывает ровно то же, что видно в Google.
     """
     raw = match.get("date") or ""
     try:
         moment = datetime.strptime(raw.replace("Z", "+0000"), "%Y-%m-%dT%H:%M%z")
     except ValueError:
         return ""
+
+    minutes = (moment - datetime.now(timezone.utc)).total_seconds() / 60
+    ru = lang == "ru"
+
+    if minutes < 1:
+        return "вот-вот" if ru else "about to start"
+    if minutes < 60:
+        return f"через {int(minutes)} мин" if ru else f"in {int(minutes)} min"
+    if minutes < 24 * 60:
+        hours, rest = divmod(int(minutes), 60)
+        tail = f" {rest} мин" if rest and ru else (f" {rest} min" if rest else "")
+        return (f"через {hours} ч{tail}" if ru else f"in {hours} h{tail}")
     return moment.strftime("%d.%m %H:%M UTC")
 
 
-def _format(match) -> str:
+def _format(match, lang: str = "ru") -> str:
     """Матч одной строкой: состояние, участники, счёт или время начала"""
     sides = sorted(match["sides"], key=lambda s: not s.get("winner"))
     left, right = sides[0], sides[1]
@@ -157,8 +169,8 @@ def _format(match) -> str:
         tail = f"  <code>{html.escape(score)}</code>" if score else ""
         return f"🔴 <b>идёт</b>  {names}{tail}"
 
-    when = _when(match)
-    tail = f"  <code>не ранее {when}</code>" if when else ""
+    when = _when(match, lang)
+    tail = f"  <code>{when}</code>" if when else ""
     return f"🕐 {names}{tail}"
 
 
@@ -237,14 +249,10 @@ async def open_hub(call: CallbackQuery):
 
 
 SCHEDULE_NOTE = {
-    "ru": ("\n\n<i>Время — ориентир, а не расписание. Точное начало есть только у "
-           "первого матча сессии: следующий выходит на корт, когда закончится "
-           "предыдущий. Сдвиг на час-два — обычное дело.</i>"),
-    "en": ("\n\n<i>Times are estimates. Only the first match of a session has a fixed "
-           "start; the next one begins when the previous ends. An hour or two of drift "
-           "is normal.</i>"),
-    "fr": "\n\n<i>Les horaires sont indicatifs : seul le premier match a une heure fixe.</i>",
-    "he": "\n\n<i>הזמנים הם הערכה בלבד — רק המשחק הראשון מתחיל בשעה קבועה.</i>"
+    "ru": "\n\n<i>Обновляется вместе с источником — жмите «Обновить» перед началом матча.</i>",
+    "en": "\n\n<i>Updates with the source — tap Refresh right before a match.</i>",
+    "fr": "\n\n<i>Mis à jour avec la source.</i>",
+    "he": "\n\n<i>מתעדכן יחד עם המקור.</i>"
 }
 
 
@@ -263,7 +271,7 @@ async def _send(call: CallbackQuery, lang: str, heading: str, matches, note: str
 
     lines = [heading, ""]
     for match in matches[:MAX_MATCHES]:
-        lines.append(_format(match))
+        lines.append(_format(match, lang))
 
     if len(matches) > MAX_MATCHES:
         lines.append(f"\n<i>…и ещё {len(matches) - MAX_MATCHES}</i>")
@@ -320,43 +328,39 @@ async def show_draw(call: CallbackQuery):
 
 WHERE_TO_WATCH = {
     "ru": (
-        "📺 <b>Где смотреть WTA</b>\n\n"
-        "<b>WTA TV</b> — официальный сервис тура. Показывает большинство турниров WTA, "
-        "включая ранние круги, которые не берут телеканалы. Нужен аккаунт и подписка.\n"
-        "⚠️ Матчи, права на которые куплены местным вещателем, в вашей стране будут "
-        "закрыты даже при активной подписке — это обычное условие таких сервисов.\n\n"
-        "<b>Tennis Channel</b> — сильное покрытие тенниса, но привязан к США.\n\n"
-        "<b>Местный вещатель</b> — у крупных турниров права обычно выкупает "
-        "спортивный канал вашей страны, и это чаще всего самый дешёвый и стабильный путь.\n\n"
-        "❗️ <b>Частая путаница:</b> Tennis TV — это <b>ATP</b>, мужской тур. "
-        "Женских матчей там нет, подписка на него для WTA бесполезна.\n\n"
-        "<b>Что нужно</b>\n"
-        "• аккаунт и активная подписка сервиса;\n"
-        "• проверить, доступен ли конкретный турнир в вашей стране — это видно "
-        "на странице турнира до оплаты;\n"
-        "• для больших турниров сперва посмотреть, не показывает ли его местный "
-        "канал: часто дешевле и без ограничений.\n\n"
-        "<i>Права на трансляции пересматриваются каждый сезон, поэтому проверяйте "
-        "актуальность на странице самого турнира.</i>"
+        "📺 <b>Видеотрансляции WTA</b>\n\n"
+        "<b>WTA TV</b> — единственный сервис, который показывает <b>весь</b> женский тур, "
+        "включая ранние круги. Нужны аккаунт и подписка, платится картой.\n\n"
+        "<b>Турниры Большого шлема идут не там.</b> У них отдельные правообладатели:\n"
+        "• Australian Open, Roland Garros, Wimbledon, US Open — смотреть у местного "
+        "спортивного канала или на площадке, купившей права в вашей стране;\n"
+        "• часто у самих турниров есть бесплатные трансляции отдельных кортов на "
+        "их сайте и в приложении.\n\n"
+        "❗️ <b>Tennis TV — это ATP.</b> Мужской тур. Женских матчей там нет, "
+        "для WTA подписка бесполезна. Путают постоянно.\n\n"
+        "<b>Что нужно сделать</b>\n"
+        "1. Открыть страницу турнира в календаре WTA — там указан вещатель "
+        "для вашей страны.\n"
+        "2. Проверить, доступен ли турнир у вас: часть матчей закрыта в регионах, "
+        "где права выкуплены местным каналом, — даже при оплаченной подписке.\n"
+        "3. Если турнир из Большого шлема — искать сразу местного вещателя, "
+        "WTA TV его не покажет."
     ),
     "en": (
-        "📺 <b>Where to watch WTA</b>\n\n"
-        "<b>WTA TV</b> — the tour's official service, covering most WTA events including "
-        "early rounds that television skips. Requires an account and a subscription.\n"
-        "⚠️ Matches licensed to a local broadcaster stay blocked in your country even "
-        "with an active subscription — that is standard for such services.\n\n"
-        "<b>Tennis Channel</b> — strong tennis coverage, tied to the US.\n\n"
-        "<b>Your local broadcaster</b> — for big events the rights usually go to a "
-        "national sports channel, which is often the cheapest and most reliable route.\n\n"
-        "❗️ <b>Common mix-up:</b> Tennis TV is <b>ATP</b>, the men's tour. It carries no "
-        "women's matches, so it is useless for WTA.\n\n"
-        "<b>What you need</b>\n"
-        "• an account and an active subscription;\n"
-        "• a check that the specific tournament is available in your country — shown on "
-        "the tournament page before you pay;\n"
-        "• for major events, check the national channel first.\n\n"
-        "<i>Broadcast rights are renegotiated every season, so verify on the "
-        "tournament's own page.</i>"
+        "📺 <b>WTA video streaming</b>\n\n"
+        "<b>WTA TV</b> is the only service carrying the <b>whole</b> women's tour, early "
+        "rounds included. Account and subscription required.\n\n"
+        "<b>The Grand Slams are not on it.</b> They have their own rights holders — "
+        "Australian Open, Roland Garros, Wimbledon and the US Open go to a national "
+        "broadcaster, and the tournaments often stream selected courts free on their "
+        "own sites.\n\n"
+        "❗️ <b>Tennis TV is ATP</b>, the men's tour. No women's matches at all.\n\n"
+        "<b>What to do</b>\n"
+        "1. Open the tournament page in the WTA calendar — it names the broadcaster "
+        "for your country.\n"
+        "2. Check availability: matches licensed locally stay blocked even for paying "
+        "subscribers.\n"
+        "3. For a Grand Slam, go straight to the national broadcaster."
     )
 }
 
