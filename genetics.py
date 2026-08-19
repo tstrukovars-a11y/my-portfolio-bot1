@@ -187,26 +187,39 @@ async def open_article(call: CallbackQuery):
     # приходит из канала как есть: любой символ «<» — например «p<0.05» — Telegram
     # принимает за начало тега и отклоняет сообщение целиком, текст пропадает.
     media_id = video_id or photo_id
-    chunks = _split(body, MAX_CAPTION if media_id else MAX_MESSAGE)
-
     if media_id:
-        # Первый кусок уходит подписью к медиа: голая картинка без единой строки
-        # и без кнопок выглядит как сбой.
-        caption = chunks[0]
-        rest = chunks[1:]
-        only = not rest
+        # Подписью идёт только начало текста, остаток режется по лимиту обычного
+        # сообщения. Если резать весь текст по лимиту подписи, глава рассыпается
+        # на семь огрызков вместо двух.
+        caption, remainder = _cut_caption(body)
+        # Клавиатура вешается и на медиа тоже: при длинной главе кнопки под
+        # последним сообщением просто не находятся.
         if video_id:
-            await call.message.answer_video(video=video_id, caption=caption, parse_mode=None,
-                                            reply_markup=markup if only else None)
+            await call.message.answer_video(video=video_id, caption=caption,
+                                            parse_mode=None, reply_markup=markup)
         else:
-            await call.message.answer_photo(photo=photo_id, caption=caption, parse_mode=None,
-                                            reply_markup=markup if only else None)
-        chunks = rest
+            await call.message.answer_photo(photo=photo_id, caption=caption,
+                                            parse_mode=None, reply_markup=markup)
+        chunks = _split(remainder, MAX_MESSAGE) if remainder.strip() else []
+    else:
+        chunks = _split(body, MAX_MESSAGE)
 
     for index, chunk in enumerate(chunks):
         is_last = index == len(chunks) - 1
         await call.message.answer(chunk, parse_mode=None,
                                   reply_markup=markup if is_last else None)
+
+
+def _cut_caption(text: str):
+    """Делит текст на подпись к медиа и остаток, по границе абзаца"""
+    if len(text) <= MAX_CAPTION:
+        return text, ""
+    cut = text.rfind("\n\n", 0, MAX_CAPTION)
+    if cut < MAX_CAPTION // 3:
+        cut = text.rfind(" ", 0, MAX_CAPTION)
+    if cut <= 0:
+        cut = MAX_CAPTION
+    return text[:cut].rstrip(), text[cut:].lstrip()
 
 
 def _split(text: str, limit: int):
@@ -731,3 +744,37 @@ async def do_delete(call: CallbackQuery):
         await call.message.edit_text("🗑 Глава удалена. Остальные перенумерованы.")
     else:
         await call.message.edit_text("⚠️ Не удалось удалить — ошибка базы.")
+
+
+@router.message(F.text.regexp(r"^/genetics_edit(\s+\d+)?$"))
+async def edit_by_number(message: Message):
+    """Прямой доступ к правке по номеру главы — на случай, если кнопки под
+    материалом потерялись в длинной ленте сообщений."""
+    if not config.is_admin(message.from_user.id):
+        return
+
+    parts = message.text.split()
+    if len(parts) < 2:
+        await message.answer("Укажите номер главы, например: /genetics_edit 4")
+        return
+
+    number = int(parts[1])
+    total = await database.count_articles(SECTION)
+    if not 1 <= number <= total:
+        await message.answer(f"В базе знаний {total} глав. Номер должен быть от 1 до {total}.")
+        return
+
+    rows = await database.get_article_titles(SECTION, limit=1, offset=number - 1)
+    if not rows:
+        await message.answer("Глава не найдена.")
+        return
+
+    article_id, title = rows[0]
+    await message.answer(
+        f"Глава {number}: «{(title or '').strip() or 'Без названия'}»",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✏️ Переименовать",
+                                  callback_data=f"genrename_{article_id}")],
+            [InlineKeyboardButton(text="📝 Текст", callback_data=f"gentext_{article_id}")],
+        ])
+    )
