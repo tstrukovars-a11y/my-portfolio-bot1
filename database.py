@@ -340,7 +340,15 @@ async def init_db():
             f"ON {SCHEMA}.articles (source_key)"
         )
 
-        # 15. Анкеты поиска партнёра для игры
+        # 15. Настройки, меняемые из бота (пароли разделов и прочее).
+        # Нужны, чтобы владелец мог сменить пароль, не трогая Render.
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.settings (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )""")
+
+        # 16. Анкеты поиска партнёра для игры
         await conn.execute(f"""
         CREATE TABLE IF NOT EXISTS {SCHEMA}.game_partners (
             id SERIAL PRIMARY KEY,
@@ -659,6 +667,46 @@ async def get_recipe_by_id(recipe_id: int):
     except Exception as e:
         logging.error(f"БД недоступна при чтении рецепта: {e}")
         return None
+
+
+# --- НАСТРОЙКИ, МЕНЯЕМЫЕ ИЗ БОТА ---
+
+_settings_cache: dict[str, str] = {}
+
+
+async def get_setting(key: str, default: str = None):
+    """Значение из базы; при недоступности базы — последнее известное.
+
+    Кэш обязателен: пароли спрашиваются на каждом входе в закрытый раздел,
+    а лишний поход в базу на каждое нажатие бот заметно замедляет.
+    """
+    if key in _settings_cache:
+        return _settings_cache[key]
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            value = await conn.fetchval(
+                f"SELECT value FROM {SCHEMA}.settings WHERE key = $1", key)
+        if value is not None:
+            _settings_cache[key] = value
+            return value
+    except Exception as e:
+        logging.error(f"БД недоступна при чтении настройки {key}: {e}")
+    return default
+
+
+async def set_setting(key: str, value: str) -> bool:
+    _settings_cache[key] = value
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"INSERT INTO {SCHEMA}.settings (key, value) VALUES ($1, $2) "
+                "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", key, value)
+        return True
+    except Exception as e:
+        logging.error(f"Не удалось сохранить настройку {key}: {type(e).__name__}: {e}")
+        return False
 
 
 # --- ПОСТЫ ТЕМАТИЧЕСКИХ КАНАЛОВ (база знаний по разделам) ---

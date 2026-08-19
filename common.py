@@ -72,7 +72,7 @@ async def set_language(call: CallbackQuery, bot: Bot):
     
     await call.message.edit_caption(
         caption=caption,
-        reply_markup=inline_kb.get_main_menu(selected_lang),
+        reply_markup=inline_kb.get_main_menu(selected_lang, config.is_admin(user_id)),
         parse_mode="Markdown"
     )
     await call.answer()
@@ -105,7 +105,7 @@ async def navigate_home(call: CallbackQuery, bot: Bot):
             caption=caption,
             parse_mode="Markdown"
         ),
-        reply_markup=inline_kb.get_main_menu(lang)
+        reply_markup=inline_kb.get_main_menu(lang, config.is_admin(user_id))
     )
     await call.answer()
 # Примечание: хендлер menu_vpn обрабатывается в block6_vpn.py, здесь дублирующая версия удалена

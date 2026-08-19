@@ -64,7 +64,7 @@ async def cancel_profiles_password(call: CallbackQuery, state: FSMContext):
 
     user_lang = await database.get_user_language(call.from_user.id)
     caption = menu_texts.MAIN_MENU_TEXTS.get(user_lang, menu_texts.MAIN_MENU_TEXTS["en"])
-    markup = inline_kb.get_main_menu(user_lang)
+    markup = inline_kb.get_main_menu(user_lang, config.is_admin(call.from_user.id))
 
     try:
         await call.message.delete()
@@ -86,7 +86,8 @@ async def check_profiles_password(message: Message, state: FSMContext):
     user_lang = data.get("profiles_lang", "ru")
     entered = message.text.strip().lower()
 
-    if entered != PROFILES_PASSWORD.lower():
+    expected = (await database.get_setting("profiles_password", config.PROFILES_PASSWORD) or "").strip().lower()
+    if entered != expected:
         wrong_text = WRONG_PASSWORD_TEXTS.get(user_lang, WRONG_PASSWORD_TEXTS["en"])
         await message.answer(text=wrong_text, reply_markup=_cancel_markup(user_lang))
         return

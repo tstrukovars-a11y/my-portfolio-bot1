@@ -295,7 +295,8 @@ async def check_golf_password(message: Message, state: FSMContext):
     data = await state.get_data()
     user_lang = data.get("golf_lang", "ru")
 
-    if message.text.strip().lower() != GOLF_PASSWORD:
+    expected = (await database.get_setting("golf_password", config.GOLF_PASSWORD) or "").strip().lower()
+    if message.text.strip().lower() != expected:
         await message.answer(
             GOLF_WRONG_TEXTS.get(user_lang, GOLF_WRONG_TEXTS["en"]),
             reply_markup=_golf_cancel_markup(user_lang)

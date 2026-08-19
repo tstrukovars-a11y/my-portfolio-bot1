@@ -8,7 +8,7 @@ language_menu = InlineKeyboardMarkup(inline_keyboard=[
      InlineKeyboardButton(text="🇮🇱 עברית", callback_data="lang_he")]
 ])
 
-def get_main_menu(lang):
+def get_main_menu(lang, is_admin=False):
     titles = {
         "ru": ["🏆 Блок 1: Спорт и путешествия", "🎨 Блок 2: Творчество", "🧠 Блок 3: Интеллект и карьера", "🤖 Блок 4: Нейросеть Claude", "💼 Профили: HH & LinkedIn", "🎮 Интерактив: Игра"],
         "en": ["🏆 Block 1: Sports & Travel", "🎨 Block 2: Creativity", "🧠 Block 3: Intellect & Career", "🤖 Block 4: Claude AI", "💼 Profiles: HH & LinkedIn", "🎮 Interactive: Game"],
@@ -34,7 +34,7 @@ def get_main_menu(lang):
     }
     a_title = analytics_titles.get(lang, analytics_titles["en"])
 
-    return InlineKeyboardMarkup(inline_keyboard=[
+    rows = [
         [InlineKeyboardButton(text=m[0], callback_data="menu_sport")],
         [InlineKeyboardButton(text=m[1], callback_data="menu_creative")],
         [InlineKeyboardButton(text=m[2], callback_data="menu_intellect")],
@@ -42,8 +42,12 @@ def get_main_menu(lang):
         [InlineKeyboardButton(text=m[4], callback_data="menu_profiles")],
         [InlineKeyboardButton(text=m[5], callback_data="menu_game")],
         [InlineKeyboardButton(text=v_title, callback_data="menu_vpn")],
-        [InlineKeyboardButton(text=a_title, callback_data="menu_analytics")]  # Кнопка Аналитики
-    ])
+        [InlineKeyboardButton(text=a_title, callback_data="menu_analytics")],
+    ]
+    # Служебная кнопка рисуется только владельцу бота
+    if is_admin:
+        rows.append([InlineKeyboardButton(text="🛠 Служебное", callback_data="admin_panel")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 def get_sport_menu(lang):
     titles = {
