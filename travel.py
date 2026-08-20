@@ -50,6 +50,11 @@ PICK_PLACE = {
     "he": "📍 <b>{country}</b>\n\nבחרו מקום:"
 }
 
+NO_PLACES = {"ru": "Локаций пока нет", "en": "No locations yet",
+             "fr": "Aucun lieu pour l'instant", "he": "אין עדיין מקומות"}
+NOT_FOUND = {"ru": "Публикация не найдена", "en": "Entry not found",
+             "fr": "Publication introuvable", "he": "הפרסום לא נמצא"}
+
 BACK = {"ru": "🔙 Назад", "en": "🔙 Back", "fr": "🔙 Retour", "he": "🔙 חזרה"}
 TO_COUNTRIES = {"ru": "🌍 К странам", "en": "🌍 All countries",
                 "fr": "🌍 Tous les pays", "he": "🌍 כל המדינות"}
@@ -118,7 +123,7 @@ async def show_places(call: CallbackQuery):
     country = await _country_by_token(call.data.removeprefix("trcountry_"))
     places = await database.get_travel_places(country) if country else []
     if not places:
-        await call.answer("Локаций пока нет", show_alert=True)
+        await call.answer(_t(NO_PLACES, lang), show_alert=True)
         return
 
     names = await translator.translate_titles("travel", places, lang)
@@ -148,7 +153,7 @@ async def show_place(call: CallbackQuery):
 
     entry = await database.get_travel_place(place_id)
     if not entry:
-        await call.answer("Публикация не найдена", show_alert=True)
+        await call.answer(_t(NOT_FOUND, lang), show_alert=True)
         return
 
     country, place, text, photo_id, video_id, link = entry

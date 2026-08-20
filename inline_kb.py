@@ -1,6 +1,20 @@
 # inline_kb.py
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
+# Подписи возврата держим здесь, а не переписываем в каждом экране: их два
+# десятка, и раньше они были зашиты по-русски — англоязычный посетитель упирался
+# в русскую кнопку на каждом шаге вглубь.
+BACK_TEXTS = {"ru": "🔙 Назад", "en": "🔙 Back", "fr": "🔙 Retour", "he": "🔙 חזרה"}
+BACK_ARROW = {"ru": "⇦ Назад", "en": "⇦ Back", "fr": "⇦ Retour", "he": "⇦ חזרה"}
+BACK_SECTORS = {"ru": "🔙 Назад к секторам", "en": "🔙 Back to sectors",
+                "fr": "🔙 Retour aux secteurs", "he": "🔙 חזרה למגזרים"}
+HOME_TEXTS = {"ru": "⇦ В главное меню", "en": "⇦ Main menu",
+              "fr": "⇦ Menu principal", "he": "⇦ לתפריט הראשי"}
+
+
+def label(mapping: dict, lang: str) -> str:
+    return mapping.get(lang, mapping["en"])
+
 language_menu = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="🇷🇺 Русский", callback_data="lang_ru"),
      InlineKeyboardButton(text="🇬🇧 English", callback_data="lang_en")],
@@ -46,7 +60,7 @@ def get_main_menu(lang, is_admin=False):
     ]
     # Служебная кнопка рисуется только владельцу бота
     if is_admin:
-        rows.append([InlineKeyboardButton(text="🛠 Служебное", callback_data="admin_panel")])
+        rows.append([InlineKeyboardButton(text=("🛠 Служебное" if lang == "ru" else "🛠 Admin"), callback_data="admin_panel")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 def get_sport_menu(lang):
@@ -124,7 +138,7 @@ def get_horse_main_menu(lang):
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=r, callback_data="horse_riding_experience")],
         [InlineKeyboardButton(text=a, callback_data="horse_racing_analytics")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="menu_sport")]
+        [InlineKeyboardButton(text=label(BACK_TEXTS, lang), callback_data="menu_sport")]
     ])
 
 def get_golf_main_menu(lang):
@@ -135,7 +149,7 @@ def get_golf_main_menu(lang):
         [InlineKeyboardButton(text=ru, callback_data="golf_rules")],
         [InlineKeyboardButton(text=pl, callback_data="golf_places")],
         [InlineKeyboardButton(text=jo, callback_data="golf_join_community")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="menu_sport")]
+        [InlineKeyboardButton(text=label(BACK_TEXTS, lang), callback_data="menu_sport")]
     ])
 
 def get_news_main_menu(lang):
@@ -145,7 +159,7 @@ def get_news_main_menu(lang):
         [InlineKeyboardButton(text="🇫🇷 Франция" if lang=="ru" else "🇫🇷 France", callback_data="news_sub_fr"),
          InlineKeyboardButton(text="🇺🇸 США" if lang=="ru" else "🇺🇸 USA", callback_data="news_sub_us")],
         [InlineKeyboardButton(text="📊 ROI-Отчеты" if lang=="ru" else "📊 ROI Reports", callback_data="news_sub_analytics")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="menu_sport")]
+        [InlineKeyboardButton(text=label(BACK_TEXTS, lang), callback_data="menu_sport")]
     ])
 
 def get_profiles_menu(lang):
@@ -171,47 +185,53 @@ def get_profiles_menu(lang):
         ck.append([InlineKeyboardButton(text="💼 HeadHunter", url="https://hh.ru/resume/6d545f57ff100284c10039ed1f4d624f737135")])
     else:
         ck.append([InlineKeyboardButton(text="📄 Download CV", url="https://drive.google.com/file/d/1m8z9MlA8g-NT1yP9KAhGbrKDymY4HpLN/view")])
-    ck.append([InlineKeyboardButton(text="⇦ Назад", callback_data="go_home")])
+    ck.append([InlineKeyboardButton(text=label(BACK_ARROW, lang), callback_data="go_home")])
     return InlineKeyboardMarkup(inline_keyboard=ck)
 
-def get_bank_submenu(exclude_prj=None):
-    kb = [
-        ("p_sb_dist", "🟢 Сбер: Платформа Дистрибуции"),
-        ("p_sb_risk", "🟢 Сбер: Платформа сложных сделок"),
-        ("p_sb_cash", "🟢 Сбер: Стресс-тестирование CashFlow"),
-        ("p_sb_ml", "🟢 Сбер: ML-андеррайтинг недвижимости"),
-        ("p_rsb", "🔵 Банк Русский Стандарт")
-    ]
+def get_bank_submenu(lang="ru", exclude_prj=None):
+    names = {
+        "ru": ["🟢 Сбер: Платформа Дистрибуции", "🟢 Сбер: Платформа сложных сделок",
+               "🟢 Сбер: Стресс-тестирование CashFlow", "🟢 Сбер: ML-андеррайтинг недвижимости",
+               "🔵 Банк Русский Стандарт"],
+        "en": ["🟢 Sber: distribution platform", "🟢 Sber: complex deals platform",
+               "🟢 Sber: CashFlow stress testing", "🟢 Sber: ML underwriting for real estate",
+               "🔵 Russian Standard Bank"],
+    }
+    codes = ["p_sb_dist", "p_sb_risk", "p_sb_cash", "p_sb_ml", "p_rsb"]
+    kb = list(zip(codes, names.get(lang, names["en"])))
     buttons = [[InlineKeyboardButton(text=tx, callback_data=cb)] for cb, tx in kb if cb != exclude_prj]
-    buttons.append([InlineKeyboardButton(text="🔙 Назад к секторам", callback_data="menu_profiles")])
+    buttons.append([InlineKeyboardButton(text=label(BACK_SECTORS, lang), callback_data="menu_profiles")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-def get_logistics_submenu(exclude_prj=None):
-    kb = [
-        ("p_lg_sms", "📲 SPSR: СМС и Push"),
-        ("p_lg_cust", "📲 SPSR: Автоматизация таможни"),
-        ("p_lg_fts", "📲 SPSR: Отчетность ФТС"),
-        ("p_lg_fulfill", "📲 SPSR: Фулфилмент"),
-        ("p_lg_acq", "📲 SPSR: Мобильный эквайринг"),
-        ("p_lg_unit", "📲 SPSR: Unit-экономика"),
-        ("p_ev_adm", "📱 Евросеть: Администрирование"),
-        ("p_ev_pro", "📱 Евросеть: Про-Сервис")
-    ]
+def get_logistics_submenu(lang="ru", exclude_prj=None):
+    names = {
+        "ru": ["📲 SPSR: СМС и Push", "📲 SPSR: Автоматизация таможни",
+               "📲 SPSR: Отчетность ФТС", "📲 SPSR: Фулфилмент",
+               "📲 SPSR: Мобильный эквайринг", "📲 SPSR: Unit-экономика",
+               "📱 Евросеть: Администрирование", "📱 Евросеть: Про-Сервис"],
+        "en": ["📲 SPSR: SMS and push", "📲 SPSR: customs automation",
+               "📲 SPSR: customs-service reporting", "📲 SPSR: fulfilment",
+               "📲 SPSR: mobile acquiring", "📲 SPSR: unit economics",
+               "📱 Euroset: administration", "📱 Euroset: Pro-Service"],
+    }
+    codes = ["p_lg_sms", "p_lg_cust", "p_lg_fts", "p_lg_fulfill",
+             "p_lg_acq", "p_lg_unit", "p_ev_adm", "p_ev_pro"]
+    kb = list(zip(codes, names.get(lang, names["en"])))
     buttons = [[InlineKeyboardButton(text=tx, callback_data=cb)] for cb, tx in kb if cb != exclude_prj]
-    buttons.append([InlineKeyboardButton(text="🔙 Назад к секторам", callback_data="menu_profiles")])
+    buttons.append([InlineKeyboardButton(text=label(BACK_SECTORS, lang), callback_data="menu_profiles")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-def get_agro_submenu():
+def get_agro_submenu(lang="ru"):
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🌾 АГРОЭКО: Инвест-проекты", callback_data="p_agroeco")],
-        [InlineKeyboardButton(text="🔙 Назад к секторам", callback_data="menu_profiles")]
+        [InlineKeyboardButton(text=("🌾 АГРОЭКО: Инвест-проекты" if lang == "ru" else "🌾 AGROECO: investment projects"), callback_data="p_agroeco")],
+        [InlineKeyboardButton(text=label(BACK_SECTORS, lang), callback_data="menu_profiles")]
     ])
 
-def get_production_submenu():
+def get_production_submenu(lang="ru"):
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⚙ ВАСО: Модернизация SAP ERP", callback_data="p_vaso_sap")],
-        [InlineKeyboardButton(text="⚙ ВАСО: Модернизация 1C", callback_data="p_vaso_1c")],
-        [InlineKeyboardButton(text="🔙 Назад к секторам", callback_data="menu_profiles")]
+        [InlineKeyboardButton(text=("⚙ ВАСО: Модернизация SAP ERP" if lang == "ru" else "⚙ VASO: SAP ERP modernisation"), callback_data="p_vaso_sap")],
+        [InlineKeyboardButton(text=("⚙ ВАСО: Модернизация 1C" if lang == "ru" else "⚙ VASO: 1C modernisation"), callback_data="p_vaso_1c")],
+        [InlineKeyboardButton(text=label(BACK_SECTORS, lang), callback_data="menu_profiles")]
     ])
 
 def get_composers_grid_menu(lang):
@@ -226,16 +246,16 @@ def get_composers_grid_menu(lang):
         [InlineKeyboardButton(text="🌊 К. Дебюсси" if lang=="ru" else "🌊 C. Debussy", callback_data="comp_detail_debussy")],
         [InlineKeyboardButton(text="🎯 И. Брамс" if lang=="ru" else "🎯 J. Brahms", callback_data="comp_detail_brahms")],
         [InlineKeyboardButton(text="👑 Г.Ф. Гендель" if lang=="ru" else "👑 G.F. Handel", callback_data="comp_detail_handel")],
-        [InlineKeyboardButton(text="⇦ Назад", callback_data="sport_music")]
+        [InlineKeyboardButton(text=label(BACK_ARROW, lang), callback_data="sport_music")]
     ])
 
 def get_travel_back_button(lang, target):
-    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⇦ Назад", callback_data=target)]])
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=label(BACK_ARROW, lang), callback_data=target)]])
 
 def get_tennis_shop_action_menu(lang):
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🛍 Открыть Pro-Shop", url="https://t.me")],
-        [InlineKeyboardButton(text="⇦ Назад", callback_data="sport_tennis")]
+        [InlineKeyboardButton(text=("🛍 Открыть Pro-Shop" if lang == "ru" else "🛍 Open Pro-Shop"), url="https://t.me")],
+        [InlineKeyboardButton(text=label(BACK_ARROW, lang), callback_data="sport_tennis")]
     ])
 
 # Авторский канал о турнирах и трансляциях. Ссылка одна, поэтому держим её
@@ -253,21 +273,21 @@ def get_tennis_live_action_menu(lang):
 
 def get_tennis_pay_action_menu(lang):
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💳 Оформить подписку", callback_data="tennis_buy_subscription")],
-        [InlineKeyboardButton(text="⇦ Назад", callback_data="sport_tennis")]
+        [InlineKeyboardButton(text=("💳 Оформить подписку" if lang == "ru" else "💳 Subscribe"), callback_data="tennis_buy_subscription")],
+        [InlineKeyboardButton(text=label(BACK_ARROW, lang), callback_data="sport_tennis")]
     ])
 
 def get_horse_channel_action_menu(lang):
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📊 Перейти в канал", url="https://t.me")],
-        [InlineKeyboardButton(text="🤖 AI-Робот Маркет", callback_data="horse_ai_bot_market")],
-        [InlineKeyboardButton(text="⇦ Назад", callback_data="sport_horse")]
+        [InlineKeyboardButton(text=("📊 Перейти в канал" if lang == "ru" else "📊 Open the channel"), url="https://t.me")],
+        [InlineKeyboardButton(text=("🤖 AI-Робот Маркет" if lang == "ru" else "🤖 AI Robot Market"), callback_data="horse_ai_bot_market")],
+        [InlineKeyboardButton(text=label(BACK_ARROW, lang), callback_data="sport_horse")]
     ])
 
 def get_horse_bot_action_menu(lang):
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💳 Купить робота", callback_data="horse_buy_robot_click")],
-        [InlineKeyboardButton(text="⇦ Назад", callback_data="sport_horse")]
+        [InlineKeyboardButton(text=("💳 Купить робота" if lang == "ru" else "💳 Buy the robot"), callback_data="horse_buy_robot_click")],
+        [InlineKeyboardButton(text=label(BACK_ARROW, lang), callback_data="sport_horse")]
     ])
 
 def get_golf_join_action_menu(lang):
@@ -310,19 +330,19 @@ def get_art_hub_main_menu(lang):
         [InlineKeyboardButton(text=s, callback_data="art_subscriptions_prices")],
         [InlineKeyboardButton(text=c, callback_data="art_exhibitions_calendar")],
         [InlineKeyboardButton(text=f, callback_data="art_start_application_form")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="menu_creative")]
+        [InlineKeyboardButton(text=label(BACK_TEXTS, lang), callback_data="menu_creative")]
     ])
 
 def get_art_subs_markup(lang):
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💳 Купить подписку" if lang == "ru" else "💳 Buy Subscription", callback_data="art_fsm_initiate_flow")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="creative_paintings")]
+        [InlineKeyboardButton(text=label(BACK_TEXTS, lang), callback_data="creative_paintings")]
     ])
 
 def get_art_form_trigger_markup(lang):
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🚀 Заполнить анкету" if lang == "ru" else "🚀 Fill Form", callback_data="art_fsm_initiate_flow")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="creative_paintings")]
+        [InlineKeyboardButton(text=label(BACK_TEXTS, lang), callback_data="creative_paintings")]
     ])
 
 def get_creative_atelier_menu(lang):
@@ -333,13 +353,13 @@ def get_creative_atelier_menu(lang):
         [InlineKeyboardButton(text=c, callback_data="atelier_my_collection")],
         [InlineKeyboardButton(text=h, callback_data="atelier_fashion_history")],
         [InlineKeyboardButton(text=b, callback_data="atelier_b2b_integration_form")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="menu_creative")]
+        [InlineKeyboardButton(text=label(BACK_TEXTS, lang), callback_data="menu_creative")]
     ])
 
 def get_atelier_b2b_action_menu(lang):
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🚀 Начать подачу заявки" if lang == "ru" else "🚀 Start B2B Form", callback_data="atelier_fsm_b2b_initiate")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="creative_atelier")]
+        [InlineKeyboardButton(text=label(BACK_TEXTS, lang), callback_data="creative_atelier")]
     ])
 
 def get_creative_culinary_menu(lang):
@@ -350,7 +370,7 @@ def get_creative_culinary_menu(lang):
         [InlineKeyboardButton(text=b, callback_data="culinary_cat_video")],
         [InlineKeyboardButton(text=m, callback_data="culinary_cat_recipes")],
         [InlineKeyboardButton(text=d, callback_data="culinary_cat_useful")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="menu_creative")]
+        [InlineKeyboardButton(text=label(BACK_TEXTS, lang), callback_data="menu_creative")]
     ])
 
 # =======================================================
@@ -377,7 +397,7 @@ def get_diary_menu(lang):
         [InlineKeyboardButton(text=b, callback_data="diary_business")],
         [InlineKeyboardButton(text=e, callback_data="diary_engineering")],
         [InlineKeyboardButton(text=p, callback_data="intellect_puzzle")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="menu_intellect")]
+        [InlineKeyboardButton(text=label(BACK_TEXTS, lang), callback_data="menu_intellect")]
     ])
 
 def get_genetics_hub_menu(lang):
@@ -388,7 +408,7 @@ def get_genetics_hub_menu(lang):
         [InlineKeyboardButton(text=k, callback_data="genetics_channel_base")],
         [InlineKeyboardButton(text=n, callback_data="genetics_news")],
         [InlineKeyboardButton(text=o, callback_data="genetics_order")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="menu_intellect")]
+        [InlineKeyboardButton(text=label(BACK_TEXTS, lang), callback_data="menu_intellect")]
     ])
 
 def get_books_shelf_menu(lang):
@@ -399,14 +419,14 @@ def get_books_shelf_menu(lang):
         [InlineKeyboardButton(text=b, callback_data="books_view_business")],
         [InlineKeyboardButton(text=h, callback_data="books_view_horizon")],
         [InlineKeyboardButton(text=t, callback_data="books_view_tools")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="menu_intellect")]
+        [InlineKeyboardButton(text=label(BACK_TEXTS, lang), callback_data="menu_intellect")]
     ])
 
 def get_claude_pay_menu(lang):
     # Запасное меню оплаты/подписки для премиум-блоков
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💳 Оформить Premium" if lang == "ru" else "💳 Unlock Premium", callback_data="start_solving_puzzles")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="menu_intellect")]
+        [InlineKeyboardButton(text=label(BACK_TEXTS, lang), callback_data="menu_intellect")]
     ])
 
 # КНОПКИ ВЫХОДА ИЗ ЧАТА CLAUDE (REPLY)

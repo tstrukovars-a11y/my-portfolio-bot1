@@ -103,22 +103,26 @@ async def check_profiles_password(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "sub_bank")
 async def sub_bank(call: CallbackQuery):
-    await call.message.edit_reply_markup(reply_markup=inline_kb.get_bank_submenu())
+    user_lang = await database.get_user_language(call.from_user.id)
+    await call.message.edit_reply_markup(reply_markup=inline_kb.get_bank_submenu(user_lang))
     await call.answer()
 
 @router.callback_query(F.data == "sub_logistics")
 async def sub_logistics(call: CallbackQuery):
-    await call.message.edit_reply_markup(reply_markup=inline_kb.get_logistics_submenu())
+    user_lang = await database.get_user_language(call.from_user.id)
+    await call.message.edit_reply_markup(reply_markup=inline_kb.get_logistics_submenu(user_lang))
     await call.answer()
 
 @router.callback_query(F.data == "sub_agro")
 async def sub_agro(call: CallbackQuery):
-    await call.message.edit_reply_markup(reply_markup=inline_kb.get_agro_submenu())
+    user_lang = await database.get_user_language(call.from_user.id)
+    await call.message.edit_reply_markup(reply_markup=inline_kb.get_agro_submenu(user_lang))
     await call.answer()
 
 @router.callback_query(F.data == "sub_production")
 async def sub_production(call: CallbackQuery):
-    await call.message.edit_reply_markup(reply_markup=inline_kb.get_production_submenu())
+    user_lang = await database.get_user_language(call.from_user.id)
+    await call.message.edit_reply_markup(reply_markup=inline_kb.get_production_submenu(user_lang))
     await call.answer()
 
 @router.callback_query(F.data.startswith("p_"))
@@ -128,13 +132,13 @@ async def show_project_details(call: CallbackQuery):
     if call.data == "p_universal":
         back_markup = inline_kb.get_profiles_menu(user_lang)
     elif call.data in {"p_sb_dist", "p_sb_risk", "p_sb_cash", "p_sb_ml", "p_rsb"}:
-        back_markup = inline_kb.get_bank_submenu(exclude_prj=call.data)
+        back_markup = inline_kb.get_bank_submenu(user_lang, exclude_prj=call.data)
     elif call.data in {"p_lg_sms", "p_lg_cust", "p_lg_fts", "p_lg_fulfill", "p_lg_acq", "p_lg_unit", "p_ev_adm", "p_ev_pro"}:
-        back_markup = inline_kb.get_logistics_submenu(exclude_prj=call.data)
+        back_markup = inline_kb.get_logistics_submenu(user_lang, exclude_prj=call.data)
     elif call.data == "p_agroeco":
-        back_markup = inline_kb.get_agro_submenu()
+        back_markup = inline_kb.get_agro_submenu(user_lang)
     else:
-        back_markup = inline_kb.get_production_submenu()
+        back_markup = inline_kb.get_production_submenu(user_lang)
 
     data_map = {
         "p_universal": menu_texts.TEXT_UNIVERSAL,

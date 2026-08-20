@@ -10,6 +10,9 @@ import menu_texts
 import inline_kb
 
 router = Router()
+
+RESET_TEXTS = {"ru": "🔄 Сброс сессии...", "en": "🔄 Resetting the session…",
+               "fr": "🔄 Réinitialisation…", "he": "🔄 מאפס את השיחה…"}
 claude_client = AsyncAnthropic(api_key=config.ANTHROPIC_API_KEY)
 
 class ClaudeStates(StatesGroup):
@@ -102,7 +105,7 @@ async def process_confirmed_exit(message: Message, state: FSMContext):
     elif lang == "he": current_markup = inline_kb.get_main_menu("he")
     else: current_markup = inline_kb.get_main_menu("en")
     
-    await message.answer(text="🔄 Сброс сессии...", reply_markup=ReplyKeyboardRemove())
+    await message.answer(text=RESET_TEXTS.get(user_lang, RESET_TEXTS["en"]), reply_markup=ReplyKeyboardRemove())
     await message.answer_photo(
         photo=config.MAIN_BANNER, 
         caption=caption_text, 

@@ -3,6 +3,7 @@ import logging
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 import database
+import inline_kb
 
 router = Router()
 
@@ -88,7 +89,7 @@ async def start_game_block(call: CallbackQuery):
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=t["btn_start"], callback_data="game_step1")],
-        [InlineKeyboardButton(text="⇦ В главное меню", callback_data="go_home")]
+        [InlineKeyboardButton(text=inline_kb.label(inline_kb.HOME_TEXTS, lang), callback_data="go_home")]
     ])
     await call.message.edit_caption(caption=t["intro"], reply_markup=kb, parse_mode="Markdown")
     await call.answer()
@@ -153,7 +154,7 @@ async def game_end(call: CallbackQuery):
     t = GAME_TEXTS.get(lang, GAME_TEXTS["en"])
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⇦ В главное меню", callback_data="go_home")]
+        [InlineKeyboardButton(text=inline_kb.label(inline_kb.HOME_TEXTS, lang), callback_data="go_home")]
     ])
     await call.message.edit_caption(caption=t["result"].format(score=final_score), reply_markup=kb, parse_mode="Markdown")
     await call.answer()
