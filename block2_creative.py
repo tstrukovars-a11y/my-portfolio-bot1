@@ -12,6 +12,7 @@ import config
 import database
 import menu_texts
 import inline_kb
+import translator
 
 router = Router()
 try:
@@ -380,22 +381,11 @@ async def view_single_recipe(call: CallbackQuery):
     text, video_id, link, photo_id = recipe
     final_text = text
 
-    need_translation = user_lang != "ru"
-    if need_translation and claude_client is not None:
+    # Перевод кэшируется в базе: раньше он заказывался заново при каждом
+    # открытии рецепта, а лимит в 800 токенов обрывал длинные тексты.
+    if translator.needs_translation(user_lang):
         await call.message.bot.send_chat_action(chat_id=call.message.chat.id, action="typing")
-        try:
-            lang_names = {"en": "English", "fr": "French", "he": "Hebrew"}
-            target_language = lang_names.get(user_lang, "English")
-
-            response = await claude_client.messages.create(
-                model="claude-haiku-4-5-20251001",
-                max_tokens=800,
-                system=f"You are a professional culinary translator. Translate the following recipe text strictly into {target_language}. Maintain the emojis, formatting, and ingredient structure. Do not add any conversational text or introduction, return ONLY the direct translation.",
-                messages=[{"role": "user", "content": text}]
-            )
-            final_text = response.content[0].text
-        except Exception as e:
-            print(f"⚠️ Ошибка автоперевода Claude: {e}")
+        final_text = await translator.translate("recipe", recipe_id, "body", user_lang, text)
 
     caption = f"{final_text}\n\n🔗 Original: {link}" if link else final_text
 

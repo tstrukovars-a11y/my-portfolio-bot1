@@ -368,7 +368,20 @@ async def init_db():
             f"ON {SCHEMA}.travel_places (source_key)"
         )
 
-        # 17. Анкеты поиска партнёра для игры
+        # 17. Кэш переводов. Перевод одного и того же поста не должен
+        # заказываться заново при каждом открытии: это и деньги, и секунды
+        # ожидания у читателя.
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.translations (
+            source TEXT,
+            source_id INTEGER,
+            field TEXT,
+            lang TEXT,
+            text TEXT,
+            PRIMARY KEY (source, source_id, field, lang)
+        )""")
+
+        # 18. Анкеты поиска партнёра для игры
         await conn.execute(f"""
         CREATE TABLE IF NOT EXISTS {SCHEMA}.game_partners (
             id SERIAL PRIMARY KEY,
@@ -687,6 +700,40 @@ async def get_recipe_by_id(recipe_id: int):
     except Exception as e:
         logging.error(f"БД недоступна при чтении рецепта: {e}")
         return None
+
+
+# --- КЭШ ПЕРЕВОДОВ ---
+
+async def get_translations(source: str, ids: list, field: str, lang: str) -> dict:
+    """{id: перевод} для тех записей, что уже переводились"""
+    if not ids:
+        return {}
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT source_id, text FROM {SCHEMA}.translations "
+                "WHERE source = $1 AND field = $2 AND lang = $3 AND source_id = ANY($4::int[])",
+                source, field, lang, ids
+            )
+        return {r["source_id"]: r["text"] for r in rows}
+    except Exception as e:
+        logging.error(f"БД недоступна при чтении переводов: {e}")
+        return {}
+
+
+async def save_translation(source: str, source_id: int, field: str, lang: str, text: str):
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"INSERT INTO {SCHEMA}.translations (source, source_id, field, lang, text) "
+                "VALUES ($1, $2, $3, $4, $5) "
+                "ON CONFLICT (source, source_id, field, lang) DO UPDATE SET text = EXCLUDED.text",
+                source, source_id, field, lang, text
+            )
+    except Exception as e:
+        logging.error(f"Не удалось сохранить перевод: {type(e).__name__}: {e}")
 
 
 # --- ПУТЕШЕСТВИЯ: СТРАНА → ЛОКАЦИЯ → ПУБЛИКАЦИЯ ---

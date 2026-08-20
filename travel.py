@@ -21,6 +21,7 @@ from aiogram.exceptions import TelegramBadRequest
 
 import config
 import database
+import translator
 from block2_creative import claude_client
 
 router = Router()
@@ -120,7 +121,9 @@ async def show_places(call: CallbackQuery):
         await call.answer("Локаций пока нет", show_alert=True)
         return
 
-    rows = [[InlineKeyboardButton(text=place or "—", callback_data=f"trplace_{place_id}")]
+    names = await translator.translate_titles("travel", places, lang)
+    rows = [[InlineKeyboardButton(text=names.get(place_id) or place or "—",
+                                  callback_data=f"trplace_{place_id}")]
             for place_id, place in places]
     rows.append([InlineKeyboardButton(text=_t(TO_COUNTRIES, lang),
                                       callback_data="travel_places")])
@@ -150,6 +153,8 @@ async def show_place(call: CallbackQuery):
 
     country, place, text, photo_id, video_id, link = entry
     body = (text or "").strip() or (place or "").strip() or _t(NO_TEXT, lang)
+    if (text or "").strip():
+        body = await translator.translate("travel", place_id, "body", lang, body)
 
     rows = []
     if link and link.startswith(("http://", "https://", "tg://")):

@@ -13,6 +13,7 @@ from aiogram.exceptions import TelegramBadRequest
 
 import config
 import database
+import translator
 
 router = Router()
 
@@ -108,10 +109,13 @@ async def build_list(lang: str, page: int):
     page = max(0, min(page, pages - 1))
     rows = await database.get_article_titles(SECTION, PAGE_SIZE, page * PAGE_SIZE)
 
+    # Заголовки страницы переводим одной пачкой, а не по запросу на строку
+    titles = await translator.translate_titles(SECTION, rows, lang)
+
     lines, number_buttons = [], []
     for index, (article_id, title) in enumerate(rows):
         number = page * PAGE_SIZE + index + 1
-        label = (title or "").strip() or _t(UNTITLED, lang)
+        label = (titles.get(article_id) or title or "").strip() or _t(UNTITLED, lang)
         lines.append(f"{number}. {label}")
         number_buttons.append(InlineKeyboardButton(
             text=str(number), callback_data=f"genitem_{page}_{article_id}"))
@@ -190,6 +194,8 @@ async def open_article(call: CallbackQuery):
     body = (text or "").strip() or (title or "").strip()
     if not body:
         body = _t(NO_TEXT_YET, lang)
+    else:
+        body = await translator.translate(SECTION, article_id, "body", lang, body)
 
     rows = []
     safe_link = normalize_link(link)
