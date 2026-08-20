@@ -92,7 +92,9 @@ def get_travel_main_menu(lang):
     geo = "🗺 География визитов" if lang == "ru" else "🗺 Geography of Visits"
     tool = "🧮 Travel Toolkit" if lang == "ru" else "🧮 Travel Toolkit"
     back = "🔙 Назад" if lang == "ru" else "🔙 Back"
+    places = "🌍 Страны и локации" if lang == "ru" else "🌍 Countries & places"
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=places, callback_data="travel_places")],
         [InlineKeyboardButton(text=geo, callback_data="travel_geography")],
         [InlineKeyboardButton(text=tool, callback_data="travel_toolkit")],
         [InlineKeyboardButton(text=back, callback_data="menu_sport")]

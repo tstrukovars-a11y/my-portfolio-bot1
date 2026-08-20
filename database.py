@@ -348,7 +348,27 @@ async def init_db():
             value TEXT
         )""")
 
-        # 16. Анкеты поиска партнёра для игры
+        # 16. Путешествия: страна → локация → публикация.
+        # Страна хранится на двух языках, чтобы кнопки читались и по-английски.
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.travel_places (
+            id SERIAL PRIMARY KEY,
+            country_ru TEXT,
+            country_en TEXT,
+            place TEXT,
+            text_content TEXT,
+            photo_file_id TEXT,
+            video_file_id TEXT,
+            link_url TEXT,
+            source_key TEXT,
+            added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+        await conn.execute(
+            f"CREATE UNIQUE INDEX IF NOT EXISTS travel_source_uniq "
+            f"ON {SCHEMA}.travel_places (source_key)"
+        )
+
+        # 17. Анкеты поиска партнёра для игры
         await conn.execute(f"""
         CREATE TABLE IF NOT EXISTS {SCHEMA}.game_partners (
             id SERIAL PRIMARY KEY,
@@ -667,6 +687,99 @@ async def get_recipe_by_id(recipe_id: int):
     except Exception as e:
         logging.error(f"БД недоступна при чтении рецепта: {e}")
         return None
+
+
+# --- ПУТЕШЕСТВИЯ: СТРАНА → ЛОКАЦИЯ → ПУБЛИКАЦИЯ ---
+
+async def add_travel_place(country_ru, country_en, place, text_content,
+                           photo_file_id, video_file_id, link_url, source_key) -> str:
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            inserted = await conn.fetchval(
+                f"INSERT INTO {SCHEMA}.travel_places "
+                "(country_ru, country_en, place, text_content, photo_file_id, "
+                "video_file_id, link_url, source_key) "
+                "VALUES ($1, $2, $3, $4, $5, $6, $7, $8) "
+                "ON CONFLICT (source_key) DO NOTHING RETURNING id",
+                country_ru, country_en, place, text_content,
+                photo_file_id, video_file_id, link_url, source_key
+            )
+        return "added" if inserted else "duplicate"
+    except Exception as e:
+        logging.error(f"Не удалось сохранить локацию: {type(e).__name__}: {e}")
+        return f"error:{type(e).__name__}: {e}"
+
+
+async def get_travel_countries():
+    """Страны со счётчиком локаций, по алфавиту"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT country_ru, country_en, COUNT(*) AS n FROM {SCHEMA}.travel_places "
+                "GROUP BY country_ru, country_en ORDER BY lower(country_ru)"
+            )
+        return [(r["country_ru"], r["country_en"], r["n"]) for r in rows]
+    except Exception as e:
+        logging.error(f"БД недоступна при чтении стран: {e}")
+        return []
+
+
+async def get_travel_places(country_ru: str):
+    """Локации страны: (id, место)"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT id, place FROM {SCHEMA}.travel_places "
+                "WHERE country_ru = $1 ORDER BY lower(place), id", country_ru
+            )
+        return [(r["id"], r["place"]) for r in rows]
+    except Exception as e:
+        logging.error(f"БД недоступна при чтении локаций: {e}")
+        return []
+
+
+async def get_travel_place(place_id: int):
+    """(country_ru, place, text, photo, video, link)"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                f"SELECT country_ru, place, text_content, photo_file_id, video_file_id, "
+                f"link_url FROM {SCHEMA}.travel_places WHERE id = $1", place_id
+            )
+        if not row:
+            return None
+        return (row["country_ru"], row["place"], row["text_content"],
+                row["photo_file_id"], row["video_file_id"], row["link_url"])
+    except Exception as e:
+        logging.error(f"БД недоступна при чтении локации: {e}")
+        return None
+
+
+async def count_travel_places() -> int:
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            return await conn.fetchval(f"SELECT COUNT(*) FROM {SCHEMA}.travel_places") or 0
+    except Exception as e:
+        logging.error(f"БД недоступна при подсчёте локаций: {e}")
+        return 0
+
+
+async def update_travel_country(place_id: int, country_ru: str, country_en: str) -> bool:
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"UPDATE {SCHEMA}.travel_places SET country_ru = $1, country_en = $2 "
+                "WHERE id = $3", country_ru, country_en, place_id)
+        return True
+    except Exception as e:
+        logging.error(f"Не удалось сменить страну: {type(e).__name__}: {e}")
+        return False
 
 
 # --- НАСТРОЙКИ, МЕНЯЕМЫЕ ИЗ БОТА ---
