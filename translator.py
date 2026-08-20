@@ -33,6 +33,29 @@ SYSTEM = (
 )
 
 
+async def check_key() -> str:
+    """Проверяет ключ одним крошечным запросом. Возвращает строку для лога.
+
+    Иначе про негодный ключ узнаёшь, только когда пользователь наткнётся на
+    ошибку в разделе ИИ, — а в логах при старте ничего не видно.
+    """
+    if claude_client is None:
+        return "ключ Claude не задан — ИИ, перевод материалов и определение стран отключены"
+    try:
+        await claude_client.messages.create(
+            model="claude-haiku-4-5-20251001", max_tokens=1,
+            messages=[{"role": "user", "content": "."}]
+        )
+        return "ключ Claude рабочий"
+    except Exception as e:
+        text = str(e)
+        if "authentication_error" in text or "401" in text:
+            return "КЛЮЧ CLAUDE НЕВЕРЕН (401) — проверьте CLAUDE_KEY в переменных Render"
+        if "credit" in text.lower() or "billing" in text.lower():
+            return "КЛЮЧ CLAUDE ВЕРЕН, но на счёте Anthropic нет средств"
+        return f"ключ Claude проверить не удалось: {type(e).__name__}: {text[:120]}"
+
+
 def needs_translation(lang: str) -> bool:
     """Русский оригинал русскому читателю переводить незачем"""
     return bool(claude_client) and lang in ("en", "fr", "he")

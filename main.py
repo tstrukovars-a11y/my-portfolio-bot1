@@ -13,6 +13,7 @@ import config
 import database
 import news_fetcher
 import country_index
+import translator
 import common, block1_sport, block2_creative, block3_intellect, block4_claude, profiles, block5_game, block6_vpn, block7_analytics, puzzles, shop, orders, genetics, admin, tennis_live, travel
 
 
@@ -241,6 +242,8 @@ async def main():
             f"    Бот запустится, но данные (язык, рецепты, книги, аналитика) не сохраняются.\n"
             f"    Проверьте, жива ли база Postgres на Render и совпадает ли DATABASE_URL."
         )
+
+    logging.info(await translator.check_key())
 
     # Фоновая задача: подтягивает свежие заголовки при старте, затем каждые 24 часа
     # Индексу нужен Claude для оценки тона; без ключа составляющая просто отключится
