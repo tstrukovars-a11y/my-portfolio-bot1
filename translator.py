@@ -10,8 +10,14 @@ import asyncio
 import json
 import logging
 
+from anthropic import AsyncAnthropic
+
+import config
 import database
-from block2_creative import claude_client
+
+# Свой клиент, а не заимствованный из block2_creative: тот модуль сам импортирует
+# переводчик, и встречный импорт валил бота на старте с ImportError.
+claude_client = AsyncAnthropic(api_key=config.ANTHROPIC_API_KEY) if config.ANTHROPIC_API_KEY else None
 
 LANG_NAMES = {"en": "English", "fr": "French", "he": "Hebrew", "ru": "Russian"}
 

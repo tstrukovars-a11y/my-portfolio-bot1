@@ -26,7 +26,22 @@ def env_int(name: str, default: int = 0) -> int:
 
 
 TOKEN = os.getenv("BOT_TOKEN")
-ANTHROPIC_API_KEY = os.getenv("CLAUDE_KEY")
+def _api_key(name: str):
+    """Ключ Anthropic или None, если он не настроен.
+
+    Заглушки вроде «ВАШ_КЛЮЧ» и любые нелатинские символы отсекаем здесь:
+    иначе запрос падает внутри http-клиента с UnicodeEncodeError, и вместо
+    понятного «ключ не задан» пользователь видит ошибку кодировки.
+    """
+    raw = (os.getenv(name) or "").strip()
+    if not raw or not raw.isascii() or not raw.startswith("sk-"):
+        if raw:
+            logging.warning(f"{name} не похож на ключ Anthropic — раздел ИИ отключён")
+        return None
+    return raw
+
+
+ANTHROPIC_API_KEY = _api_key("CLAUDE_KEY")
 REQUIRED_CHANNEL = env_int("REQUIRED_CHANNEL", -1001234567890)
 QUIZ_CHANNEL = env_int("QUIZ_CHANNEL", -1002648861151)
 

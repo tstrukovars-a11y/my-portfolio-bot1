@@ -13,7 +13,16 @@ router = Router()
 
 RESET_TEXTS = {"ru": "🔄 Сброс сессии...", "en": "🔄 Resetting the session…",
                "fr": "🔄 Réinitialisation…", "he": "🔄 מאפס את השיחה…"}
-claude_client = AsyncAnthropic(api_key=config.ANTHROPIC_API_KEY)
+# Без ключа клиент не создаём: иначе запрос падает уже внутри библиотеки,
+# и пользователю прилетает техническая ошибка вместо внятного объяснения.
+claude_client = AsyncAnthropic(api_key=config.ANTHROPIC_API_KEY) if config.ANTHROPIC_API_KEY else None
+
+NOT_CONFIGURED = {
+    "ru": "🤖 Раздел ИИ временно недоступен: не настроен ключ доступа.",
+    "en": "🤖 The AI section is temporarily unavailable: the access key is not configured.",
+    "fr": "🤖 La section IA est indisponible : clé d'accès non configurée.",
+    "he": "🤖 מדור הבינה המלאכותית אינו זמין: מפתח הגישה לא הוגדר."
+}
 
 class ClaudeStates(StatesGroup):
     is_talking = State()
@@ -144,6 +153,10 @@ async def handle_ai_question(message: Message, state: FSMContext):
         if current_requests >= 5:
             await message.answer("⚠️ Your daily free limit is over. Please buy Premium in Claude Menu.")
             return
+
+    if claude_client is None:
+        await message.answer(NOT_CONFIGURED.get(lang, NOT_CONFIGURED["en"]))
+        return
 
     await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
     try:

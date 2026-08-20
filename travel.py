@@ -22,7 +22,7 @@ from aiogram.exceptions import TelegramBadRequest
 import config
 import database
 import translator
-from block2_creative import claude_client
+from translator import claude_client
 
 router = Router()
 
