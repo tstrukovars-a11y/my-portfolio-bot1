@@ -24,10 +24,10 @@ language_menu = InlineKeyboardMarkup(inline_keyboard=[
 
 def get_main_menu(lang, is_admin=False):
     titles = {
-        "ru": ["🏆 Блок 1: Спорт и путешествия", "🎨 Блок 2: Творчество", "🧠 Блок 3: Интеллект и карьера", "🤖 Блок 4: Нейросеть Claude", "💼 Профили: HH & LinkedIn", "🎮 Интерактив: Игра"],
-        "en": ["🏆 Block 1: Sports & Travel", "🎨 Block 2: Creativity", "🧠 Block 3: Intellect & Career", "🤖 Block 4: Claude AI", "💼 Profiles: HH & LinkedIn", "🎮 Interactive: Game"],
-        "fr": ["🏆 Bloc 1 : Sport & Voyage", "🎨 Bloc 2 : Créativité", "🧠 Bloc 3 : Intellect & Carrière", "🤖 Bloc 4 : IA Claude", "💼 Profils : HH & LinkedIn", "🎮 Interactif: Jeu"],
-        "he": ["בלוק 1: ספורט וטיולים 🏆", "בלוק 2: יצירתיות 🎨", "בלוק 3: אינטלקט וקריירה 🧠", "בלוק 4: בינה מלאכותית קלוד 🤖", "פרופילים: HH & LinkedIn 💼", "משחק אינטראקטיבי 🎮"]
+        "ru": ["🏆 Блок 1: Спорт и путешествия", "🎨 Блок 2: Творчество", "🧠 Блок 3: Интеллект и карьера", "🤖 Чат AI", "💼 Профили: HH & LinkedIn", "🎮 Интерактив: Игра"],
+        "en": ["🏆 Block 1: Sports & Travel", "🎨 Block 2: Creativity", "🧠 Block 3: Intellect & Career", "🤖 AI Chat", "💼 Profiles: HH & LinkedIn", "🎮 Interactive: Game"],
+        "fr": ["🏆 Bloc 1 : Sport & Voyage", "🎨 Bloc 2 : Créativité", "🧠 Bloc 3 : Intellect & Carrière", "🤖 Chat IA", "💼 Profils : HH & LinkedIn", "🎮 Interactif: Jeu"],
+        "he": ["בלוק 1: ספורט וטיולים 🏆", "בלוק 2: יצירתיות 🎨", "בלוק 3: אינטלקט וקריירה 🧠", "צ'אט AI 🤖", "פרופילים: HH & LinkedIn 💼", "משחק אינטראקטיבי 🎮"]
     }
     m = titles.get(lang, titles["en"])
     # Тексты для кнопки VPN на 4 языках
