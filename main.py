@@ -14,7 +14,7 @@ import database
 import news_fetcher
 import country_index
 import translator
-import common, block1_sport, block2_creative, block3_intellect, block4_claude, profiles, block5_game, block6_vpn, block7_analytics, puzzles, shop, orders, genetics, admin, tennis_live, travel, payments
+import common, block1_sport, block2_creative, block3_intellect, block4_claude, profiles, block5_game, block6_vpn, block7_analytics, puzzles, shop, orders, genetics, admin, tennis_live, travel, payments, fx_rates
 
 
 def _make_webhook_secret() -> str:
@@ -315,6 +315,7 @@ async def main():
     dp.include_router(genetics.router)
     dp.include_router(admin.router)
     dp.include_router(payments.router)
+    dp.include_router(fx_rates.router)
     dp.include_router(tennis_live.router)
     dp.include_router(travel.router)
     dp.include_router(block7_analytics.router)

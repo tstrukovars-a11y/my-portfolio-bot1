@@ -11,6 +11,7 @@ import database
 import menu_texts
 import inline_kb
 import country_index
+import fx_rates
 
 router = Router()
 
@@ -353,7 +354,10 @@ async def open_news_sub(call: CallbackQuery):
         if sub == "analytics":
             await call.message.answer(
                 await country_index.render_index(user_lang),
-                parse_mode="Markdown", disable_web_page_preview=True
+                parse_mode="Markdown", disable_web_page_preview=True,
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
+                    text=fx_rates._t(fx_rates.BTN_RATES, user_lang),
+                    callback_data="fx_rates")]])
             )
     except TelegramBadRequest as e: logging.error(f"ОШИБКА БЛОКА 1: {e}")
 
