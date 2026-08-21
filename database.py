@@ -906,6 +906,35 @@ async def get_visitors(limit: int = 10, offset: int = 0):
         return []
 
 
+async def get_unnamed_visitors(limit: int = 50):
+    """id тех, у кого имя не заполнено — они восстановлены из журнала кликов"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT user_id FROM {SCHEMA}.visitors "
+                "WHERE full_name IS NULL OR full_name = '' "
+                "ORDER BY last_seen DESC LIMIT $1", limit)
+        return [r["user_id"] for r in rows]
+    except Exception as e:
+        logging.error(f"БД недоступна при чтении безымянных посетителей: {e}")
+        return []
+
+
+async def update_visitor_identity(user_id: int, username, full_name) -> bool:
+    """Дописывает имя, не трогая счётчик действий и даты"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"UPDATE {SCHEMA}.visitors SET username = $2, full_name = $3 "
+                "WHERE user_id = $1", user_id, username, full_name)
+        return True
+    except Exception as e:
+        logging.error(f"Не удалось дописать имя посетителя: {type(e).__name__}: {e}")
+        return False
+
+
 async def forget_visitor(user_id: int) -> bool:
     """Полное удаление посетителя — на случай, если человек попросит"""
     try:

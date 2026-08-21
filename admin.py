@@ -4,13 +4,14 @@
 # Всё здесь видно только пользователю с ORGANIZER_TELEGRAM_ID. Кнопка в главном
 # меню другим просто не рисуется, а каждый обработчик проверяет права заново —
 # кнопку можно подделать, callback приходит от кого угодно.
-from aiogram import Router, F
+from aiogram import Router, F, Bot
 from aiogram.types import (
     CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
 )
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 
+import asyncio
 import html
 
 import config
@@ -196,6 +197,9 @@ async def save_new_password(message: Message, state: FSMContext):
 # удалить целиком, если человек попросит.
 
 VISITORS_PAGE = 10
+# За одно нажатие — ограниченная пачка: getChat лимитирован по частоте,
+# а владелец не должен ждать ответа полминуты.
+RESOLVE_BATCH = 40
 
 
 def _ago(moment) -> str:
@@ -257,6 +261,10 @@ async def show_visitors(call: CallbackQuery):
         nav.append(InlineKeyboardButton(text="➡", callback_data=f"admin_visitors_{page + 1}"))
 
     keyboard = [nav] if pages > 1 else []
+    unnamed = len(await database.get_unnamed_visitors(200))
+    if unnamed:
+        keyboard.append([InlineKeyboardButton(
+            text=f"🔍 Определить имена ({unnamed})", callback_data="admin_resolve_names")])
     keyboard.append([InlineKeyboardButton(text="⇦ Назад", callback_data="admin_panel")])
 
     await call.message.answer("\n".join(lines), parse_mode="HTML",
@@ -280,3 +288,43 @@ async def forget_visitor(message: Message):
         await message.answer(f"🗑 Данные посетителя {parts[1]} удалены.")
     else:
         await message.answer("⚠️ Не удалось удалить — ошибка базы.")
+
+
+@router.callback_query(F.data == "admin_resolve_names")
+async def resolve_names(call: CallbackQuery, bot: Bot):
+    """Дописывает имена посетителям, восстановленным из журнала кликов.
+
+    В журнале хранились только id — имени там никогда не было. Telegram отдаёт
+    его по getChat для любого, кто хоть раз обращался к боту, поэтому имена
+    можно получить, не дожидаясь, пока человек зайдёт снова.
+    """
+    if not config.is_admin(call.from_user.id):
+        await call.answer()
+        return
+    await call.answer("Запрашиваю имена…")
+
+    ids = await database.get_unnamed_visitors(RESOLVE_BATCH)
+    resolved, gone = 0, 0
+    for user_id in ids:
+        try:
+            chat = await bot.get_chat(user_id)
+        except Exception:
+            # Человек заблокировал бота или удалил аккаунт — имя недоступно
+            gone += 1
+            continue
+        full_name = " ".join(filter(None, [chat.first_name, chat.last_name])) or None
+        if await database.update_visitor_identity(user_id, chat.username, full_name):
+            resolved += 1
+        # Пауза между запросами: Telegram ограничивает частоту обращений
+        await asyncio.sleep(0.15)
+
+    left = len(await database.get_unnamed_visitors(200))
+    lines = [f"🔍 Имена получены: <b>{resolved}</b>"]
+    if gone:
+        lines.append(f"Недоступны: {gone} — заблокировали бота или удалили аккаунт.")
+    if left:
+        lines.append(f"Осталось без имени: {left}. Нажмите ещё раз, чтобы продолжить.")
+
+    await call.message.answer("\n".join(lines), reply_markup=InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="👥 К списку",
+                                               callback_data="admin_visitors_0")]]))
