@@ -16,6 +16,7 @@ import country_index
 import translator
 import common, block1_sport, block2_creative, block3_intellect, block4_claude, profiles, block5_game, block6_vpn, block7_analytics, puzzles, shop, orders, genetics, admin, tennis_live, travel, payments, fx_rates
 import finance
+import digest
 
 
 def _make_webhook_secret() -> str:
@@ -317,6 +318,8 @@ async def main():
     dp.include_router(admin.router)
     dp.include_router(payments.router)
     dp.include_router(fx_rates.router)
+    dp.include_router(digest.router)
+
     dp.include_router(tennis_live.router)
     dp.include_router(travel.router)
     dp.include_router(block7_analytics.router)
@@ -332,6 +335,9 @@ async def main():
     port = int(os.environ.get("PORT", 10000))
     server = await asyncio.start_server(make_handle_ping(bot, dp), "0.0.0.0", port)
     logging.info(f"Ping & API & Webhook server started on port {port}")
+
+    # Публикация в канал: запускаем после создания бота — раньше объекта ещё нет
+    asyncio.create_task(digest.scheduler(bot))
 
     render_url = os.environ.get("RENDER_EXTERNAL_URL", "")
     if render_url:

@@ -454,7 +454,19 @@ async def init_db():
             f"CREATE INDEX IF NOT EXISTS transactions_occurred_idx "
             f"ON {FINANCE_SCHEMA}.transactions (occurred_at)")
 
-        # 20. Анкеты поиска партнёра для игры
+        # 20. Что уже ушло в дайджест-канал. Без этого материалы выходили бы
+        # по кругу: источники общие с разделами бота и сами о публикации
+        # ничего не знают.
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.digest_log (
+            section TEXT,
+            item_id INTEGER,
+            message_id BIGINT,
+            published_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (section, item_id)
+        )""")
+
+        # 21. Анкеты поиска партнёра для игры
         await conn.execute(f"""
         CREATE TABLE IF NOT EXISTS {SCHEMA}.game_partners (
             id SERIAL PRIMARY KEY,
@@ -994,6 +1006,72 @@ async def forget_visitor(user_id: int) -> bool:
     except Exception as e:
         logging.error(f"Не удалось удалить посетителя: {type(e).__name__}: {e}")
         return False
+
+
+# --- ДАЙДЖЕСТ-КАНАЛ ---
+
+# Откуда брать материал для каждого раздела: таблица, поле идентификатора и
+# условие отбора. Держим одним местом, чтобы добавление раздела было строкой.
+DIGEST_SOURCES = {
+    "genetics": ("articles", "section = 'genetics'"),
+    "recipes": ("recipes", "TRUE"),
+    "travel": ("travel_places", "TRUE"),
+}
+
+
+async def next_for_digest(section: str):
+    """id самого раннего ещё не опубликованного материала раздела.
+
+    Идём от старых к новым: канал пустой, и архив логичнее выкладывать
+    по порядку, а не начинать с последнего поста.
+    """
+    source = DIGEST_SOURCES.get(section)
+    if not source:
+        return None
+    table, condition = source
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            return await conn.fetchval(
+                f"""SELECT id FROM {SCHEMA}.{table}
+                    WHERE {condition} AND id NOT IN (
+                        SELECT item_id FROM {SCHEMA}.digest_log WHERE section = $1)
+                    ORDER BY id LIMIT 1""", section)
+    except Exception as e:
+        logging.error(f"БД недоступна при выборе материала для дайджеста: {e}")
+        return None
+
+
+async def mark_published(section: str, item_id: int, message_id: int = None) -> bool:
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"INSERT INTO {SCHEMA}.digest_log (section, item_id, message_id) "
+                "VALUES ($1, $2, $3) ON CONFLICT (section, item_id) DO NOTHING",
+                section, item_id, message_id)
+        return True
+    except Exception as e:
+        logging.error(f"Не удалось отметить публикацию: {type(e).__name__}: {e}")
+        return False
+
+
+async def digest_stats():
+    """Сколько материалов опубликовано и сколько осталось по каждому разделу"""
+    out = {}
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            for section, (table, condition) in DIGEST_SOURCES.items():
+                total = await conn.fetchval(
+                    f"SELECT COUNT(*) FROM {SCHEMA}.{table} WHERE {condition}") or 0
+                done = await conn.fetchval(
+                    f"SELECT COUNT(*) FROM {SCHEMA}.digest_log WHERE section = $1",
+                    section) or 0
+                out[section] = {"total": total, "published": done}
+    except Exception as e:
+        logging.error(f"БД недоступна при сводке дайджеста: {e}")
+    return out
 
 
 # --- ЖУРНАЛ ОПЕРАЦИЙ (общий для всех ботов) ---
