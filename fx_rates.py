@@ -141,6 +141,19 @@ def dollar_index(series: dict) -> list:
     return index
 
 
+def strength(values: list) -> list:
+    """Ряд силы валюты к доллару: старт = 100, рост = валюта крепнет.
+
+    Исходный ряд — сколько валюты дают за доллар, и он растёт, когда валюта
+    СЛАБЕЕТ. Показывать такой график под названием валюты значит вводить
+    в заблуждение: строка «Евро ▼» читалась как падение евро, хотя падал
+    доллар. Поэтому переворачиваем: теперь и стрелка, и столбики говорят
+    об одном и том же — о названной валюте.
+    """
+    base = values[0]
+    return [base / v * 100 for v in values if v] if base else []
+
+
 def _trend(values: list, lang: str) -> str:
     """Изменение за период в процентах — знак важнее точности"""
     first, last = values[0], values[-1]
@@ -152,6 +165,27 @@ def _trend(values: list, lang: str) -> str:
     if change <= -0.05:
         return f"▼ {change:.1f}%"
     return "→ 0.0%"
+
+
+def _verdict(last_strength: float, name: str, lang: str, versus: str = None) -> str:
+    """Словами: кто именно укрепился и к чему. Проценты без этого читают наугад.
+
+    Ориентир передаётся отдельно: у доллара он не «к доллару», а к корзине.
+    """
+    if lang == "ru":
+        against = versus or "к доллару"
+        if last_strength >= 100.05:
+            return f"{name.lower()} укрепился {against}"
+        if last_strength <= 99.95:
+            return f"{name.lower()} ослаб {against}"
+        return f"без изменений {against}"
+
+    against = versus or "against the dollar"
+    if last_strength >= 100.05:
+        return f"stronger {against}"
+    if last_strength <= 99.95:
+        return f"weaker {against}"
+    return f"unchanged {against}"
 
 
 RETRO = {
@@ -189,11 +223,13 @@ EMPTY = {
 }
 
 FOOTER = {
-    "ru": ("\n_Сколько валюты дают за один доллар: рост столбиков — доллар дорожает, "
-           "валюта слабеет._\n"
+    "ru": ("\n_Каждая строка — о своей валюте: столбики и процент показывают её силу "
+           "к доллару, начало периода принято за 100. Растёт — валюта крепнет._\n"
            "_Евро и шекель — данные ЕЦБ, рубль — Банка России: ЕЦБ рубль больше "
            "не публикует._"),
-    "en": ("\n_How much currency one dollar buys: rising bars mean a stronger dollar._\n"
+    "en": ("\n_Each line is about its own currency: the bars and the percentage show its "
+           "strength against the dollar, with the start of the period set to 100. Rising "
+           "means the currency is gaining._\n"
            "_Euro and shekel from the ECB, rouble from the Bank of Russia, which the "
            "ECB no longer publishes._"),
 }
@@ -220,26 +256,30 @@ async def render(lang: str) -> str:
         if not points:
             continue
         values = [v for _, v in points]
+        own = strength(values)
+        if not own:
+            continue
+        verdict = _verdict(own[-1], meta[name_key], lang)
+        rate = (f"за $1 дают {values[-1]:.2f}" if lang == "ru"
+                else f"{values[-1]:.2f} per $1")
         lines.append(
-            f"\n{meta['flag']} **{meta[name_key]}** — `{values[-1]:.2f}`  {_trend(values, lang)}"
-            f"\n`{sparkline(values)}`"
-            f"\n`мин {min(values):.2f} · макс {max(values):.2f} · точек {len(values)}`"
-            if lang == "ru" else
-            f"\n{meta['flag']} **{meta[name_key]}** — `{values[-1]:.2f}`  {_trend(values, lang)}"
-            f"\n`{sparkline(values)}`"
-            f"\n`min {min(values):.2f} · max {max(values):.2f} · points {len(values)}`"
+            f"\n{meta['flag']} **{meta[name_key]}** · `{rate}`"
+            f"\n{_trend(own, lang)} — {verdict}"
+            f"\n`{sparkline(own)}`"
         )
 
     # Доллар идёт последним: он не курс, а сводный индекс, и логично читается
     # после валют, из которых собран.
     index = dollar_index(series)
     if index:
+        verdict = _verdict(index[-1], USD_LABEL[name_key], lang,
+                           versus="к корзине" if lang == "ru" else "against the basket")
+        basket = ("к корзине из евро, шекеля и рубля" if lang == "ru"
+                  else "against a basket of euro, shekel and rouble")
         lines.append(
-            f"\n{USD_LABEL['flag']} **{USD_LABEL[name_key]}** — "
-            f"`{index[-1]:.1f}`  {_trend(index, lang)}"
+            f"\n{USD_LABEL['flag']} **{USD_LABEL[name_key]}** · `{basket}`"
+            f"\n{_trend(index, lang)} — {verdict}"
             f"\n`{sparkline(index)}`"
-            + (f"\n`индекс к корзине трёх валют, старт = 100`" if lang == "ru"
-               else f"\n`index against the three-currency basket, start = 100`")
         )
 
     lines.append(_t(FOOTER, lang))
