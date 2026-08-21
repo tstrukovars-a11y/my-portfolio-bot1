@@ -29,6 +29,8 @@ CURRENCIES = {
     "RUB": {"flag": "🇷🇺", "ru": "Рубль", "en": "Rouble"},
 }
 
+USD_LABEL = {"flag": "🇺🇸", "ru": "Доллар", "en": "Dollar"}
+
 # Столбики для мини-графика в тексте: картинку Telegram показал бы крупнее,
 # но её пришлось бы рисовать и хранить, а так график читается прямо в сообщении.
 BARS = "▁▂▃▄▅▆▇█"
@@ -114,6 +116,29 @@ def sparkline(values: list, width: int = 24) -> str:
         return BARS[0] * len(values)
     scale = len(BARS) - 1
     return "".join(BARS[round((v - low) / (high - low) * scale)] for v in values)
+
+
+def dollar_index(series: dict) -> list:
+    """Сила доллара к корзине из трёх валют, начало периода = 100.
+
+    Отдельной строкой курс доллара показать нельзя — он здесь база, и к самому
+    себе всегда равен единице. Зато видно, как он двигался против остальных:
+    берём даты, которые есть у всех трёх рядов, и усредняем изменение к старту.
+    """
+    maps = {code: dict(points) for code, points in series.items() if points}
+    if len(maps) < 2:
+        return []
+
+    common = sorted(set.intersection(*(set(m) for m in maps.values())))
+    if len(common) < 2:
+        return []
+
+    base = {code: maps[code][common[0]] for code in maps}
+    index = []
+    for day in common:
+        ratios = [maps[code][day] / base[code] for code in maps if base[code]]
+        index.append(sum(ratios) / len(ratios) * 100)
+    return index
 
 
 def _trend(values: list, lang: str) -> str:
@@ -203,6 +228,18 @@ async def render(lang: str) -> str:
             f"\n{meta['flag']} **{meta[name_key]}** — `{values[-1]:.2f}`  {_trend(values, lang)}"
             f"\n`{sparkline(values)}`"
             f"\n`min {min(values):.2f} · max {max(values):.2f} · points {len(values)}`"
+        )
+
+    # Доллар идёт последним: он не курс, а сводный индекс, и логично читается
+    # после валют, из которых собран.
+    index = dollar_index(series)
+    if index:
+        lines.append(
+            f"\n{USD_LABEL['flag']} **{USD_LABEL[name_key]}** — "
+            f"`{index[-1]:.1f}`  {_trend(index, lang)}"
+            f"\n`{sparkline(index)}`"
+            + (f"\n`индекс к корзине трёх валют, старт = 100`" if lang == "ru"
+               else f"\n`index against the three-currency basket, start = 100`")
         )
 
     lines.append(_t(FOOTER, lang))
