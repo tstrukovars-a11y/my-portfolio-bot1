@@ -45,9 +45,16 @@ _lang_cache: dict[int, str] = {}
 SCHEMA = "vizitka_bot"
 
 
+# Общая схема для учёта: сюда пишут ВСЕ боты, а не только этот. Собственные
+# таблицы каждого бота лежат в своей схеме, финансы — в одной на всех, иначе
+# сводный отчёт пришлось бы собирать запросами по чужим неймспейсам.
+FINANCE_SCHEMA = "finance"
+
+
 async def _init_connection(conn):
     """Выполняется при каждом новом соединении: гарантирует существование схемы"""
     await conn.execute(f"CREATE SCHEMA IF NOT EXISTS {SCHEMA}")
+    await conn.execute(f"CREATE SCHEMA IF NOT EXISTS {FINANCE_SCHEMA}")
 
 
 def describe_db_target() -> str:
@@ -406,7 +413,48 @@ async def init_db():
         FROM {SCHEMA}.user_logs GROUP BY user_id
         ON CONFLICT (user_id) DO NOTHING""")
 
-        # 19. Анкеты поиска партнёра для игры
+        # 19. Единый журнал операций всех ботов и каналов.
+        #
+        # Три вида активов ведут себя по-разному, поэтому вид хранится отдельно
+        # от кода валюты:
+        #   • звёзды — не деньги, пока не выведены, и курс вывода плавает;
+        #   • крипта — дробные суммы и цена меняется ежеминутно;
+        #   • фиат — обычные деньги с курсом на дату.
+        # amount_ils заполняется, только когда курс известен: пустое поле честнее
+        # выдуманного пересчёта, а порог оборота считается по заполненным.
+        #
+        # owner заложен заранее: пока значение одно — ваше. Появятся чужие деньги
+        # в этой таблице — это уже посредничество, для которого нужна лицензия,
+        # и увидеть это лучше в структуре, чем постфактум.
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {FINANCE_SCHEMA}.transactions (
+            id SERIAL PRIMARY KEY,
+            owner TEXT NOT NULL DEFAULT 'self',
+            source TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            asset TEXT NOT NULL,
+            asset_kind TEXT NOT NULL,
+            amount NUMERIC(24, 8) NOT NULL,
+            amount_ils NUMERIC(20, 2),
+            rate_ils NUMERIC(24, 8),
+            rate_at DATE,
+            category TEXT,
+            note TEXT,
+            external_id TEXT,
+            occurred_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            recorded_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )""")
+        # Индекс обычный, не частичный: ON CONFLICT не выводит частичный без
+        # повтора предиката — на этом уже обжигались с рецептами. NULL в
+        # external_id уникальность не нарушает, их Postgres считает различными.
+        await conn.execute(
+            f"CREATE UNIQUE INDEX IF NOT EXISTS transactions_source_external_uniq "
+            f"ON {FINANCE_SCHEMA}.transactions (source, external_id)")
+        await conn.execute(
+            f"CREATE INDEX IF NOT EXISTS transactions_occurred_idx "
+            f"ON {FINANCE_SCHEMA}.transactions (occurred_at)")
+
+        # 20. Анкеты поиска партнёра для игры
         await conn.execute(f"""
         CREATE TABLE IF NOT EXISTS {SCHEMA}.game_partners (
             id SERIAL PRIMARY KEY,
@@ -946,6 +994,105 @@ async def forget_visitor(user_id: int) -> bool:
     except Exception as e:
         logging.error(f"Не удалось удалить посетителя: {type(e).__name__}: {e}")
         return False
+
+
+# --- ЖУРНАЛ ОПЕРАЦИЙ (общий для всех ботов) ---
+
+async def add_transaction(source: str, kind: str, asset: str, asset_kind: str,
+                          amount, amount_ils=None, rate_ils=None, rate_at=None,
+                          category: str = None, note: str = None,
+                          external_id: str = None, occurred_at=None,
+                          owner: str = "self") -> str:
+    """Записывает операцию. 'added' | 'duplicate' | 'error:<причина>'.
+
+    external_id — идентификатор со стороны платёжной системы (charge_id у
+    Telegram, хеш у крипты). По нему повторная обработка одного и того же
+    платежа не задваивает запись.
+    """
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            inserted = await conn.fetchval(
+                f"""INSERT INTO {FINANCE_SCHEMA}.transactions
+                    (owner, source, kind, asset, asset_kind, amount, amount_ils,
+                     rate_ils, rate_at, category, note, external_id, occurred_at)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+                            COALESCE($13, CURRENT_TIMESTAMP))
+                    ON CONFLICT (source, external_id) DO NOTHING RETURNING id""",
+                owner, source, kind, asset, asset_kind, amount, amount_ils,
+                rate_ils, rate_at, category, note, external_id, occurred_at
+            )
+        return "added" if inserted else "duplicate"
+    except Exception as e:
+        logging.error(f"Не удалось записать операцию: {type(e).__name__}: {e}")
+        return f"error:{type(e).__name__}: {e}"
+
+
+async def get_transactions(limit: int = 20, offset: int = 0, since=None):
+    """Операции, свежие первыми"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            if since:
+                rows = await conn.fetch(
+                    f"SELECT * FROM {FINANCE_SCHEMA}.transactions "
+                    "WHERE occurred_at >= $1 ORDER BY occurred_at DESC "
+                    "LIMIT $2 OFFSET $3", since, limit, offset)
+            else:
+                rows = await conn.fetch(
+                    f"SELECT * FROM {FINANCE_SCHEMA}.transactions "
+                    "ORDER BY occurred_at DESC LIMIT $1 OFFSET $2", limit, offset)
+        return [dict(r) for r in rows]
+    except Exception as e:
+        logging.error(f"БД недоступна при чтении операций: {e}")
+        return []
+
+
+async def turnover(year: int) -> dict:
+    """Оборот за год: сумма в шекелях, сколько операций и сколько без пересчёта.
+
+    Непересчитанные считаем отдельно — иначе цифра оборота выглядела бы
+    достоверной, будучи неполной.
+    """
+    empty = {"income_ils": 0.0, "expense_ils": 0.0, "count": 0, "unconverted": 0}
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                f"""SELECT
+                    COALESCE(SUM(amount_ils) FILTER (WHERE kind = 'income'), 0) AS income,
+                    COALESCE(SUM(amount_ils) FILTER (WHERE kind = 'expense'), 0) AS expense,
+                    COUNT(*) AS cnt,
+                    COUNT(*) FILTER (WHERE amount_ils IS NULL) AS unconverted
+                    FROM {FINANCE_SCHEMA}.transactions
+                    WHERE EXTRACT(YEAR FROM occurred_at) = $1""", year)
+    except Exception as e:
+        logging.error(f"БД недоступна при подсчёте оборота: {e}")
+        return empty
+
+    if not row:
+        return empty
+    return {"income_ils": float(row["income"]), "expense_ils": float(row["expense"]),
+            "count": row["cnt"], "unconverted": row["unconverted"]}
+
+
+async def totals_by_asset(year: int):
+    """Сколько накоплено в каждом активе — звёзды и крипта живут своей жизнью
+    и в шекелях появляются только при выводе."""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"""SELECT asset, asset_kind,
+                    SUM(amount) FILTER (WHERE kind = 'income') AS income,
+                    SUM(amount) FILTER (WHERE kind = 'withdrawal') AS withdrawn
+                    FROM {FINANCE_SCHEMA}.transactions
+                    WHERE EXTRACT(YEAR FROM occurred_at) = $1
+                    GROUP BY asset, asset_kind ORDER BY asset_kind, asset""", year)
+        return [dict(r) for r in rows]
+    except Exception as e:
+        logging.error(f"БД недоступна при сводке по активам: {e}")
+        return []
 
 
 # --- НАСТРОЙКИ, МЕНЯЕМЫЕ ИЗ БОТА ---

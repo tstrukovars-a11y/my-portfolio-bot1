@@ -6,6 +6,7 @@ from aiogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton
 )
 import database
+import finance
 
 router = Router()
 
@@ -90,6 +91,20 @@ async def process_successful_payment(message: Message):
     
     # Записываем подписку в единую базу данных
     await database.add_or_extend_subscription(user_id, days)
+
+    # И в общий журнал операций: charge_id уникален, поэтому повторная
+    # доставка того же апдейта запись не задвоит.
+    payment = message.successful_payment
+    # Telegram отдаёт сумму в минимальных единицах валюты: для карт это копейки,
+    # а для звёзд — целые звёзды. Без этой развилки карточный платёж записался бы
+    # в сто раз больше.
+    amount = (payment.total_amount if payment.currency == "XTR"
+              else payment.total_amount / 100)
+    await finance.record(
+        kind="income", asset=payment.currency, amount=amount,
+        category="subscription", note=f"{days} дней, user {user_id}",
+        external_id=payment.telegram_payment_charge_id,
+    )
     
     lang = await database.get_user_language(user_id)
     
