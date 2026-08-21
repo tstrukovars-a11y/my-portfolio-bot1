@@ -265,10 +265,12 @@ async def main():
         parts = [p for p in data.split("_") if not p.isdigit()]
         return "_".join(parts[:2])[:50] or "unknown"
 
-    async def _log(user_id: int, section: str):
+    async def _log(user, section: str):
         try:
-            lang = await database.get_user_language(user_id)
-            await database.log_action(user_id, section, lang)
+            lang = await database.get_user_language(user.id)
+            await database.log_action(user.id, section, lang)
+            await database.record_visitor(
+                user.id, user.username, user.full_name, user.language_code)
         except Exception as e:
             logging.error(f"Не удалось записать действие в аналитику: {e}")
 
@@ -278,13 +280,13 @@ async def main():
         log_action стоял ровно в одном месте, поэтому DAU и MAU всегда были нулевыми.
         Пишем в фоне, чтобы запись в базу не задерживала ответ на нажатие."""
         if event.data and event.from_user:
-            asyncio.create_task(_log(event.from_user.id, _section_of(event.data)))
+            asyncio.create_task(_log(event.from_user, _section_of(event.data)))
         return await handler(event, data)
 
     @dp.message.outer_middleware()
     async def track_commands(handler, event, data):
         if event.text and event.text.startswith("/") and event.from_user:
-            asyncio.create_task(_log(event.from_user.id, event.text.split()[0][:50]))
+            asyncio.create_task(_log(event.from_user, event.text.split()[0][:50]))
         return await handler(event, data)
 
     seen_channels = set()

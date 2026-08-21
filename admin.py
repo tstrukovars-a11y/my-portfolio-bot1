@@ -11,6 +11,8 @@ from aiogram.types import (
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 
+import html
+
 import config
 import database
 
@@ -66,6 +68,7 @@ def _admin_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔖 Шпаргалка", callback_data="admin_cheatsheet")],
         [InlineKeyboardButton(text="🔑 Пароли разделов", callback_data="admin_passwords")],
+        [InlineKeyboardButton(text="👥 Посетители", callback_data="admin_visitors_0")],
         [InlineKeyboardButton(text="⇦ В главное меню", callback_data="go_home")],
     ])
 
@@ -183,3 +186,97 @@ async def save_new_password(message: Message, state: FSMContext):
         )
     else:
         await message.answer("⚠️ Не удалось сохранить — ошибка базы.")
+
+
+# =====================================================================
+# 👥 ПОСЕТИТЕЛИ
+# =====================================================================
+# Telegram присылает имя, ник и язык в каждом апдейте — отдельного согласия
+# на это нет, поэтому список видит только владелец, а любую запись можно
+# удалить целиком, если человек попросит.
+
+VISITORS_PAGE = 10
+
+
+def _ago(moment) -> str:
+    """«3 ч назад» читается быстрее, чем дата с секундами"""
+    if not moment:
+        return "—"
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc) if moment.tzinfo else datetime.now()
+    minutes = int((now - moment).total_seconds() // 60)
+    if minutes < 1:
+        return "только что"
+    if minutes < 60:
+        return f"{minutes} мин назад"
+    if minutes < 60 * 24:
+        return f"{minutes // 60} ч назад"
+    return f"{minutes // 1440} дн назад"
+
+
+@router.callback_query(F.data.startswith("admin_visitors_"))
+async def show_visitors(call: CallbackQuery):
+    if not config.is_admin(call.from_user.id):
+        await call.answer()
+        return
+    await call.answer()
+
+    page = int(call.data.removeprefix("admin_visitors_") or 0)
+    total = await database.count_visitors()
+    if not total:
+        await call.message.answer(
+            "👥 Посетителей пока нет. Записываются с момента, как это включено.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
+                text="⇦ Назад", callback_data="admin_panel")]]))
+        return
+
+    pages = max(1, -(-total // VISITORS_PAGE))
+    page = max(0, min(page, pages - 1))
+    rows = await database.get_visitors(VISITORS_PAGE, page * VISITORS_PAGE)
+
+    lines = [f"👥 <b>Посетители</b> — всего {total}"]
+    if pages > 1:
+        lines[0] += f", страница {page + 1} из {pages}"
+    lines.append("")
+
+    for v in rows:
+        name = html.escape(v["full_name"] or "без имени")
+        handle = f" @{html.escape(v['username'])}" if v["username"] else ""
+        lang = f" · {v['tg_language']}" if v["tg_language"] else ""
+        lines.append(
+            f"<b>{name}</b>{handle}{lang}\n"
+            f"   <code>{v['user_id']}</code> · действий {v['actions']} · "
+            f"{_ago(v['last_seen'])}"
+        )
+
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="⬅", callback_data=f"admin_visitors_{page - 1}"))
+    nav.append(InlineKeyboardButton(text=f"{page + 1}/{pages}", callback_data="noop"))
+    if page < pages - 1:
+        nav.append(InlineKeyboardButton(text="➡", callback_data=f"admin_visitors_{page + 1}"))
+
+    keyboard = [nav] if pages > 1 else []
+    keyboard.append([InlineKeyboardButton(text="⇦ Назад", callback_data="admin_panel")])
+
+    await call.message.answer("\n".join(lines), parse_mode="HTML",
+                              reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
+
+
+@router.message(F.text.regexp(r"^/forget(\s+\d+)?$"))
+async def forget_visitor(message: Message):
+    """Удаление данных конкретного человека — если он об этом попросит"""
+    if not config.is_admin(message.from_user.id):
+        return
+
+    parts = message.text.split()
+    if len(parts) < 2:
+        await message.answer(
+            "Укажите id посетителя: /forget 123456789\n\n"
+            "Удалит запись о нём и всю его историю действий безвозвратно.")
+        return
+
+    if await database.forget_visitor(int(parts[1])):
+        await message.answer(f"🗑 Данные посетителя {parts[1]} удалены.")
+    else:
+        await message.answer("⚠️ Не удалось удалить — ошибка базы.")

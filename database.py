@@ -829,6 +829,71 @@ async def update_travel_country(place_id: int, country_ru: str, country_en: str)
         return False
 
 
+# --- ПОСЕТИТЕЛИ ---
+
+async def record_visitor(user_id: int, username, full_name, tg_language):
+    """Отмечает визит: имя обновляем при каждом заходе, счётчик растёт.
+
+    Имя и ник в Telegram меняются, поэтому храним последнее известное, а не
+    первое: иначе через полгода список будет из устаревших подписей.
+    """
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"""INSERT INTO {SCHEMA}.visitors
+                    (user_id, username, full_name, tg_language, actions)
+                    VALUES ($1, $2, $3, $4, 1)
+                    ON CONFLICT (user_id) DO UPDATE SET
+                        username = EXCLUDED.username,
+                        full_name = EXCLUDED.full_name,
+                        tg_language = EXCLUDED.tg_language,
+                        last_seen = CURRENT_TIMESTAMP,
+                        actions = {SCHEMA}.visitors.actions + 1""",
+                user_id, username, full_name, tg_language
+            )
+    except Exception as e:
+        logging.error(f"Не удалось записать посетителя: {type(e).__name__}: {e}")
+
+
+async def count_visitors() -> int:
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            return await conn.fetchval(f"SELECT COUNT(*) FROM {SCHEMA}.visitors") or 0
+    except Exception as e:
+        logging.error(f"БД недоступна при подсчёте посетителей: {e}")
+        return 0
+
+
+async def get_visitors(limit: int = 10, offset: int = 0):
+    """Посетители, недавние первыми"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT user_id, username, full_name, tg_language, first_seen, "
+                f"last_seen, actions FROM {SCHEMA}.visitors "
+                "ORDER BY last_seen DESC LIMIT $1 OFFSET $2", limit, offset)
+        return [dict(r) for r in rows]
+    except Exception as e:
+        logging.error(f"БД недоступна при чтении посетителей: {e}")
+        return []
+
+
+async def forget_visitor(user_id: int) -> bool:
+    """Полное удаление посетителя — на случай, если человек попросит"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(f"DELETE FROM {SCHEMA}.visitors WHERE user_id = $1", user_id)
+            await conn.execute(f"DELETE FROM {SCHEMA}.user_logs WHERE user_id = $1", user_id)
+        return True
+    except Exception as e:
+        logging.error(f"Не удалось удалить посетителя: {type(e).__name__}: {e}")
+        return False
+
+
 # --- НАСТРОЙКИ, МЕНЯЕМЫЕ ИЗ БОТА ---
 
 _settings_cache: dict[str, str] = {}
