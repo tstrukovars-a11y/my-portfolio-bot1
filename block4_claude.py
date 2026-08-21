@@ -73,6 +73,15 @@ BTN_HOME = {"ru": "⇦ В главное меню", "en": "⇦ Main menu",
             "fr": "⇦ Menu principal", "he": "⇦ לתפריט הראשי"}
 
 # Пользователю — понятная фраза, разработчику — настоящая ошибка в логах.
+# Кончившийся баланс — не временный сбой: «попробуйте через минуту» тут врёт,
+# раздел не заработает, пока владелец не пополнит счёт.
+NO_CREDITS = {
+    "ru": "🤖 Чат AI временно недоступен. Загляните позже — раздел скоро вернётся.",
+    "en": "🤖 The AI chat is temporarily unavailable. Please check back later.",
+    "fr": "🤖 Le chat IA est momentanément indisponible. Revenez plus tard.",
+    "he": "🤖 צ'אט ה-AI אינו זמין כרגע. בדקו שוב מאוחר יותר."
+}
+
 API_ERROR = {
     "ru": "⚠️ Не получилось получить ответ. Попробуйте ещё раз через минуту.",
     "en": "⚠️ Could not get an answer. Please try again in a minute.",
@@ -229,7 +238,17 @@ async def handle_ai_question(message: Message, state: FSMContext):
         # Посетителю — понятная фраза, владельцу — настоящая причина: иначе
         # за каждой ошибкой приходится лезть в логи Render.
         logging.error(f"Claude API: {type(e).__name__}: {e}")
-        note = _t(API_ERROR, lang)
+        text = str(e).lower()
+        out_of_credits = "credit balance" in text or "billing" in text
+        note = _t(NO_CREDITS if out_of_credits else API_ERROR, lang)
+        if out_of_credits and config.is_admin(user_id):
+            note = ("💳 <b>Закончились средства на счёте Anthropic.</b>\n\n"
+                    "console.anthropic.com → Plans &amp; Billing → пополнить баланс.\n"
+                    "Подписка Claude Pro на claude.ai сюда не относится, API "
+                    "оплачивается отдельно.\n\n"
+                    "Посетители сейчас видят «раздел временно недоступен».")
+            await message.answer(note)
+            return
         if config.is_admin(user_id):
             note += f"\n\n<code>{type(e).__name__}: {str(e)[:300]}</code>"
         await message.answer(note)
