@@ -50,7 +50,14 @@ async def check_key() -> str:
     except Exception as e:
         text = str(e)
         if "authentication_error" in text or "401" in text:
-            return "КЛЮЧ CLAUDE НЕВЕРЕН (401) — проверьте CLAUDE_KEY в переменных Render"
+            # Показываем форму ключа, не сам ключ: обрезанный при копировании
+            # выглядит снаружи так же, как отозванный, а длина их различает.
+            # Настоящий ключ Anthropic — около сотни знаков.
+            key = config.ANTHROPIC_API_KEY or ""
+            shape = f"{key[:14]}…{key[-4:]} ({len(key)} знаков)" if key else "пусто"
+            return (f"КЛЮЧ CLAUDE НЕВЕРЕН (401). В переменной сейчас: {shape}. "
+                    f"Настоящий ключ Anthropic — примерно 100 знаков и начинается с sk-ant-api03-. "
+                    f"Создайте новый на console.anthropic.com → API Keys и вставьте целиком.")
         if "credit" in text.lower() or "billing" in text.lower():
             return "КЛЮЧ CLAUDE ВЕРЕН, но на счёте Anthropic нет средств"
         return f"ключ Claude проверить не удалось: {type(e).__name__}: {text[:120]}"
