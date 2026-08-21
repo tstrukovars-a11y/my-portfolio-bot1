@@ -423,11 +423,12 @@ def get_books_shelf_menu(lang):
     ])
 
 def get_claude_pay_menu(lang):
-    # Запасное меню оплаты/подписки для премиум-блоков
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💳 Оформить Premium" if lang == "ru" else "💳 Unlock Premium", callback_data="start_solving_puzzles")],
-        [InlineKeyboardButton(text=label(BACK_TEXTS, lang), callback_data="menu_intellect")]
-    ])
+    """Тарифы подписки. Раньше кнопка «Оформить Premium» вела на
+    start_solving_puzzles — то есть запускала головоломки вместо оплаты."""
+    import payments
+    rows = payments.tariff_rows(lang)
+    rows.append([InlineKeyboardButton(text=label(BACK_TEXTS, lang), callback_data="menu_intellect")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 # КНОПКИ ВЫХОДА ИЗ ЧАТА CLAUDE (REPLY)
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton

@@ -1,7 +1,10 @@
 import logging
 
 from aiogram import Router, F
-from aiogram.types import CallbackQuery, Message, InputMediaPhoto, ReplyKeyboardRemove
+from aiogram.types import (
+    CallbackQuery, Message, InputMediaPhoto, ReplyKeyboardRemove,
+    InlineKeyboardMarkup, InlineKeyboardButton
+)
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from anthropic import AsyncAnthropic
@@ -19,7 +22,7 @@ claude_client = AsyncAnthropic(api_key=config.ANTHROPIC_API_KEY) if config.ANTHR
 
 MODEL = "claude-haiku-4-5-20251001"
 MAX_TOKENS = 1000
-FREE_DAILY = 5
+FREE_DAILY = 3
 
 # Сколько реплик диалога помним. Без истории бот отвечал на каждый вопрос
 # с чистого листа: «а подробнее?» было не к чему отнести. Ограничение нужно,
@@ -57,14 +60,14 @@ NOT_CONFIGURED = {
 # платежей к боту не подключён. Человек упирался в стену без выхода, поэтому
 # текст говорит правду и ведёт туда, где ответят.
 LIMIT_REACHED = {
-    "ru": ("⏳ На сегодня бесплатные вопросы закончились — их {limit} в сутки.\n\n"
-           "Лимит обнулится завтра. Если вопрос срочный, оставьте заявку — отвечу лично."),
-    "en": ("⏳ You have used today's free questions — there are {limit} a day.\n\n"
-           "The limit resets tomorrow. If it is urgent, leave a request and I will reply personally."),
+    "ru": ("⏳ Бесплатные вопросы на сегодня закончились — их {limit} в сутки.\n\n"
+           "Лимит обнулится завтра. Или снимите ограничение подпиской:"),
+    "en": ("⏳ You have used today's free questions — {limit} a day.\n\n"
+           "The limit resets tomorrow, or you can remove it with a subscription:"),
     "fr": ("⏳ Vous avez utilisé vos questions gratuites du jour ({limit} par jour).\n\n"
-           "Le compteur repart demain. Si c'est urgent, laissez une demande."),
+           "Le compteur repart demain, ou levez la limite avec un abonnement :"),
     "he": ("⏳ נגמרו השאלות החינמיות להיום ({limit} ביום).\n\n"
-           "המכסה מתאפסת מחר. אם זה דחוף, השאירו בקשה ואענה אישית.")
+           "המכסה מתאפסת מחר, או שאפשר להסיר את המגבלה עם מנוי:")
 }
 
 BTN_REQUEST = {"ru": "✉️ Оставить заявку", "en": "✉️ Send a request",
@@ -117,8 +120,9 @@ def _confirm_markup(lang: str):
 
 
 def _limit_markup(lang: str):
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    rows = []
+    """Тарифы плюс запасной путь: не всем удобно платить звёздами."""
+    import payments
+    rows = payments.tariff_rows(lang)
     if config.ADMIN_ID:
         rows.append([InlineKeyboardButton(text=_t(BTN_REQUEST, lang), callback_data="ads_order")])
     rows.append([InlineKeyboardButton(text=_t(BTN_HOME, lang), callback_data="go_home")])
