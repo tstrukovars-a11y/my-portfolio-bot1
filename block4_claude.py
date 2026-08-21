@@ -226,9 +226,13 @@ async def handle_ai_question(message: Message, state: FSMContext):
         )
         answer = response.content[0].text
     except Exception as e:
-        # Техническую ошибку показывать посетителю незачем — она уходит в логи
+        # Посетителю — понятная фраза, владельцу — настоящая причина: иначе
+        # за каждой ошибкой приходится лезть в логи Render.
         logging.error(f"Claude API: {type(e).__name__}: {e}")
-        await message.answer(_t(API_ERROR, lang))
+        note = _t(API_ERROR, lang)
+        if config.is_admin(user_id):
+            note += f"\n\n<code>{type(e).__name__}: {str(e)[:300]}</code>"
+        await message.answer(note)
         return
 
     history.append({"role": "assistant", "content": answer})
