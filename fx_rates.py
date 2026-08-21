@@ -195,12 +195,12 @@ SPREADS = (1.0, 2.0)
 RETRO = {
     "ru": ("\n\n📐 **Что дали эти {days} дней**\n"
            "_100 единиц валюты, переложенные в доллар в начале периода и обменянные "
-           "обратно сегодня. Показано изменение: сколько прибавилось или убыло "
-           "к исходной сотне по биржевому курсу и со спредом обменника._\n"),
+           "обратно сегодня — по биржевому курсу и со спредом обменника. "
+           "В скобках изменение к исходной сотне._\n"),
     "en": ("\n\n📐 **What these {days} days did**\n"
            "_100 units moved into dollars at the start of the period and back today — "
-           "Shown as the change against the starting 100, at the market rate and "
-           "with an exchange spread._\n"),
+           "At the market rate and with an exchange spread; the change against the "
+           "starting 100 is in brackets._\n"),
 }
 
 HEADER = {
@@ -290,14 +290,15 @@ async def render(lang: str) -> str:
         cells = [100 * end / start]
         cells += [100 / (start * (1 + sp / 100)) * (end * (1 - sp / 100))
                   for sp in SPREADS]
-        # Показываем изменение, а не итог: старт всегда 100, поэтому дельта —
-        # единственное, что нужно прочитать, и три пары чисел в строку не влезли бы.
-        retro.append(f"{meta['flag']} " + " ".join(f"{v - 100:+7.1f}" for v in cells))
+        retro.append(f"{meta['flag']} " + "  ".join(
+            f"{v:5.1f} ({v - 100:+.1f})" for v in cells))
 
     if retro:
         lines.append(_t(RETRO, lang).format(days=DAYS))
         head = ("биржа" if lang == "ru" else "market")
-        header = "   " + f"{head:>7}" + "".join(f"{sp:6.0f}%" for sp in SPREADS)
+        header = ("   " + f"{head:^13}" +
+                  "".join(f"{f'спред {sp:.0f}%' if lang == 'ru' else f'spread {sp:.0f}%':^15}"
+                          for sp in SPREADS))
         lines.append("`" + header + "`\n" + "\n".join(f"`{row}`" for row in retro))
 
     return "".join(lines)
