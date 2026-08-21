@@ -10,7 +10,11 @@ from datetime import date, timedelta
 import httpx
 
 from aiogram import Router, F
-from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import (
+    CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
+)
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import StatesGroup, State
 
 import database
 
@@ -310,6 +314,147 @@ async def show_rates(call: CallbackQuery):
     lang = await database.get_user_language(call.from_user.id)
     await call.message.answer(
         await render(lang), parse_mode="Markdown", disable_web_page_preview=True,
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
-            text=_t(BACK, lang), callback_data="sport_news")]])
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=_t(BTN_CALC, lang), callback_data="fx_calc")],
+            [InlineKeyboardButton(text=_t(BACK, lang), callback_data="sport_news")],
+        ])
     )
+
+
+# =====================================================================
+# 🧮 КАЛЬКУЛЯТОР
+# =====================================================================
+# Доллар — база, курсы хранятся как «сколько валюты за один доллар», поэтому
+# любая пара считается через него: сумма → доллары → нужная валюта.
+
+CALC_ORDER = ["USD", "EUR", "ILS", "RUB"]
+# «in» — предложный падеж для фразы «сумму в рублях»: именительный из кнопки
+# в неё не подставить.
+CALC_META = {
+    "USD": {"flag": "🇺🇸", "ru": "Доллар", "en": "Dollar", "sign": "$", "in": "долларах"},
+    "EUR": {"flag": "🇪🇺", "ru": "Евро", "en": "Euro", "sign": "€", "in": "евро"},
+    "ILS": {"flag": "🇮🇱", "ru": "Шекель", "en": "Shekel", "sign": "₪", "in": "шекелях"},
+    "RUB": {"flag": "🇷🇺", "ru": "Рубль", "en": "Rouble", "sign": "₽", "in": "рублях"},
+}
+
+
+class CalcState(StatesGroup):
+    waiting_amount = State()
+
+
+CALC_PICK = {
+    "ru": "🧮 **Калькулятор валют**\n\nВыберите, в какой валюте вводите сумму:",
+    "en": "🧮 **Currency calculator**\n\nPick the currency you will enter:",
+}
+CALC_ASK = {
+    "ru": "Введите сумму в {name} ({sign}). Можно присылать числа подряд — "
+          "каждое пересчитаю.",
+    "en": "Enter the amount in {name} ({sign}). Send numbers one after another — "
+          "each will be converted.",
+}
+CALC_BAD = {
+    "ru": "Не похоже на число. Пришлите, например: 1000",
+    "en": "That is not a number. Send something like: 1000",
+}
+CALC_NO_RATES = {
+    "ru": "Курсы сейчас недоступны — пересчитать не могу.",
+    "en": "Rates are unavailable right now.",
+}
+BTN_CALC = {"ru": "🧮 Калькулятор", "en": "🧮 Calculator",
+            "fr": "🧮 Calculatrice", "he": "🧮 מחשבון"}
+BTN_OTHER = {"ru": "🔄 Другая валюта", "en": "🔄 Another currency"}
+BTN_DONE = {"ru": "✅ Готово", "en": "✅ Done"}
+
+
+async def latest_rates() -> dict:
+    """{валюта: сколько её дают за $1}. Доллар к себе — единица."""
+    series = await fetch_series()
+    rates = {"USD": 1.0}
+    for code, points in series.items():
+        if points:
+            rates[code] = points[-1][1]
+    return rates if len(rates) > 1 else {}
+
+
+def _amount(text: str):
+    """Число из сообщения: принимаем запятую и пробелы между разрядами"""
+    cleaned = text.replace(",", ".").replace(" ", "").replace(" ", "")
+    try:
+        value = float(cleaned)
+    except ValueError:
+        return None
+    return value if 0 < value < 1e12 else None
+
+
+def _pick_markup(lang: str) -> InlineKeyboardMarkup:
+    rows, pair = [], []
+    for code in CALC_ORDER:
+        meta = CALC_META[code]
+        pair.append(InlineKeyboardButton(
+            text=f"{meta['flag']} {meta['ru' if lang == 'ru' else 'en']}",
+            callback_data=f"fxcalc_{code}"))
+        if len(pair) == 2:
+            rows.append(pair); pair = []
+    if pair:
+        rows.append(pair)
+    rows.append([InlineKeyboardButton(text=_t(BACK, lang), callback_data="fx_rates")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.callback_query(F.data == "fx_calc")
+async def calc_start(call: CallbackQuery, state: FSMContext):
+    await call.answer()
+    lang = await database.get_user_language(call.from_user.id)
+    await state.clear()
+    await call.message.answer(_t(CALC_PICK, lang), parse_mode="Markdown",
+                              reply_markup=_pick_markup(lang))
+
+
+@router.callback_query(F.data.startswith("fxcalc_"))
+async def calc_pick(call: CallbackQuery, state: FSMContext):
+    await call.answer()
+    code = call.data.removeprefix("fxcalc_")
+    if code not in CALC_META:
+        return
+
+    lang = await database.get_user_language(call.from_user.id)
+    await state.set_state(CalcState.waiting_amount)
+    await state.update_data(calc_code=code, calc_lang=lang)
+
+    meta = CALC_META[code]
+    name = meta["in"] if lang == "ru" else meta["en"].lower() + "s"
+    await call.message.answer(_t(CALC_ASK, lang).format(name=name, sign=meta["sign"]))
+
+
+@router.message(CalcState.waiting_amount, F.text, ~F.text.startswith("/"))
+async def calc_convert(message: Message, state: FSMContext):
+    data = await state.get_data()
+    lang = data.get("calc_lang", "ru")
+    code = data.get("calc_code", "USD")
+
+    value = _amount(message.text)
+    if value is None:
+        await message.answer(_t(CALC_BAD, lang))
+        return
+
+    rates = await latest_rates()
+    if code not in rates:
+        await message.answer(_t(CALC_NO_RATES, lang))
+        return
+
+    in_usd = value / rates[code]
+    lines = []
+    for other in CALC_ORDER:
+        if other not in rates:
+            continue
+        meta = CALC_META[other]
+        amount = in_usd * rates[other]
+        mark = "▪" if other == code else " "
+        lines.append(f"{mark} {meta['flag']} `{amount:>12,.2f}` {meta['sign']}"
+                     .replace(",", " "))
+
+    markup = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text=_t(BTN_OTHER, lang), callback_data="fx_calc"),
+        InlineKeyboardButton(text=_t(BTN_DONE, lang), callback_data="fx_rates"),
+    ]])
+    await message.answer("\n".join(lines), parse_mode="Markdown", reply_markup=markup)
