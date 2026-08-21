@@ -129,6 +129,30 @@ def _trend(values: list, lang: str) -> str:
     return "→ 0.0%"
 
 
+RETRO = {
+    "ru": ("\n\n📐 **Что дали эти {days} дней**\n"
+           "_Сколько стоили бы 100 единиц валюты, переложенные в доллар в начале "
+           "периода и обменянные обратно сегодня._\n"),
+    "en": ("\n\n📐 **What these {days} days did**\n"
+           "_What 100 units would be worth if moved into dollars at the start of the "
+           "period and back today._\n"),
+}
+
+DISCLAIMER = {
+    "ru": ("\n_Это расчёт по прошлым данным, а не прогноз и не рекомендация. "
+           "Комиссии и разница курсов покупки-продажи здесь не учтены — "
+           "в жизни они съедают часть результата._\n"
+           "_Обмен через третью валюту выигрыша не даёт: кросс-курсы согласованы, "
+           "доллар → шекель → рубль по построению равен доллару → рублю, и лишний "
+           "обмен только добавляет комиссию._"),
+    "en": ("\n_A calculation on past data, not a forecast or a recommendation. Fees and "
+           "the spread between buy and sell rates are not included and eat into the "
+           "result in practice._\n"
+           "_Routing through a third currency gains nothing: cross rates are consistent, "
+           "so dollar → shekel → rouble equals dollar → rouble by construction, with one "
+           "more fee on top._"),
+}
+
 HEADER = {
     "ru": "💱 **Курсы к доллару — {days} дней**\n",
     "en": "💱 **Rates against the dollar — {days} days**\n",
@@ -182,6 +206,28 @@ async def render(lang: str) -> str:
         )
 
     lines.append(_t(FOOTER, lang))
+
+    # Ретроспектива: показываем результат вложения задним числом. Это факт о
+    # прошлом, а не совет — оговорка идёт следом и не выносится в мелкий шрифт.
+    retro = []
+    for code, meta in CURRENCIES.items():
+        points = series.get(code)
+        if not points or len(points) < 2:
+            continue
+        start, end = points[0][1], points[-1][1]
+        if not start:
+            continue
+        # 100 единиц валюты → доллары по курсу начала → обратно по курсу конца
+        result = 100 * end / start
+        delta = result - 100
+        sign = "+" if delta >= 0 else ""
+        retro.append(f"{meta['flag']} `100 → {result:.1f}`  ({sign}{delta:.1f})")
+
+    if retro:
+        lines.append(_t(RETRO, lang).format(days=DAYS))
+        lines.append("\n".join(retro))
+        lines.append(_t(DISCLAIMER, lang))
+
     return "".join(lines)
 
 
