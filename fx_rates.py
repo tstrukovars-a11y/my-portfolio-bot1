@@ -189,17 +189,16 @@ def _verdict(last_strength: float, name: str, lang: str, versus: str = None) -> 
 
 
 # Спред обменника: курс покупки и продажи хуже биржевого, и платится он дважды.
-# Один процент в каждую сторону — типичная величина для безналичного обмена.
-SPREAD = 1.0
+# 1% — типично для безналичного обмена, 2% — для наличного.
+SPREADS = (1.0, 2.0)
 
 RETRO = {
     "ru": ("\n\n📐 **Что дали эти {days} дней**\n"
            "_100 единиц валюты, переложенные в доллар в начале периода и обменянные "
-           "обратно сегодня. Вторая колонка — то же со спредом {spread:.0f}% "
-           "в каждую сторону._\n"),
+           "обратно сегодня — по биржевому курсу и со спредом обменника._\n"),
     "en": ("\n\n📐 **What these {days} days did**\n"
-           "_100 units moved into dollars at the start of the period and back today. "
-           "The second column is the same with a {spread:.0f}% spread each way._\n"),
+           "_100 units moved into dollars at the start of the period and back today — "
+           "at the market rate and with an exchange spread._\n"),
 }
 
 HEADER = {
@@ -284,19 +283,18 @@ async def render(lang: str) -> str:
         start, end = points[0][1], points[-1][1]
         if not start:
             continue
-        # 100 единиц валюты → доллары по курсу начала → обратно по курсу конца
-        result = 100 * end / start
-        # Спред платится дважды: доллары покупаем дороже, продаём дешевле
-        net = 100 / (start * (1 + SPREAD / 100)) * (end * (1 - SPREAD / 100))
-        delta, net_delta = result - 100, net - 100
-        retro.append(
-            f"{meta['flag']} `{result:6.1f}` ({delta:+.1f})"
-            f"   `{net:6.1f}` ({net_delta:+.1f})"
-        )
+        # 100 единиц валюты → доллары по курсу начала → обратно по курсу конца.
+        # Спред платится дважды: доллары покупаем дороже, продаём дешевле.
+        cells = [100 * end / start]
+        cells += [100 / (start * (1 + sp / 100)) * (end * (1 - sp / 100))
+                  for sp in SPREADS]
+        retro.append(f"{meta['flag']} " + " ".join(f"{v:7.1f}" for v in cells))
 
     if retro:
-        lines.append(_t(RETRO, lang).format(days=DAYS, spread=SPREAD))
-        lines.append("\n".join(retro))
+        lines.append(_t(RETRO, lang).format(days=DAYS))
+        head = ("биржа" if lang == "ru" else "market")
+        header = "   " + f"{head:>7}" + "".join(f"{sp:6.0f}%" for sp in SPREADS)
+        lines.append("`" + header + "`\n" + "\n".join(f"`{row}`" for row in retro))
 
     return "".join(lines)
 
