@@ -188,28 +188,18 @@ def _verdict(last_strength: float, name: str, lang: str, versus: str = None) -> 
     return f"unchanged {against}"
 
 
+# Спред обменника: курс покупки и продажи хуже биржевого, и платится он дважды.
+# Один процент в каждую сторону — типичная величина для безналичного обмена.
+SPREAD = 1.0
+
 RETRO = {
     "ru": ("\n\n📐 **Что дали эти {days} дней**\n"
-           "_Сколько стоили бы 100 единиц валюты, переложенные в доллар в начале "
-           "периода и обменянные обратно сегодня._\n"),
+           "_100 единиц валюты, переложенные в доллар в начале периода и обменянные "
+           "обратно сегодня. Вторая колонка — то же со спредом {spread:.0f}% "
+           "в каждую сторону._\n"),
     "en": ("\n\n📐 **What these {days} days did**\n"
-           "_What 100 units would be worth if moved into dollars at the start of the "
-           "period and back today._\n"),
-}
-
-DISCLAIMER = {
-    "ru": ("\n_Это расчёт по прошлым данным, а не прогноз и не рекомендация. "
-           "Комиссии и разница курсов покупки-продажи здесь не учтены — "
-           "в жизни они съедают часть результата._\n"
-           "_Обмен через третью валюту выигрыша не даёт: кросс-курсы согласованы, "
-           "доллар → шекель → рубль по построению равен доллару → рублю, и лишний "
-           "обмен только добавляет комиссию._"),
-    "en": ("\n_A calculation on past data, not a forecast or a recommendation. Fees and "
-           "the spread between buy and sell rates are not included and eat into the "
-           "result in practice._\n"
-           "_Routing through a third currency gains nothing: cross rates are consistent, "
-           "so dollar → shekel → rouble equals dollar → rouble by construction, with one "
-           "more fee on top._"),
+           "_100 units moved into dollars at the start of the period and back today. "
+           "The second column is the same with a {spread:.0f}% spread each way._\n"),
 }
 
 HEADER = {
@@ -296,14 +286,17 @@ async def render(lang: str) -> str:
             continue
         # 100 единиц валюты → доллары по курсу начала → обратно по курсу конца
         result = 100 * end / start
-        delta = result - 100
-        sign = "+" if delta >= 0 else ""
-        retro.append(f"{meta['flag']} `100 → {result:.1f}`  ({sign}{delta:.1f})")
+        # Спред платится дважды: доллары покупаем дороже, продаём дешевле
+        net = 100 / (start * (1 + SPREAD / 100)) * (end * (1 - SPREAD / 100))
+        delta, net_delta = result - 100, net - 100
+        retro.append(
+            f"{meta['flag']} `{result:6.1f}` ({delta:+.1f})"
+            f"   `{net:6.1f}` ({net_delta:+.1f})"
+        )
 
     if retro:
-        lines.append(_t(RETRO, lang).format(days=DAYS))
+        lines.append(_t(RETRO, lang).format(days=DAYS, spread=SPREAD))
         lines.append("\n".join(retro))
-        lines.append(_t(DISCLAIMER, lang))
 
     return "".join(lines)
 
