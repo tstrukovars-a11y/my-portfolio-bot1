@@ -1,3 +1,5 @@
+import logging
+
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, Message, InputMediaPhoto, ReplyKeyboardRemove
 from aiogram.fsm.context import FSMContext
@@ -5,17 +7,44 @@ from aiogram.fsm.state import StatesGroup, State
 from anthropic import AsyncAnthropic
 
 import config
-import database  # Подключаем нашу БД
+import database
 import menu_texts
 import inline_kb
 
 router = Router()
 
-RESET_TEXTS = {"ru": "🔄 Сброс сессии...", "en": "🔄 Resetting the session…",
-               "fr": "🔄 Réinitialisation…", "he": "🔄 מאפס את השיחה…"}
 # Без ключа клиент не создаём: иначе запрос падает уже внутри библиотеки,
 # и пользователю прилетает техническая ошибка вместо внятного объяснения.
 claude_client = AsyncAnthropic(api_key=config.ANTHROPIC_API_KEY) if config.ANTHROPIC_API_KEY else None
+
+MODEL = "claude-haiku-4-5-20251001"
+MAX_TOKENS = 1000
+FREE_DAILY = 5
+
+# Сколько реплик диалога помним. Без истории бот отвечал на каждый вопрос
+# с чистого листа: «а подробнее?» было не к чему отнести. Ограничение нужно,
+# чтобы разговор не разрастался в стоимости и не упирался в контекст модели.
+HISTORY_TURNS = 12
+
+LANG_NAMES = {"ru": "Russian", "en": "English", "fr": "French", "he": "Hebrew"}
+
+SYSTEM_PROMPT = (
+    "You are the AI assistant built into Tatiana Strukova's portfolio bot in Telegram. "
+    "She is a project and product manager with a background in banking, logistics and "
+    "manufacturing, a medical geneticist, an artist and a tennis player; the bot presents "
+    "her ROI cases, a director's diary, art and atelier work, recipes, travel, tennis "
+    "sections and a genetics knowledge base.\n\n"
+    "Answer questions on any topic, helpfully and concisely — you are a general assistant, "
+    "not a sales script. When the question touches what the bot itself offers, say which "
+    "section covers it. Never invent facts about Tatiana beyond what is stated above; if "
+    "you do not know, say so and suggest leaving a request through the bot.\n\n"
+    "Reply in {language}. Keep answers short enough to read on a phone — a few paragraphs "
+    "at most, unless the person asks for detail. Plain text or light Markdown only: no "
+    "tables, no headings."
+)
+
+RESET_TEXTS = {"ru": "🔄 Сброс сессии…", "en": "🔄 Resetting the session…",
+               "fr": "🔄 Réinitialisation…", "he": "🔄 מאפס את השיחה…"}
 
 NOT_CONFIGURED = {
     "ru": "🤖 Раздел ИИ временно недоступен: не настроен ключ доступа.",
@@ -24,155 +53,194 @@ NOT_CONFIGURED = {
     "he": "🤖 מדור הבינה המלאכותית אינו זמין: מפתח הגישה לא הוגדר."
 }
 
+# Раньше здесь предлагали купить Premium, которого нельзя купить: обработчик
+# платежей к боту не подключён. Человек упирался в стену без выхода, поэтому
+# текст говорит правду и ведёт туда, где ответят.
+LIMIT_REACHED = {
+    "ru": ("⏳ На сегодня бесплатные вопросы закончились — их {limit} в сутки.\n\n"
+           "Лимит обнулится завтра. Если вопрос срочный, оставьте заявку — отвечу лично."),
+    "en": ("⏳ You have used today's free questions — there are {limit} a day.\n\n"
+           "The limit resets tomorrow. If it is urgent, leave a request and I will reply personally."),
+    "fr": ("⏳ Vous avez utilisé vos questions gratuites du jour ({limit} par jour).\n\n"
+           "Le compteur repart demain. Si c'est urgent, laissez une demande."),
+    "he": ("⏳ נגמרו השאלות החינמיות להיום ({limit} ביום).\n\n"
+           "המכסה מתאפסת מחר. אם זה דחוף, השאירו בקשה ואענה אישית.")
+}
+
+BTN_REQUEST = {"ru": "✉️ Оставить заявку", "en": "✉️ Send a request",
+               "fr": "✉️ Envoyer une demande", "he": "✉️ שלחו בקשה"}
+BTN_HOME = {"ru": "⇦ В главное меню", "en": "⇦ Main menu",
+            "fr": "⇦ Menu principal", "he": "⇦ לתפריט הראשי"}
+
+# Пользователю — понятная фраза, разработчику — настоящая ошибка в логах.
+API_ERROR = {
+    "ru": "⚠️ Не получилось получить ответ. Попробуйте ещё раз через минуту.",
+    "en": "⚠️ Could not get an answer. Please try again in a minute.",
+    "fr": "⚠️ Impossible d'obtenir une réponse. Réessayez dans une minute.",
+    "he": "⚠️ לא הצלחתי לקבל תשובה. נסו שוב בעוד דקה."
+}
+
+RESUMED = {"ru": "✅ Вы вернулись в чат. Продолжайте диалог:",
+           "en": "✅ Session restored. Continue chatting:",
+           "fr": "✅ Session restaurée. Continuez :",
+           "he": "✅ חזרתם לצ'אט. המשיכו:"}
+
+EXIT_CONFIRM = {
+    "ru": "⚠ Вы точно хотите прервать сессию и выйти в главное меню?",
+    "en": "⚠ Are you sure you want to end the session and return to the menu?",
+    "fr": "⚠ Voulez-vous vraiment quitter le chat et retourner au menu ?",
+    "he": "⚠ בטוחים שברצונכם לסיים את השיחה ולחזור לתפריט?"
+}
+
+
+def _t(mapping: dict, lang: str) -> str:
+    return mapping.get(lang, mapping["en"])
+
+
+def _exit_markup(lang: str):
+    return {"ru": inline_kb.reply_exit_ru, "fr": inline_kb.reply_exit_fr,
+            "he": inline_kb.reply_exit_he}.get(lang, inline_kb.reply_exit_en)
+
+
+def _confirm_markup(lang: str):
+    return {"ru": inline_kb.confirm_exit_ru, "fr": inline_kb.confirm_exit_fr,
+            "he": inline_kb.confirm_exit_he}.get(lang, inline_kb.confirm_exit_en)
+
+
+def _limit_markup(lang: str):
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    rows = []
+    if config.ADMIN_ID:
+        rows.append([InlineKeyboardButton(text=_t(BTN_REQUEST, lang), callback_data="ads_order")])
+    rows.append([InlineKeyboardButton(text=_t(BTN_HOME, lang), callback_data="go_home")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def _over_limit(user_id: int) -> bool:
+    if await database.check_subscription(user_id):
+        return False
+    return await database.get_ai_requests_count(user_id) >= FREE_DAILY
+
+
 class ClaudeStates(StatesGroup):
     is_talking = State()
     confirming_exit = State()
 
+
 # ==========================================================
-# 🤖 ВХОД В БЛОК 4: НЕЙРОСЕТЬ CLAUDE (ПРИВАТНЫЙ)
+# 🤖 ВХОД В ЧАТ
 # ==========================================================
+
 @router.callback_query(F.data == "menu_claude")
 async def open_claude(call: CallbackQuery, state: FSMContext):
     await call.answer()
     user_id = call.from_user.id
-    
-    # Получаем язык из базы данных (надежно)
     lang = await database.get_user_language(user_id)
-    
-    # 1. Проверяем платную премиум-подписку
-    has_premium = await database.check_subscription(user_id)
-    
-    if not has_premium:
-        # 2. Если премиума нет, проверяем дневной лимит бесплатных запросов (5 в день)
-        current_requests = await database.get_ai_requests_count(user_id)
-        if current_requests >= 5:
-            caption_limit = menu_texts.CLAUDE_LIMIT_TEXTS.get(lang, menu_texts.CLAUDE_LIMIT_TEXTS["en"])
-            
-            # Подгружаем правильные 4-язычные сетки подписок (Английский на месте)
-            if lang == "ru":
-                current_pay_markup = inline_kb.get_claude_pay_menu(lang)
-            elif lang == "fr":
-                current_pay_markup = inline_kb.get_claude_pay_menu(lang)
-            elif lang == "he":
-                current_pay_markup = inline_kb.get_claude_pay_menu(lang)
-            else:
-                current_pay_markup = inline_kb.get_claude_pay_menu(lang)
-                
-            await call.message.edit_media(
-                media=InputMediaPhoto(media=config.CLOD_BANNER, caption=caption_limit, parse_mode="Markdown"),
-                reply_markup=current_pay_markup
-            )
-            return
 
-    # 3. Если лимит не превышен или есть премиум — запускаем обычный чат
+    if await _over_limit(user_id):
+        await call.message.answer(
+            _t(LIMIT_REACHED, lang).format(limit=FREE_DAILY),
+            reply_markup=_limit_markup(lang)
+        )
+        return
+
+    # Новый вход — новый разговор: старая история сбивала бы модель с толку
     await state.set_state(ClaudeStates.is_talking)
-    caption_success = menu_texts.CLAUDE_SUCCESS_TEXTS.get(lang, menu_texts.CLAUDE_SUCCESS_TEXTS["en"])
-    
-    if lang == "ru": exit_markup = inline_kb.reply_exit_ru
-    elif lang == "fr": exit_markup = inline_kb.reply_exit_fr
-    elif lang == "he": exit_markup = inline_kb.reply_exit_he
-    else: exit_markup = inline_kb.reply_exit_en
-    
-    await call.message.answer(text=caption_success, reply_markup=exit_markup, parse_mode="Markdown")
+    await state.update_data(history=[])
+
+    caption = menu_texts.CLAUDE_SUCCESS_TEXTS.get(lang, menu_texts.CLAUDE_SUCCESS_TEXTS["en"])
+    await call.message.answer(text=caption, reply_markup=_exit_markup(lang),
+                              parse_mode="Markdown")
+
 
 # ==========================================================
-# 🛑 ДВУХЭТАПНАЯ ЗАЩИТА И ПОДТВЕРЖДЕНИЕ ВЫХОДА
+# 🛑 ВЫХОД С ПОДТВЕРЖДЕНИЕМ
 # ==========================================================
+
 @router.message(ClaudeStates.is_talking, F.text.in_([
     "🛑 Покинуть чат с ИИ", "🛑 Exit AI Chat", "🛑 Quitter le chat IA", "🛑 צא מצ'אט AI"
 ]))
 async def initiate_exit_protection(message: Message, state: FSMContext):
     lang = await database.get_user_language(message.from_user.id)
     await state.set_state(ClaudeStates.confirming_exit)
+    await message.answer(text=_t(EXIT_CONFIRM, lang), reply_markup=_confirm_markup(lang))
 
-    if lang == "ru":
-        confirm_markup = inline_kb.confirm_exit_ru
-        msg = "⚠ Вы точно хотите прервать сессию и выйти в главное меню?"
-    elif lang == "fr":
-        confirm_markup = inline_kb.confirm_exit_fr
-        msg = "⚠ Voulez-vous vraiment quitter le chat et retourner au menu ?"
-    elif lang == "he":
-        confirm_markup = inline_kb.confirm_exit_he
-        msg = "⚠ האם אתה בטוח שברצונך לצאת לצ'אט ולחזור לתפריט?"
-    else:
-        confirm_markup = inline_kb.confirm_exit_en
-        msg = "⚠ Are you sure you want to terminate the session and exit to menu?"
-        
-    await message.answer(text=msg, reply_markup=confirm_markup)
 
-# Шаг 2.1: Полное подтверждение выхода
 @router.message(ClaudeStates.confirming_exit, F.text.in_([
-    "⚠ Да, выйти в главное меню", "⚠ Yes, return to main menu", "⚠ Oui, retourner au menu", "⚠ כן, לחזור לתפריט הראשי"
+    "⚠ Да, выйти в главное меню", "⚠ Yes, return to main menu",
+    "⚠ Oui, retourner au menu", "⚠ כן, לחזור לתפריט הראשי"
 ]))
 async def process_confirmed_exit(message: Message, state: FSMContext):
     await state.clear()
-    lang = await database.get_user_language(message.from_user.id)
-    caption_text = menu_texts.MAIN_MENU_TEXTS.get(lang, menu_texts.MAIN_MENU_TEXTS["en"])
-    
-    if lang == "ru": current_markup = inline_kb.get_main_menu("ru")
-    elif lang == "fr": current_markup = inline_kb.get_main_menu("fr")
-    elif lang == "he": current_markup = inline_kb.get_main_menu("he")
-    else: current_markup = inline_kb.get_main_menu("en")
-    
-    await message.answer(text=RESET_TEXTS.get(user_lang, RESET_TEXTS["en"]), reply_markup=ReplyKeyboardRemove())
+    user_id = message.from_user.id
+    lang = await database.get_user_language(user_id)
+
+    await message.answer(text=_t(RESET_TEXTS, lang), reply_markup=ReplyKeyboardRemove())
     await message.answer_photo(
-        photo=config.MAIN_BANNER, 
-        caption=caption_text, 
-        reply_markup=current_markup, 
+        photo=config.MAIN_BANNER,
+        caption=menu_texts.MAIN_MENU_TEXTS.get(lang, menu_texts.MAIN_MENU_TEXTS["en"]),
+        reply_markup=inline_kb.get_main_menu(lang, config.is_admin(user_id)),
         parse_mode="Markdown"
     )
 
-# Шаг 2.2: Отмена выхода
+
 @router.message(ClaudeStates.confirming_exit, F.text.in_([
-    "🔙 Продолжить общение с Claude", "🔙 Continue chatting with Claude", "🔙 Continuer à discuter avec Claude", "🔙 המשך לשוחח עם קלוד"
+    "🔙 Продолжить общение с Claude", "🔙 Continue chatting with Claude",
+    "🔙 Continuer à discuter avec Claude", "🔙 המשך לשוחח עם קלוד"
 ]))
 async def process_canceled_exit(message: Message, state: FSMContext):
     await state.set_state(ClaudeStates.is_talking)
     lang = await database.get_user_language(message.from_user.id)
-    
-    if lang == "ru": exit_markup = inline_kb.reply_exit_ru
-    elif lang == "fr": exit_markup = inline_kb.reply_exit_fr
-    elif lang == "he": exit_markup = inline_kb.reply_exit_he
-    else: exit_markup = inline_kb.reply_exit_en
-    
-    msg = "✅ Вы вернулись в чат. Продолжайте диалог:" if lang == "ru" else "✅ Session restored. Continue chatting:"
-    await message.answer(text=msg, reply_markup=exit_markup)
+    await message.answer(text=_t(RESUMED, lang), reply_markup=_exit_markup(lang))
+
 
 # ==========================================================
-# 💬 ХЭНДЛЕР ОБРАБОТКИ ВОПРОСОВ И ОТВЕТОВ CLAUDE API
+# 💬 ДИАЛОГ
 # ==========================================================
+
 @router.message(ClaudeStates.is_talking, F.text)
 async def handle_ai_question(message: Message, state: FSMContext):
     user_id = message.from_user.id
     lang = await database.get_user_language(user_id)
-    
-    # Дополнительная проверка лимита прямо перед отправкой запроса (для безопасности)
-    has_premium = await database.check_subscription(user_id)
-    if not has_premium:
-        current_requests = await database.get_ai_requests_count(user_id)
-        if current_requests >= 5:
-            await message.answer("⚠️ Your daily free limit is over. Please buy Premium in Claude Menu.")
-            return
+
+    if await _over_limit(user_id):
+        await message.answer(_t(LIMIT_REACHED, lang).format(limit=FREE_DAILY),
+                             reply_markup=_limit_markup(lang))
+        return
 
     if claude_client is None:
-        await message.answer(NOT_CONFIGURED.get(lang, NOT_CONFIGURED["en"]))
+        await message.answer(_t(NOT_CONFIGURED, lang))
         return
+
+    data = await state.get_data()
+    history = data.get("history", [])
+    history.append({"role": "user", "content": message.text})
 
     await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
     try:
         response = await claude_client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=1000,
-            messages=[{"role": "user", "content": message.text}]
+            model=MODEL,
+            max_tokens=MAX_TOKENS,
+            system=SYSTEM_PROMPT.format(language=LANG_NAMES.get(lang, "English")),
+            messages=list(history)   # копия: дальше в history дописывается ответ
         )
-        ai_text = response.content[0].text  # Исправлено обращение к тексту ответа Anthropic
-        
-        # Если у пользователя нет премиума — увеличиваем счетчик бесплатных запросов в БД
-        if not has_premium:
-            await database.increment_ai_requests(user_id)
-            
-        await message.answer(ai_text, parse_mode="Markdown")
-        
+        answer = response.content[0].text
     except Exception as e:
-        err = "❌ Ошибка Claude API:" if lang == "ru" else "❌ Claude API Error:"
-        await message.answer(f"{err} {e}")
+        # Техническую ошибку показывать посетителю незачем — она уходит в логи
+        logging.error(f"Claude API: {type(e).__name__}: {e}")
+        await message.answer(_t(API_ERROR, lang))
+        return
+
+    history.append({"role": "assistant", "content": answer})
+    # Держим только хвост переписки: старое всё равно не нужно, а токены оно ест
+    await state.update_data(history=history[-HISTORY_TURNS:])
+
+    if not await database.check_subscription(user_id):
+        await database.increment_ai_requests(user_id)
+
+    # Модель иногда возвращает разметку, которую Telegram разобрать не может —
+    # тогда сообщение отклоняется целиком. Показываем обычным текстом.
+    try:
+        await message.answer(answer, parse_mode="Markdown")
+    except Exception:
+        await message.answer(answer, parse_mode=None)
