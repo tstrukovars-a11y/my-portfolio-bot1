@@ -381,7 +381,32 @@ async def init_db():
             PRIMARY KEY (source, source_id, field, lang)
         )""")
 
-        # 18. Анкеты поиска партнёра для игры
+        # 18. Посетители: кто заходил в бота. Telegram отдаёт имя, ник и язык
+        # в каждом апдейте — храним, чтобы владелец видел аудиторию поимённо,
+        # а не только обезличенные счётчики DAU/MAU.
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.visitors (
+            user_id BIGINT PRIMARY KEY,
+            username TEXT,
+            full_name TEXT,
+            tg_language TEXT,
+            first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            actions INTEGER DEFAULT 0
+        )""")
+
+        # Восстанавливаем тех, кто заходил до появления этой таблицы: клики
+        # писались в user_logs с самого начала. Имя подставится при следующем
+        # заходе человека, а id, счётчик и даты видны сразу. DO NOTHING делает
+        # вызов безопасным при каждом старте и не воскрешает удалённых через
+        # /forget — у них вычищены и логи.
+        await conn.execute(f"""
+        INSERT INTO {SCHEMA}.visitors (user_id, first_seen, last_seen, actions)
+        SELECT user_id, MIN(timestamp), MAX(timestamp), COUNT(*)
+        FROM {SCHEMA}.user_logs GROUP BY user_id
+        ON CONFLICT (user_id) DO NOTHING""")
+
+        # 19. Анкеты поиска партнёра для игры
         await conn.execute(f"""
         CREATE TABLE IF NOT EXISTS {SCHEMA}.game_partners (
             id SERIAL PRIMARY KEY,
@@ -849,7 +874,7 @@ async def record_visitor(user_id: int, username, full_name, tg_language):
                         full_name = EXCLUDED.full_name,
                         tg_language = EXCLUDED.tg_language,
                         last_seen = CURRENT_TIMESTAMP,
-                        actions = {SCHEMA}.visitors.actions + 1""",
+                        actions = visitors.actions + 1""",
                 user_id, username, full_name, tg_language
             )
     except Exception as e:
