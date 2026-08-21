@@ -213,14 +213,15 @@ MEDALS = ["🥇", "🥈", "🥉", "4️⃣"]
 
 
 def _arrow(current, previous) -> str:
-    if previous is None:
+    """Стрелка изменения. Точка — сравнивать не с чем: это первый срез."""
+    if previous is None or current is None:
         return "·"
     delta = current - previous
-    if delta > 0.5:
+    if delta >= 0.05:
         return f"▲ +{delta:.1f}"
-    if delta < -0.5:
+    if delta <= -0.05:
         return f"▼ {delta:.1f}"
-    return "— 0.0"
+    return "→ 0.0"
 
 
 async def render_index(lang: str) -> str:
@@ -228,7 +229,7 @@ async def render_index(lang: str) -> str:
     if not snapshot:
         return EMPTY.get(lang, EMPTY["en"])
 
-    week_ago = await database.get_scores_before(day, 7)
+    base_day, previous = await database.get_scores_before(day, 7)
 
     ranked = sorted(snapshot.items(), key=lambda kv: kv[1]["score"] or 0, reverse=True)
     name_key = "ru" if lang == "ru" else "en"
@@ -237,7 +238,7 @@ async def render_index(lang: str) -> str:
     for place, (key, row) in enumerate(ranked):
         meta = COUNTRIES[key]
         medal = MEDALS[place] if place < len(MEDALS) else f"{place + 1}."
-        arrow = _arrow(row["score"], week_ago.get(key))
+        arrow = _arrow(row["score"], previous.get(key))
 
         lines.append(f"\n{medal} {meta['flag']} **{meta[name_key]}** — `{row['score']:.1f}`  {arrow}")
 
@@ -253,6 +254,29 @@ async def render_index(lang: str) -> str:
         if parts:
             lines.append(f"\n   `{' · '.join(parts)}`")
 
-    lines.append(FOOTER.get(lang, FOOTER["en"]).format(
-        t=WEIGHT_TONE, i=WEIGHT_INFLATION, g=WEIGHT_GDP))
+    footer = FOOTER.get(lang, FOOTER["en"]).format(
+        t=WEIGHT_TONE, i=WEIGHT_INFLATION, g=WEIGHT_GDP)
+
+    # Честно говорим, с чем сравниваем: пока истории нет недели, стрелка
+    # показывает изменение к ближайшему прошлому срезу, а не к неделе назад.
+    if base_day:
+        days = (day - base_day).days
+        if lang == "ru":
+            period = ("со вчера" if days == 1 else
+                      "за неделю" if days >= 7 else f"за {days} дн.")
+            footer = footer.replace("Стрелка — изменение балла за неделю.",
+                                    f"Стрелка — изменение балла {period} (с {base_day.strftime('%d.%m')}).")
+        else:
+            period = ("since yesterday" if days == 1 else
+                      "over a week" if days >= 7 else f"over {days} days")
+            footer = footer.replace("The arrow is the weekly change in score.",
+                                    f"The arrow is the change in score {period}.")
+    elif lang == "ru":
+        footer = footer.replace("Стрелка — изменение балла за неделю.",
+                                "Стрелка появится со второго дня: сравнивать пока не с чем.")
+    else:
+        footer = footer.replace("The arrow is the weekly change in score.",
+                                "Arrows appear from the second day — there is nothing to compare yet.")
+
+    lines.append(footer)
     return "".join(lines)

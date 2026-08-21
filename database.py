@@ -1167,7 +1167,12 @@ async def get_latest_index():
 
 
 async def get_scores_before(day, days_back: int):
-    """Баллы на ближайший день не позже чем day - days_back. Для стрелок динамики."""
+    """Баллы предыдущего среза и его дата: (дата, {страна: балл}).
+
+    Сначала ищем срез недельной давности. Если истории ещё нет — берём самый
+    свежий день до текущего: иначе первую неделю после запуска стрелки динамики
+    не с чем сравнивать и они вообще не появляются.
+    """
     try:
         pool = await get_pool()
         async with pool.acquire() as conn:
@@ -1176,14 +1181,18 @@ async def get_scores_before(day, days_back: int):
                 "WHERE day <= $1::date - $2::int", day, days_back
             )
             if not target:
-                return {}
+                target = await conn.fetchval(
+                    f"SELECT MAX(day) FROM {SCHEMA}.country_index WHERE day < $1", day
+                )
+            if not target:
+                return None, {}
             rows = await conn.fetch(
                 f"SELECT country, score FROM {SCHEMA}.country_index WHERE day = $1", target
             )
-        return {r["country"]: r["score"] for r in rows}
+        return target, {r["country"]: r["score"] for r in rows}
     except Exception as e:
         logging.error(f"БД недоступна при чтении истории индекса: {e}")
-        return {}
+        return None, {}
 
 
 async def get_last_known_macro(country: str):
