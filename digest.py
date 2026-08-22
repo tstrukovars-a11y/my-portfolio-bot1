@@ -36,7 +36,7 @@ MIRROR_THREAD_KEY = "digest_mirror_thread"
 SECTION_ALIASES = {
     "генетика": "genetics", "genetics": "genetics",
     "рецепты": "recipes", "кулинария": "recipes", "recipes": "recipes",
-    "путешествия": "travel", "travel": "travel",
+    "путешествия": "travel", "вокруг света": "travel", "travel": "travel",
 }
 
 # Время последней публикации. Хранится в базе, а не в памяти процесса:
@@ -279,7 +279,9 @@ async def digest_command(message: Message, bot: Bot):
         thread = bits[1] if len(bits) > 1 else ""
 
         if len(bits) > 2:
-            section = SECTION_ALIASES.get(bits[2].lower())
+            # Всё после номера темы — название раздела: у тем бывают имена
+            # из нескольких слов, и обрывать их на первом было бы обидно.
+            section = SECTION_ALIASES.get(" ".join(bits[2:]).lower())
             if not section:
                 await message.answer(
                     "❌ Неизвестный раздел. Возможные: "
