@@ -30,6 +30,11 @@ INTERVAL_HOURS = 12              # два поста в сутки: канал �
 MIRROR_KEY = "digest_mirror"
 MIRROR_THREAD_KEY = "digest_mirror_thread"
 
+# Время последней публикации. Хранится в базе, а не в памяти процесса:
+# сервис перезапускается при каждом деплое, и интервал, отсчитанный от
+# старта, превратил бы пять деплоев за вечер в пять постов подряд.
+LAST_AT_KEY = "digest_last_at"
+
 MAX_CAPTION = 1024
 MAX_MESSAGE = 4096
 
@@ -174,17 +179,34 @@ async def publish_next(bot: Bot) -> str:
 
         await database.mark_published(section, item_id, sent.message_id)
         await database.set_setting("digest_last_section", section)
+        await database.set_setting(LAST_AT_KEY, datetime.now().isoformat())
         await _mirror(bot, chat, sent.message_id)
         return f"опубликовано: {section}/{item_id} — {title[:50]}"
 
     return "публиковать нечего: все материалы уже вышли"
 
 
+async def _seconds_until_due() -> float:
+    """Сколько ещё ждать — считая от прошлой публикации, а не от запуска"""
+    raw = await database.get_setting(LAST_AT_KEY)
+    if not raw:
+        return 0.0
+    try:
+        last = datetime.fromisoformat(raw)
+    except ValueError:
+        return 0.0
+    return max(0.0, INTERVAL_HOURS * 3600 - (datetime.now() - last).total_seconds())
+
+
 async def scheduler(bot: Bot):
-    """Фоновая публикация. Первый пост — через минуту после старта, чтобы
-    перезапуск сервиса не превращался в залп сообщений."""
+    """Фоновая публикация. Минута задержки на старте — чтобы бот успел
+    подняться; дальше срок берётся из базы и перезапуск его не сбивает."""
     await asyncio.sleep(60)
     while True:
+        wait = await _seconds_until_due()
+        if wait > 0:
+            await asyncio.sleep(min(wait, 3600))   # просыпаемся сверить время
+            continue
         try:
             logging.info(f"Дайджест: {await publish_next(bot)}")
         except Exception as e:
@@ -195,6 +217,26 @@ async def scheduler(bot: Bot):
 # =====================================================================
 # УПРАВЛЕНИЕ (только владелец)
 # =====================================================================
+
+@router.message(F.text == "/id")
+async def show_chat_id(message: Message):
+    """Показывает id чата и тему, откуда команду отправили.
+
+    Нужно потому, что @userinfobot по пересланному сообщению показывает
+    автора, а не чат: id группы через него не узнать в принципе.
+    """
+    if not config.is_admin(message.from_user.id):
+        return
+
+    chat_id = message.chat.id
+    thread = message.message_thread_id
+    lines = [f"Чат: <code>{chat_id}</code>"]
+    if thread:
+        lines.append(f"Тема: <code>{thread}</code>")
+    lines.append("\nГотовая команда:")
+    lines.append(f"<code>/digest mirror {chat_id}{f' {thread}' if thread else ''}</code>")
+    await message.answer("\n".join(lines))
+
 
 @router.message(F.text.startswith("/digest"))
 async def digest_command(message: Message, bot: Bot):
@@ -247,8 +289,11 @@ async def digest_command(message: Message, bot: Bot):
         f"Цель: <code>{chat or 'не задана'}</code>"
         + (f" · тема {thread}" if thread else ""),
         f"Публикация раз в {INTERVAL_HOURS} ч",
-        "",
     ]
+    left = await _seconds_until_due()
+    lines.append("Следующая: " + ("в ближайшую минуту" if left <= 0
+                                  else f"через {int(left // 3600)} ч {int(left % 3600 // 60)} мин"))
+    lines.append("")
     for section, data in stats.items():
         left = data["total"] - data["published"]
         lines.append(f"{SECTION_TITLES.get(section, section)}: "
