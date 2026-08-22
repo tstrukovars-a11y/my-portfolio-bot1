@@ -24,6 +24,12 @@ TARGET_KEY = "digest_chat"       # id канала
 THREAD_KEY = "digest_thread"     # тема, если целью выбрана группа с разделами
 INTERVAL_HOURS = 12              # два поста в сутки: канал живой, но не назойливый
 
+# Дубль в группу. Нужен потому, что Telegram не даёт привязать группу с темами
+# как обсуждение канала, а ломать её разделы ради привязки — плохой размен.
+# Пока настройка пуста, дубль не идёт и поведение прежнее.
+MIRROR_KEY = "digest_mirror"
+MIRROR_THREAD_KEY = "digest_mirror_thread"
+
 MAX_CAPTION = 1024
 MAX_MESSAGE = 4096
 
@@ -75,6 +81,29 @@ async def _build(section: str, item_id: int):
         return f"{place} · {country}", text, photo, video, link
 
     return None
+
+
+async def _mirror(bot: Bot, from_chat: int, message_id: int):
+    """Дублирует свежий пост в группу, если она задана.
+
+    Именно пересылка, а не копия: у пересланного поста остаётся подпись
+    канала, и по ней участники группы попадают в сам канал. Ради этого
+    перехода дубль и нужен — копия без подписи роста не даёт.
+
+    Ошибка дубля не отменяет публикацию: пост в канале уже вышел, и
+    сбрасывать его из-за недоступной группы было бы хуже.
+    """
+    target = await database.get_setting(MIRROR_KEY)
+    if not target:
+        return
+    thread = await database.get_setting(MIRROR_THREAD_KEY)
+    try:
+        await bot.forward_message(
+            chat_id=int(target), from_chat_id=from_chat, message_id=message_id,
+            message_thread_id=int(thread) if thread else None,
+        )
+    except Exception as e:
+        logging.error(f"Дайджест: пост вышел, но дубль в группу не прошёл: {e}")
 
 
 async def _ad_block() -> str:
@@ -145,6 +174,7 @@ async def publish_next(bot: Bot) -> str:
 
         await database.mark_published(section, item_id, sent.message_id)
         await database.set_setting("digest_last_section", section)
+        await _mirror(bot, chat, sent.message_id)
         return f"опубликовано: {section}/{item_id} — {title[:50]}"
 
     return "публиковать нечего: все материалы уже вышли"
@@ -183,6 +213,23 @@ async def digest_command(message: Message, bot: Bot):
         await message.answer(f"✅ Канал публикации: <code>{html.escape(parts[2].strip())}</code>")
         return
 
+    if command == "mirror" and len(parts) > 2:
+        # «id_группы [номер_темы]» — тема необязательна, без неё дубль идёт
+        # в общий поток группы.
+        bits = parts[2].split()
+        await database.set_setting(MIRROR_KEY, bits[0])
+        await database.set_setting(MIRROR_THREAD_KEY, bits[1] if len(bits) > 1 else "")
+        await message.answer(
+            f"✅ Дубль в группу: <code>{html.escape(bits[0])}</code>"
+            + (f" · тема {html.escape(bits[1])}" if len(bits) > 1 else "")
+        )
+        return
+
+    if command == "nomirror":
+        await database.set_setting(MIRROR_KEY, "")
+        await message.answer("✅ Дубль в группу отключён.")
+        return
+
     if command == "ad" and len(parts) > 2:
         await database.set_setting("digest_ad", parts[2])
         await message.answer("✅ Рекламный блок сохранён — пойдёт в следующие посты.")
@@ -207,10 +254,17 @@ async def digest_command(message: Message, bot: Bot):
         lines.append(f"{SECTION_TITLES.get(section, section)}: "
                      f"{data['published']} из {data['total']}, осталось {left}")
 
+    mirror = await database.get_setting(MIRROR_KEY)
+    mirror_thread = await database.get_setting(MIRROR_THREAD_KEY)
+    lines.append(f"\nДубль в группу: <code>{mirror or 'нет'}</code>"
+                 + (f" · тема {mirror_thread}" if mirror and mirror_thread else ""))
+
     ad = await database.get_setting("digest_ad")
-    lines.append(f"\nРеклама: {'есть' if ad else 'нет'}")
+    lines.append(f"Реклама: {'есть' if ad else 'нет'}")
     lines.append("\n<code>/digest now</code> — опубликовать сейчас\n"
                  "<code>/digest chat -100…</code> — задать канал\n"
+                 "<code>/digest mirror -100… [тема]</code> — дублировать в группу\n"
+                 "<code>/digest nomirror</code> — не дублировать\n"
                  "<code>/digest ad текст</code> — рекламный блок\n"
                  "<code>/digest noad</code> — снять рекламу")
     await message.answer("\n".join(lines))
