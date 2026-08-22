@@ -30,6 +30,15 @@ INTERVAL_HOURS = 12              # два поста в сутки: канал �
 MIRROR_KEY = "digest_mirror"
 MIRROR_THREAD_KEY = "digest_mirror_thread"
 
+# Тема задаётся отдельно для каждого раздела: в группе с разделами рецепт
+# в теме про генетику выглядит ошибкой, а не публикацией. Раздел без своей
+# темы падает на общую, а нет и её — уходит в общий поток группы.
+SECTION_ALIASES = {
+    "генетика": "genetics", "genetics": "genetics",
+    "рецепты": "recipes", "кулинария": "recipes", "recipes": "recipes",
+    "путешествия": "travel", "travel": "travel",
+}
+
 # Время последней публикации. Хранится в базе, а не в памяти процесса:
 # сервис перезапускается при каждом деплое, и интервал, отсчитанный от
 # старта, превратил бы пять деплоев за вечер в пять постов подряд.
@@ -88,7 +97,13 @@ async def _build(section: str, item_id: int):
     return None
 
 
-async def _mirror(bot: Bot, from_chat: int, message_id: int):
+async def _mirror_thread(section: str) -> str:
+    """Тема для раздела: своя, иначе общая, иначе общий поток группы"""
+    return (await database.get_setting(f"{MIRROR_THREAD_KEY}_{section}")
+            or await database.get_setting(MIRROR_THREAD_KEY))
+
+
+async def _mirror(bot: Bot, from_chat: int, message_id: int, section: str):
     """Дублирует свежий пост в группу, если она задана.
 
     Именно пересылка, а не копия: у пересланного поста остаётся подпись
@@ -101,7 +116,7 @@ async def _mirror(bot: Bot, from_chat: int, message_id: int):
     target = await database.get_setting(MIRROR_KEY)
     if not target:
         return
-    thread = await database.get_setting(MIRROR_THREAD_KEY)
+    thread = await _mirror_thread(section)
     try:
         await bot.forward_message(
             chat_id=int(target), from_chat_id=from_chat, message_id=message_id,
@@ -180,7 +195,7 @@ async def publish_next(bot: Bot) -> str:
         await database.mark_published(section, item_id, sent.message_id)
         await database.set_setting("digest_last_section", section)
         await database.set_setting(LAST_AT_KEY, datetime.now().isoformat())
-        await _mirror(bot, chat, sent.message_id)
+        await _mirror(bot, chat, sent.message_id, section)
         return f"опубликовано: {section}/{item_id} — {title[:50]}"
 
     return "публиковать нечего: все материалы уже вышли"
@@ -233,8 +248,9 @@ async def show_chat_id(message: Message):
     lines = [f"Чат: <code>{chat_id}</code>"]
     if thread:
         lines.append(f"Тема: <code>{thread}</code>")
-    lines.append("\nГотовая команда:")
-    lines.append(f"<code>/digest mirror {chat_id}{f' {thread}' if thread else ''}</code>")
+    lines.append("\nГотовая команда — допишите раздел:")
+    lines.append(f"<code>/digest mirror {chat_id}{f' {thread}' if thread else ''} генетика</code>")
+    lines.append("\nРазделы: генетика, рецепты, путешествия")
     await message.answer("\n".join(lines))
 
 
@@ -256,20 +272,41 @@ async def digest_command(message: Message, bot: Bot):
         return
 
     if command == "mirror" and len(parts) > 2:
-        # «id_группы [номер_темы]» — тема необязательна, без неё дубль идёт
-        # в общий поток группы.
+        # «id_группы [номер_темы] [раздел]». Без раздела тема считается общей,
+        # без темы — дубль идёт в общий поток группы.
         bits = parts[2].split()
         await database.set_setting(MIRROR_KEY, bits[0])
-        await database.set_setting(MIRROR_THREAD_KEY, bits[1] if len(bits) > 1 else "")
+        thread = bits[1] if len(bits) > 1 else ""
+
+        if len(bits) > 2:
+            section = SECTION_ALIASES.get(bits[2].lower())
+            if not section:
+                await message.answer(
+                    "❌ Неизвестный раздел. Возможные: "
+                    + ", ".join(sorted(set(SECTION_ALIASES) - set(SECTION_ALIASES.values())))
+                )
+                return
+            await database.set_setting(f"{MIRROR_THREAD_KEY}_{section}", thread)
+            await message.answer(
+                f"✅ {SECTION_TITLES[section]} → группа "
+                f"<code>{html.escape(bits[0])}</code>, тема {html.escape(thread) or 'общая'}"
+            )
+            return
+
+        await database.set_setting(MIRROR_THREAD_KEY, thread)
         await message.answer(
             f"✅ Дубль в группу: <code>{html.escape(bits[0])}</code>"
-            + (f" · тема {html.escape(bits[1])}" if len(bits) > 1 else "")
+            + (f" · тема {html.escape(thread)} для всех разделов без своей"
+               if thread else " · общий поток")
         )
         return
 
     if command == "nomirror":
         await database.set_setting(MIRROR_KEY, "")
-        await message.answer("✅ Дубль в группу отключён.")
+        for section in ROTATION:
+            await database.set_setting(f"{MIRROR_THREAD_KEY}_{section}", "")
+        await database.set_setting(MIRROR_THREAD_KEY, "")
+        await message.answer("✅ Дубль в группу отключён, темы забыты.")
         return
 
     if command == "ad" and len(parts) > 2:
@@ -300,15 +337,18 @@ async def digest_command(message: Message, bot: Bot):
                      f"{data['published']} из {data['total']}, осталось {left}")
 
     mirror = await database.get_setting(MIRROR_KEY)
-    mirror_thread = await database.get_setting(MIRROR_THREAD_KEY)
-    lines.append(f"\nДубль в группу: <code>{mirror or 'нет'}</code>"
-                 + (f" · тема {mirror_thread}" if mirror and mirror_thread else ""))
+    lines.append(f"\nДубль в группу: <code>{mirror or 'нет'}</code>")
+    if mirror:
+        for section in ROTATION:
+            thread = await _mirror_thread(section)
+            lines.append(f"  {SECTION_TITLES.get(section, section)} → "
+                         + (f"тема {thread}" if thread else "общий поток"))
 
     ad = await database.get_setting("digest_ad")
     lines.append(f"Реклама: {'есть' if ad else 'нет'}")
     lines.append("\n<code>/digest now</code> — опубликовать сейчас\n"
                  "<code>/digest chat -100…</code> — задать канал\n"
-                 "<code>/digest mirror -100… [тема]</code> — дублировать в группу\n"
+                 "<code>/digest mirror -100… тема раздел</code> — дубль в группу\n"
                  "<code>/digest nomirror</code> — не дублировать\n"
                  "<code>/digest ad текст</code> — рекламный блок\n"
                  "<code>/digest noad</code> — снять рекламу")
