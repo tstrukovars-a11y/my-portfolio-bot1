@@ -17,6 +17,8 @@ import translator
 import common, block1_sport, block2_creative, block3_intellect, block4_claude, profiles, block5_game, block6_vpn, block7_analytics, puzzles, shop, orders, genetics, admin, tennis_live, travel, payments, fx_rates
 import finance
 import digest
+import growth
+import inline_kb
 
 
 def _make_webhook_secret() -> str:
@@ -285,6 +287,10 @@ async def main():
             asyncio.create_task(_log(event.from_user, _section_of(event.data)))
         return await handler(event, data)
 
+    # Шлюз стоит после аналитики: заход в закрытый раздел — тоже интерес,
+    # и учитывать его надо независимо от того, пустили пользователя или нет.
+    dp.callback_query.outer_middleware(growth.gate_middleware)
+
     @dp.message.outer_middleware()
     async def track_commands(handler, event, data):
         if event.text and event.text.startswith("/") and event.from_user:
@@ -319,6 +325,7 @@ async def main():
     dp.include_router(payments.router)
     dp.include_router(fx_rates.router)
     dp.include_router(digest.router)
+    dp.include_router(growth.router)
 
     dp.include_router(tennis_live.router)
     dp.include_router(travel.router)
@@ -338,6 +345,13 @@ async def main():
 
     # Публикация в канал: запускаем после создания бота — раньше объекта ещё нет
     asyncio.create_task(digest.scheduler(bot))
+
+    # Меню собирается синхронно и в базу сходить не может, поэтому ссылку на
+    # канал подкладываем один раз при старте.
+    try:
+        inline_kb.CHANNEL_URL = await database.get_setting(growth.LINK_KEY) or ""
+    except Exception as e:
+        logging.warning(f"Ссылку на канал прочитать не вышло: {e}")
 
     render_url = os.environ.get("RENDER_EXTERNAL_URL", "")
     if render_url:

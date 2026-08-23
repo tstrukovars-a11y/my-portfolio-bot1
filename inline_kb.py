@@ -22,6 +22,17 @@ language_menu = InlineKeyboardMarkup(inline_keyboard=[
      InlineKeyboardButton(text="🇮🇱 עברית", callback_data="lang_he")]
 ])
 
+# Ссылка на канал. Меню собирается синхронно и в базу сходить не может,
+# поэтому значение кладётся сюда при старте и обновляется командой
+# /channel. Пока пусто — кнопки просто нет.
+CHANNEL_URL = ""
+
+CHANNEL_TITLES = {
+    "ru": "📣 Наш канал", "en": "📣 Our channel",
+    "fr": "📣 Notre canal", "he": "📣 הערוץ שלנו",
+}
+
+
 def get_main_menu(lang, is_admin=False):
     titles = {
         "ru": ["🏆 Блок 1: Спорт и путешествия", "🎨 Блок 2: Творчество", "🧠 Блок 3: Интеллект и карьера", "🤖 Чат AI", "💼 Профили: HH & LinkedIn", "🎮 Интерактив: Игра"],
@@ -58,6 +69,10 @@ def get_main_menu(lang, is_admin=False):
         [InlineKeyboardButton(text=v_title, callback_data="menu_vpn")],
         [InlineKeyboardButton(text=a_title, callback_data="menu_analytics")],
     ]
+    if CHANNEL_URL:
+        rows.append([InlineKeyboardButton(
+            text=CHANNEL_TITLES.get(lang, CHANNEL_TITLES["en"]), url=CHANNEL_URL)])
+
     # Служебная кнопка рисуется только владельцу бота
     if is_admin:
         rows.append([InlineKeyboardButton(text=("🛠 Служебное" if lang == "ru" else "🛠 Admin"), callback_data="admin_panel")])

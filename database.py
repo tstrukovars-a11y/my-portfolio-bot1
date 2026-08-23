@@ -1175,6 +1175,25 @@ async def totals_by_asset(year: int):
 
 # --- НАСТРОЙКИ, МЕНЯЕМЫЕ ИЗ БОТА ---
 
+async def all_user_ids() -> list[tuple[int, str]]:
+    """(id, язык) всех, кто когда-либо запускал бота — для разовой рассылки.
+
+    Язык нужен вместе с id: рассылка на четырёх языках, и добирать его
+    отдельным запросом на каждого адресата было бы разорительно.
+    """
+    pool = await get_pool()
+    if not pool:
+        return []
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT user_id, COALESCE(lang, 'ru') FROM {SCHEMA}.users ORDER BY user_id")
+        return [(r[0], r[1]) for r in rows]
+    except Exception as e:
+        logging.error(f"Не удалось получить список пользователей: {e}")
+        return []
+
+
 _settings_cache: dict[str, str] = {}
 
 

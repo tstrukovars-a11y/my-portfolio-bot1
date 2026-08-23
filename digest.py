@@ -11,6 +11,7 @@ import asyncio
 import html
 import logging
 from datetime import datetime, timezone
+from urllib.parse import quote
 
 from aiogram import Router, F, Bot
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
@@ -171,6 +172,13 @@ async def publish_next(bot: Bot) -> str:
         rows = []
         if link:
             rows.append([InlineKeyboardButton(text="🔗 Подробнее", url=link)])
+        # Делимся каналом, а не отдельным постом: ссылка на пост приводит
+        # читателя к одной записи, ссылка на канал — к подписке.
+        channel_url = await database.get_setting("channel_url")
+        if channel_url:
+            rows.append([InlineKeyboardButton(
+                text="📤 Поделиться",
+                url="https://t.me/share/url?url=" + quote(channel_url, safe=""))])
         markup = InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
 
         try:
