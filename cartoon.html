@@ -60,7 +60,9 @@ const rnd = (s) => { let x = Math.sin(s) * 10000; return x - Math.floor(x); };
 const SKIES = {
   meadow:["#8fd3ff","#dff3d8"], forest:["#7fc0e8","#cfe8c4"], city:["#9fb8d8","#e6e9f0"],
   room:["#f0dcc0","#e6cfae"],   night:["#131a33","#2a3358"], sea:["#8ad6f0","#d9f2fb"],
-  space:["#080b1c","#1b1140"],  snow:["#cfe6f5","#f2f8fb"]
+  space:["#080b1c","#1b1140"],  snow:["#cfe6f5","#f2f8fb"],
+  castle:["#9db9d8","#dfe7ef"], throne:["#3a2a44","#5a4166"],
+  cave:["#1b1a22","#332f3d"],   ruins:["#6b3f38","#c98a56"]
 };
 function backdrop(bg, t){
   const [a, b] = SKIES[bg] || SKIES.meadow;
@@ -68,7 +70,12 @@ function backdrop(bg, t){
   g.addColorStop(0, a); g.addColorStop(1, b);
   ctx.fillStyle = g; ctx.fillRect(0, 0, W, GROUND);
 
-  if (bg === "night" || bg === "space"){
+  // Под крышей неба нет: солнце с облаками в тронном зале выдают рисунок,
+  // собранный не глядя.
+  const indoor = bg === "room" || bg === "throne" || bg === "cave";
+  if (indoor){
+    /* небо не рисуем вовсе */
+  } else if (bg === "night" || bg === "space"){
     for (let i = 0; i < 60; i++){
       const x = rnd(i) * W, y = rnd(i + 99) * GROUND;
       ctx.globalAlpha = .4 + rnd(i + 7) * .6;
@@ -118,9 +125,62 @@ function backdrop(bg, t){
     ctx.strokeRect(W * .12, GROUND - 250, 110, 90);
   }
 
+  if (bg === "castle"){
+    ctx.fillStyle = "#7d8ea6";
+    for (const [bx, bw, bh] of [[30,58,220],[W-88,58,220],[W*.5-70,140,150]]){
+      ctx.fillRect(bx, GROUND - bh, bw, bh);
+      ctx.fillStyle = "#6a7a90";
+      for (let i = 0; i < bw / 20; i++) ctx.fillRect(bx + i * 20, GROUND - bh - 10, 12, 10);
+      ctx.fillStyle = "#7d8ea6";
+    }
+    ctx.fillStyle = "#3b2f2a";
+    ctx.beginPath(); ctx.moveTo(W*.5-26, GROUND); ctx.lineTo(W*.5-26, GROUND-64);
+    ctx.quadraticCurveTo(W*.5, GROUND-104, W*.5+26, GROUND-64);
+    ctx.lineTo(W*.5+26, GROUND); ctx.closePath(); ctx.fill();
+  }
+  if (bg === "throne"){
+    ctx.fillStyle = "#2c2036"; ctx.fillRect(0, GROUND - 300, W, 300);
+    for (const cx of [W*.16, W*.84]){         // колонны
+      ctx.fillStyle = "#4b3a58"; ctx.fillRect(cx - 20, GROUND - 300, 40, 300);
+      ctx.fillStyle = "#5d4a6c"; ctx.fillRect(cx - 26, GROUND - 300, 52, 16);
+    }
+    ctx.fillStyle = "#7a2f3a";                // ковровая дорожка
+    ctx.beginPath(); ctx.moveTo(W*.36, GROUND - 120); ctx.lineTo(W*.64, GROUND - 120);
+    ctx.lineTo(W*.82, H); ctx.lineTo(W*.18, H); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = "#c9a227";                // трон
+    ctx.fillRect(W*.44, GROUND - 190, 52, 74);
+    ctx.fillRect(W*.42, GROUND - 120, 56, 14);
+  }
+  if (bg === "cave"){
+    ctx.fillStyle = "#26232e";
+    for (let i = 0; i < 9; i++){               // сталактиты
+      const x = i * 50 + rnd(i) * 20, h = 40 + rnd(i + 5) * 70;
+      ctx.beginPath(); ctx.moveTo(x - 16, 0); ctx.lineTo(x + 16, 0);
+      ctx.lineTo(x, h); ctx.closePath(); ctx.fill();
+    }
+  }
+  if (bg === "ruins"){
+    ctx.fillStyle = "#4a3a35";
+    for (let i = 0; i < 6; i++){
+      const x = 15 + i * 70, h = 50 + rnd(i + 21) * 120;
+      ctx.fillRect(x, GROUND - h, 40, h);
+      ctx.fillStyle = "#3a2d29";
+      ctx.fillRect(x, GROUND - h, 40, 8);
+      ctx.fillStyle = "#4a3a35";
+    }
+    ctx.globalAlpha = .5; ctx.fillStyle = "#7a6a60";   // дым
+    for (let i = 0; i < 5; i++){
+      const x = rnd(i + 3) * W, y = GROUND - 140 - rnd(i) * 90;
+      ctx.beginPath(); ctx.arc(x, y + (t * 6) % 60, 26 + rnd(i + 9) * 16, 0, 7); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
   // земля
   const ground = {meadow:"#5fbf68", forest:"#4e9e57", city:"#59606f", room:"#8a6a45",
-                  night:"#2b3350", sea:"#e8dca8", space:"#241a4a", snow:"#eef6fb"}[bg] || "#5fbf68";
+                  night:"#2b3350", sea:"#e8dca8", space:"#241a4a", snow:"#eef6fb",
+                  castle:"#6f8a5e", throne:"#3a2c47", cave:"#2a2733",
+                  ruins:"#5a4038"}[bg] || "#5fbf68";
   ctx.fillStyle = ground; ctx.fillRect(0, GROUND, W, H - GROUND);
   if (bg === "sea"){
     ctx.fillStyle = "#2ba3d6"; ctx.fillRect(0, GROUND - 34, W, 34);
@@ -133,102 +193,358 @@ function shade(hex, k){
   return `rgb(${f(n>>16&255)},${f(n>>8&255)},${f(n&255)})`;
 }
 
-// Все персонажи строятся из одних частей: тело, голова, глаза. Отличаются
-// ушами, хвостом и пропорциями — так восемь видов помещаются в один рисунок,
-// а не в восемь отдельных.
-const SCALE = 1.4;      // персонажи должны занимать кадр, а не теряться в небе
+// Персонажи собираются из общего набора частей: силуэт тела, форма головы,
+// уши, рога, корона, борода, крылья, хвост. Шестнадцать видов — это шестнадцать
+// сочетаний, а не шестнадцать отдельных рисунков; новый вид стоит одной строки.
+const KIND = {
+  girl:    {body:"dress", head:"round", hair:"long"},
+  boy:     {body:"torso", head:"round", hair:"short"},
+  princess:{body:"dress", head:"round", hair:"long", crown:true},
+  king:    {body:"robe",  head:"round", beard:true, crown:true},
+  knight:  {body:"torso", head:"helm",  metal:true},
+  wizard:  {body:"robe",  head:"round", beard:true, hat:true},
+  dragon:  {body:"beast", head:"snout", horns:true, wings:true, tail:"spiky", spikes:true},
+  monster: {body:"beast", head:"round", horns:true, teeth:true, tail:"thin"},
+  cat:     {body:"beast", head:"round", ears:"pointed", tail:"thin"},
+  dog:     {body:"beast", head:"snout", ears:"floppy", tail:"thin"},
+  bear:    {body:"beast", head:"round", ears:"round"},
+  rabbit:  {body:"beast", head:"round", ears:"long", tail:"puff"},
+  horse:   {body:"beast", head:"snout", mane:true, tail:"thin", hooves:true},
+  bird:    {body:"oval",  head:"round", beak:true, wings:true},
+  fish:    {body:"fish",  head:"none"},
+  robot:   {body:"box",   head:"box",   antenna:true, metal:true},
+};
 
-function actor(a, x, y, phase, action){
-  const bob = action === "walk" ? Math.sin(phase * 9) * 3 : Math.sin(phase * 2) * 1.5;
-  const jump = action === "jump" ? Math.abs(Math.sin(phase * 6)) * 34 : 0;
-  const tilt = action === "shake" ? Math.sin(phase * 22) * .12 : 0;
-  const grow = action === "grow" ? 1 + Math.min(.5, phase * .25) : 1;
+const SCALE = 1.25;     // персонажи должны занимать кадр, а не теряться в небе
 
-  ctx.save();
-  ctx.translate(x, y - jump + bob);
-  ctx.rotate(tilt);
-  ctx.scale(grow * SCALE * (a.face === -1 ? -1 : 1), grow * SCALE);
+function outline(){ ctx.strokeStyle = "rgba(28,32,40,.55)"; ctx.lineWidth = 2; ctx.stroke(); }
 
-  const fish = a.kind === "fish", bird = a.kind === "bird";
-  const bodyH = fish || bird ? 34 : 46, bodyW = fish ? 46 : 32;
+// Мимика — половина смысла в грустной или гневной сцене, поэтому глаза, брови
+// и рот считаются из настроения, а не рисуются одной дежурной улыбкой.
+function face(hy, hr, mood, blink){
+  const eyeY = hy - hr * .12, dx = hr * .34;
 
-  // тень
-  ctx.fillStyle = "rgba(0,0,0,.18)";
-  ctx.beginPath(); ctx.ellipse(0, 6, 26, 7, 0, 0, 7); ctx.fill();
-
-  // ноги
-  if (!fish && !bird){
-    const swing = action === "walk" ? Math.sin(phase * 9) * 7 : 0;
-    ctx.strokeStyle = shade(a.color, .7); ctx.lineWidth = 7; ctx.lineCap = "round";
-    ctx.beginPath(); ctx.moveTo(-7, -8); ctx.lineTo(-7 + swing, 4); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(7, -8); ctx.lineTo(7 - swing, 4); ctx.stroke();
+  ctx.fillStyle = "#22252c";
+  if (mood === "scared"){
+    ctx.beginPath(); ctx.arc(-dx, eyeY, hr * .2, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.arc(dx, eyeY, hr * .2, 0, 7); ctx.fill();
+  } else if (blink){
+    ctx.strokeStyle = "#22252c"; ctx.lineWidth = 2; ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(-dx - 3, eyeY); ctx.lineTo(-dx + 3, eyeY); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(dx - 3, eyeY); ctx.lineTo(dx + 3, eyeY); ctx.stroke();
+  } else {
+    ctx.beginPath(); ctx.arc(-dx, eyeY, hr * .15, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.arc(dx, eyeY, hr * .15, 0, 7); ctx.fill();
   }
 
-  // тело
+  // брови: наклон и есть выражение
+  const brow = {happy:-.15, calm:0, sad:.45, angry:-.6, scared:.35}[mood] ?? 0;
+  if (mood !== "calm"){
+    ctx.strokeStyle = "#22252c"; ctx.lineWidth = 2.4; ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(-dx - hr * .22, eyeY - hr * .38 + brow * 6);
+    ctx.lineTo(-dx + hr * .22, eyeY - hr * .38 - brow * 6); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(dx - hr * .22, eyeY - hr * .38 - brow * 6);
+    ctx.lineTo(dx + hr * .22, eyeY - hr * .38 + brow * 6); ctx.stroke();
+  }
+
+  // рот
+  ctx.strokeStyle = "#22252c"; ctx.lineWidth = 2.2; ctx.lineCap = "round";
+  const my = hy + hr * .35;
+  ctx.beginPath();
+  if (mood === "sad")        ctx.arc(0, my + hr * .3, hr * .3, Math.PI + .3, -.3);
+  else if (mood === "angry") ctx.arc(0, my + hr * .28, hr * .28, Math.PI + .35, -.35);
+  else if (mood === "scared"){ ctx.ellipse(0, my, hr * .16, hr * .22, 0, 0, 7); ctx.fillStyle = "#22252c"; ctx.fill(); }
+  else if (mood === "happy") ctx.arc(0, my - hr * .12, hr * .34, .25, Math.PI - .25);
+  else                       ctx.arc(0, my - hr * .05, hr * .22, .35, Math.PI - .35);
+  ctx.stroke();
+}
+
+function actor(a, x, y, phase, action, mood){
+  const k = KIND[a.kind] || KIND.girl;
+  const size = (a.size || 1) * SCALE;
+  const bob = action === "walk" ? Math.sin(phase * 9) * 3
+            : action === "fly"  ? Math.sin(phase * 4) * 9 : Math.sin(phase * 2) * 1.5;
+  const jump = action === "jump" ? Math.abs(Math.sin(phase * 6)) * 36 : 0;
+  const hover = action === "fly" ? 46 : 0;
+  const tilt = action === "shake" ? Math.sin(phase * 22) * .12 : 0;
+  const grow = action === "grow" ? 1 + Math.min(.45, phase * .22) : 1;
+  const blink = (phase * 1000 | 0) % 3200 < 130;
+
+  ctx.save();
+  ctx.translate(x, y - jump - hover + bob);
+
+  // тень падает на землю и не едет вслед за прыжком — по ней и видно высоту
+  ctx.fillStyle = "rgba(0,0,0,.2)";
+  ctx.beginPath();
+  ctx.ellipse(0, jump + hover + 4, 26 * size, 7 * size, 0, 0, 7); ctx.fill();
+
+  ctx.rotate(tilt);
+  ctx.scale(grow * size * (a.face === -1 ? -1 : 1), grow * size);
+
+  const beast = k.body === "beast", fish = k.body === "fish";
+  const bodyH = fish ? 34 : k.body === "oval" ? 36 : 48;
+  const bodyW = fish ? 48 : beast ? 40 : 34;
+  const dark = shade(a.color, .72), light = shade(a.color, 1.12);
+
+  // ---- хвост (за телом)
+  if (k.tail){
+    ctx.fillStyle = dark;
+    if (k.tail === "puff"){ ctx.beginPath(); ctx.arc(-bodyW * .55, -bodyH * .3, 8, 0, 7); ctx.fill(); }
+    else if (k.tail === "spiky"){
+      ctx.beginPath();
+      ctx.moveTo(-bodyW * .4, -bodyH * .55);
+      ctx.quadraticCurveTo(-bodyW * 1.5, -bodyH * .5, -bodyW * 1.3, -4);
+      ctx.quadraticCurveTo(-bodyW * 1.1, -bodyH * .35, -bodyW * .4, -bodyH * .3);
+      ctx.closePath(); ctx.fill();
+    } else {
+      ctx.strokeStyle = dark; ctx.lineWidth = 6; ctx.lineCap = "round";
+      ctx.beginPath(); ctx.moveTo(-bodyW * .4, -bodyH * .5);
+      ctx.quadraticCurveTo(-bodyW * 1.1, -bodyH * .9, -bodyW * .9, -bodyH * .2);
+      ctx.stroke();
+    }
+  }
+
+  // ---- крылья (за телом)
+  if (k.wings){
+    const flap = action === "fly" ? Math.sin(phase * 8) * .5 : .12;
+    ctx.fillStyle = shade(a.color, .82);
+    for (const s of [-1, 1]){
+      ctx.save(); ctx.translate(s * bodyW * .32, -bodyH * .82); ctx.rotate(s * (.5 + flap));
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.quadraticCurveTo(s * 34, -26, s * 46, 4);
+      ctx.quadraticCurveTo(s * 26, 2, 0, 14);
+      ctx.closePath(); ctx.fill(); outline();
+      ctx.restore();
+    }
+  }
+
+  // ---- ноги
+  if (!fish && k.body !== "oval"){
+    const swing = action === "walk" ? Math.sin(phase * 9) * 8 : 0;
+    ctx.strokeStyle = dark; ctx.lineWidth = 7; ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(-8, -10); ctx.lineTo(-8 + swing, 2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(8, -10); ctx.lineTo(8 - swing, 2); ctx.stroke();
+    if (k.hooves){
+      ctx.fillStyle = "#33302c";
+      ctx.beginPath(); ctx.arc(-8 + swing, 2, 4, 0, 7); ctx.fill();
+      ctx.beginPath(); ctx.arc(8 - swing, 2, 4, 0, 7); ctx.fill();
+    }
+  }
+
+  // ---- тело
   ctx.fillStyle = a.color;
   ctx.beginPath();
-  ctx.ellipse(0, -bodyH * .5, bodyW * .5, bodyH * .5, 0, 0, 7); ctx.fill();
+  if (k.body === "dress" || k.body === "robe"){
+    const flare = k.body === "robe" ? .95 : .8;
+    ctx.moveTo(-bodyW * .3, -bodyH);
+    ctx.lineTo(bodyW * .3, -bodyH);
+    ctx.lineTo(bodyW * flare, 0);
+    ctx.lineTo(-bodyW * flare, 0);
+    ctx.closePath();
+  } else if (k.body === "box"){
+    ctx.rect(-bodyW * .45, -bodyH, bodyW * .9, bodyH);
+  } else if (beast){
+    ctx.ellipse(0, -bodyH * .5, bodyW * .5, bodyH * .52, 0, 0, 7);
+  } else {
+    ctx.ellipse(0, -bodyH * .5, bodyW * .42, bodyH * .5, 0, 0, 7);
+  }
+  ctx.fill(); outline();
 
-  // руки / крылья / плавники
-  const armSwing = action === "wave" ? Math.sin(phase * 10) * .9 - .6
-                 : action === "walk" ? Math.sin(phase * 9) * .5 : .15;
-  ctx.strokeStyle = a.color; ctx.lineWidth = 6;
-  ctx.beginPath(); ctx.moveTo(-bodyW * .4, -bodyH * .7);
-  ctx.lineTo(-bodyW * .4 - 14 * Math.cos(armSwing), -bodyH * .7 + 14 * Math.sin(armSwing));
-  ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(bodyW * .4, -bodyH * .7);
-  ctx.lineTo(bodyW * .4 + 14, -bodyH * .7 + 10); ctx.stroke();
+  if (k.metal){                       // блик на металле
+    ctx.globalAlpha = .3; ctx.fillStyle = "#fff";
+    ctx.fillRect(-bodyW * .3, -bodyH * .85, 5, bodyH * .6);
+    ctx.globalAlpha = 1;
+  }
+  if (k.spikes){                      // гребень по спине
+    ctx.fillStyle = light;
+    for (let i = 0; i < 3; i++){
+      const sy = -bodyH * (.85 - i * .22);
+      ctx.beginPath(); ctx.moveTo(-bodyW * .48, sy);
+      ctx.lineTo(-bodyW * .68, sy - 7); ctx.lineTo(-bodyW * .44, sy - 9);
+      ctx.closePath(); ctx.fill();
+    }
+  }
 
-  if (fish){                       // хвост
-    ctx.fillStyle = shade(a.color, .8);
-    ctx.beginPath(); ctx.moveTo(bodyW * .45, -bodyH * .5);
-    ctx.lineTo(bodyW * .8, -bodyH * .9); ctx.lineTo(bodyW * .8, -bodyH * .1);
+  // ---- руки
+  if (!fish && k.body !== "oval"){
+    const swing = action === "wave" ? Math.sin(phase * 10) * .9 - .7
+                : action === "walk" ? Math.sin(phase * 9) * .5 : .18;
+    ctx.strokeStyle = a.color; ctx.lineWidth = 7; ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(-bodyW * .38, -bodyH * .72);
+    ctx.lineTo(-bodyW * .38 - 16 * Math.cos(swing), -bodyH * .72 + 16 * Math.sin(swing));
+    ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(bodyW * .38, -bodyH * .72);
+    ctx.lineTo(bodyW * .38 + 15, -bodyH * .72 + 11); ctx.stroke();
+  }
+  if (fish){
+    ctx.fillStyle = dark;
+    ctx.beginPath(); ctx.moveTo(bodyW * .42, -bodyH * .5);
+    ctx.lineTo(bodyW * .8, -bodyH * .95); ctx.lineTo(bodyW * .8, -bodyH * .05);
     ctx.closePath(); ctx.fill();
   }
 
-  // голова
-  const hy = -bodyH - 14, hr = 17;
-  ctx.fillStyle = shade(a.color, 1.08);
-  ctx.beginPath(); ctx.arc(0, hy, hr, 0, 7); ctx.fill();
+  // ---- голова
+  const hy = -bodyH - (fish ? -bodyH * .5 : 17), hr = k.head === "none" ? 0 : 18;
+  if (k.head === "none"){                       // у рыбы морда на теле
+    ctx.fillStyle = "#22252c";
+    ctx.beginPath(); ctx.arc(-bodyW * .18, -bodyH * .62, 3, 0, 7); ctx.fill();
+    ctx.restore();
+    return;
+  }
 
-  if (a.kind === "cat" || a.kind === "bear" || a.kind === "dog"){
-    ctx.fillStyle = shade(a.color, .85);
-    const ear = a.kind === "bear" ? 7 : 9;
-    if (a.kind === "dog"){
-      ctx.beginPath(); ctx.ellipse(-hr*.8, hy, 5, 11, .3, 0, 7); ctx.fill();
-      ctx.beginPath(); ctx.ellipse(hr*.8, hy, 5, 11, -.3, 0, 7); ctx.fill();
-    } else if (a.kind === "bear"){
-      ctx.beginPath(); ctx.arc(-hr*.75, hy - hr*.7, ear, 0, 7); ctx.fill();
-      ctx.beginPath(); ctx.arc(hr*.75, hy - hr*.7, ear, 0, 7); ctx.fill();
-    } else {
-      ctx.beginPath(); ctx.moveTo(-hr*.9, hy-hr*.5); ctx.lineTo(-hr*.5, hy-hr*1.4);
-      ctx.lineTo(-hr*.1, hy-hr*.75); ctx.closePath(); ctx.fill();
-      ctx.beginPath(); ctx.moveTo(hr*.9, hy-hr*.5); ctx.lineTo(hr*.5, hy-hr*1.4);
-      ctx.lineTo(hr*.1, hy-hr*.75); ctx.closePath(); ctx.fill();
+  // уши и рога рисуем до головы, чтобы они выходили из-за неё
+  if (k.ears === "long"){
+    ctx.fillStyle = a.color;
+    for (const s of [-1, 1]){
+      ctx.beginPath();
+      ctx.ellipse(s * hr * .45, hy - hr * 1.35, 5, 17, s * .18, 0, 7);
+      ctx.fill(); outline();
     }
   }
-  if (a.kind === "robot"){
-    ctx.strokeStyle = shade(a.color, .7); ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.moveTo(0, hy - hr); ctx.lineTo(0, hy - hr - 9); ctx.stroke();
-    ctx.fillStyle = "#ffd85e";
-    ctx.beginPath(); ctx.arc(0, hy - hr - 11, 4, 0, 7); ctx.fill();
-  }
-  if (a.kind === "bird"){
-    ctx.fillStyle = "#ffb02e";
-    ctx.beginPath(); ctx.moveTo(hr*.8, hy); ctx.lineTo(hr*1.7, hy+4);
-    ctx.lineTo(hr*.8, hy+7); ctx.closePath(); ctx.fill();
-  }
-  if (a.kind === "girl"){
-    ctx.fillStyle = shade(a.color, .6);
-    ctx.beginPath(); ctx.arc(0, hy - 4, hr + 3, Math.PI, 0); ctx.fill();
+  if (k.horns){
+    ctx.fillStyle = "#e8e0cf";
+    for (const s of [-1, 1]){
+      ctx.beginPath();
+      ctx.moveTo(s * hr * .55, hy - hr * .72);
+      ctx.quadraticCurveTo(s * hr * 1.25, hy - hr * 1.5, s * hr * .78, hy - hr * 1.75);
+      ctx.quadraticCurveTo(s * hr * .82, hy - hr * 1.1, s * hr * .3, hy - hr * .82);
+      ctx.closePath(); ctx.fill();
+    }
   }
 
-  // глаза и рот
-  ctx.fillStyle = "#22252c";
-  ctx.beginPath(); ctx.arc(-6, hy - 2, 2.6, 0, 7); ctx.fill();
-  ctx.beginPath(); ctx.arc(6, hy - 2, 2.6, 0, 7); ctx.fill();
-  ctx.strokeStyle = "#22252c"; ctx.lineWidth = 2; ctx.lineCap = "round";
-  ctx.beginPath(); ctx.arc(0, hy + 3, 5, .25, Math.PI - .25); ctx.stroke();
+  ctx.fillStyle = light;
+  ctx.beginPath();
+  if (k.head === "box") ctx.rect(-hr, hy - hr, hr * 2, hr * 1.9);
+  else if (k.head === "helm") ctx.arc(0, hy, hr, 0, 7);
+  else ctx.arc(0, hy, hr, 0, 7);
+  ctx.fill(); outline();
+
+  if (k.head === "snout"){
+    ctx.fillStyle = light;
+    ctx.beginPath();
+    ctx.ellipse(hr * .72, hy + hr * .28, hr * .58, hr * .38, 0, 0, 7);
+    ctx.fill(); outline();
+    ctx.fillStyle = "#22252c";
+    ctx.beginPath(); ctx.arc(hr * 1.18, hy + hr * .2, 2.6, 0, 7); ctx.fill();
+  }
+  if (k.ears === "pointed"){
+    ctx.fillStyle = light;
+    for (const s of [-1, 1]){
+      ctx.beginPath();
+      ctx.moveTo(s * hr * .9, hy - hr * .5); ctx.lineTo(s * hr * .55, hy - hr * 1.45);
+      ctx.lineTo(s * hr * .12, hy - hr * .78); ctx.closePath();
+      ctx.fill(); outline();
+    }
+  }
+  if (k.ears === "round"){
+    ctx.fillStyle = light;
+    for (const s of [-1, 1]){
+      ctx.beginPath(); ctx.arc(s * hr * .78, hy - hr * .75, 8, 0, 7);
+      ctx.fill(); outline();
+    }
+  }
+  if (k.ears === "floppy"){
+    ctx.fillStyle = shade(a.color, .9);
+    for (const s of [-1, 1]){
+      ctx.beginPath(); ctx.ellipse(s * hr * .92, hy + hr * .1, 6, 13, s * .25, 0, 7);
+      ctx.fill(); outline();
+    }
+  }
+  if (k.hair === "long"){
+    ctx.fillStyle = shade(a.color, .55);
+    ctx.beginPath(); ctx.arc(0, hy - 3, hr + 4, Math.PI, 0); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(-hr, hy + hr * .55, 6, 18, 0, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(hr, hy + hr * .55, 6, 18, 0, 0, 7); ctx.fill();
+  }
+  if (k.hair === "short"){
+    ctx.fillStyle = shade(a.color, .55);
+    ctx.beginPath(); ctx.arc(0, hy - 4, hr + 1, Math.PI + .3, -.3); ctx.fill();
+  }
+  if (k.mane){
+    ctx.fillStyle = shade(a.color, .5);
+    ctx.beginPath(); ctx.moveTo(-hr * .5, hy - hr);
+    ctx.quadraticCurveTo(-hr * 1.6, hy + hr * .4, -hr * .7, hy + hr * 1.5);
+    ctx.quadraticCurveTo(-hr * .2, hy + hr * .3, -hr * .2, hy - hr * .9);
+    ctx.closePath(); ctx.fill();
+  }
+  if (k.beard){
+    ctx.fillStyle = "#d8dce3";
+    ctx.beginPath();
+    ctx.moveTo(-hr * .62, hy + hr * .5);
+    ctx.quadraticCurveTo(0, hy + hr * 1.75, hr * .62, hy + hr * .5);
+    ctx.quadraticCurveTo(0, hy + hr * .95, -hr * .62, hy + hr * .5);
+    ctx.closePath(); ctx.fill(); outline();
+  }
+  if (k.crown){
+    ctx.fillStyle = "#ffd34d";
+    ctx.beginPath();
+    ctx.moveTo(-hr * .85, hy - hr * .78); ctx.lineTo(-hr * .85, hy - hr * 1.5);
+    ctx.lineTo(-hr * .4, hy - hr * 1.1); ctx.lineTo(0, hy - hr * 1.7);
+    ctx.lineTo(hr * .4, hy - hr * 1.1); ctx.lineTo(hr * .85, hy - hr * 1.5);
+    ctx.lineTo(hr * .85, hy - hr * .78);
+    ctx.closePath(); ctx.fill(); outline();
+  }
+  if (k.hat){
+    // Шляпа должна сидеть на голове, а не парить над ней: поля заходят
+    // на макушку, а не начинаются выше её.
+    ctx.fillStyle = shade(a.color, .5);
+    ctx.beginPath();
+    ctx.moveTo(-hr * 1.25, hy - hr * .5); ctx.lineTo(hr * 1.25, hy - hr * .5);
+    ctx.lineTo(hr * .12, hy - hr * 2.2); ctx.closePath();
+    ctx.fill(); outline();
+  }
+  if (k.beak){
+    ctx.fillStyle = "#ffb02e";
+    ctx.beginPath(); ctx.moveTo(hr * .75, hy);
+    ctx.lineTo(hr * 1.8, hy + 4); ctx.lineTo(hr * .75, hy + 8);
+    ctx.closePath(); ctx.fill();
+  }
+  if (k.antenna){
+    ctx.strokeStyle = dark; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(0, hy - hr); ctx.lineTo(0, hy - hr - 10); ctx.stroke();
+    ctx.fillStyle = "#ffd85e";
+    ctx.beginPath(); ctx.arc(0, hy - hr - 12, 4, 0, 7); ctx.fill();
+  }
+  if (k.teeth){
+    ctx.fillStyle = "#fff";
+    for (const s of [-1, 1]){
+      ctx.beginPath();
+      ctx.moveTo(s * hr * .3, hy + hr * .45); ctx.lineTo(s * hr * .5, hy + hr * .45);
+      ctx.lineTo(s * hr * .4, hy + hr * .8); ctx.closePath(); ctx.fill();
+    }
+  }
+
+  if (k.head === "helm"){
+    // Под забралом лица нет — только прорезь и блеск глаз. Обычная улыбка
+    // на рыцарском шлеме выглядит ошибкой, а не характером.
+    ctx.fillStyle = "#8c95a3";
+    ctx.beginPath(); ctx.arc(0, hy - hr * .15, hr * .96, Math.PI, 0); ctx.fill();
+    ctx.fillStyle = "#22252c";
+    ctx.fillRect(-hr * .72, hy - hr * .18, hr * 1.44, hr * .34);
+    ctx.fillStyle = mood === "angry" ? "#ff8f6b" : "#cfe3ff";
+    ctx.fillRect(-hr * .42, hy - hr * .1, 5, 5);
+    ctx.fillRect(hr * .18, hy - hr * .1, 5, 5);
+    ctx.strokeStyle = "#6d7684"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(0, hy + hr * .2); ctx.lineTo(0, hy + hr * .85); ctx.stroke();
+  } else {
+    face(hy, hr, mood || "calm", blink);
+  }
+
+  // огненное дыхание — единственное, что дракон умеет и чего не умеют прочие
+  if (action === "breathe"){
+    const len = 30 + Math.sin(phase * 12) * 10;
+    const g = ctx.createLinearGradient(hr, hy, hr + len * 2.2, hy);
+    g.addColorStop(0, "#ffd34d"); g.addColorStop(.5, "#ff7a1e"); g.addColorStop(1, "rgba(255,60,20,0)");
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.moveTo(hr * 1.1, hy - 6);
+    ctx.quadraticCurveTo(hr + len * 1.6, hy - 22, hr + len * 2.2, hy + 2);
+    ctx.quadraticCurveTo(hr + len * 1.6, hy + 26, hr * 1.1, hy + 10);
+    ctx.closePath(); ctx.fill();
+  }
 
   ctx.restore();
 }
@@ -303,7 +619,9 @@ function frame(now){
 
   // положение каждого персонажа: до своего такта стоит, в такте идёт
   for (const a of scene.actors){
-    let x = a.x, action = "idle";
+    // Настроение держится до следующей своей реплики, а не гаснет вместе с
+    // тактом: обиженный персонаж не веселеет оттого, что заговорил другой.
+    let x = a.x, action = "idle", mood = "calm";
     for (let i = 0; i <= bi; i++){
       const b = scene.beats[i];
       if (!b || b.actor !== a.id) continue;
@@ -312,10 +630,11 @@ function frame(now){
         x = a.x + (b.to - a.x) * p;
         if (i < bi) a.x = b.to;              // дошёл — закрепляем
       }
+      mood = b.mood || "calm";
       if (i === bi) action = b.action;
     }
     a.face = beat && beat.actor === a.id && beat.action === "turn" ? -1 : 1;
-    actor(a, x * W, GROUND + 6, t, action);
+    actor(a, x * W, GROUND + 6, t, action, mood);
     if (beat && beat.actor === a.id && beat.say)
       bubble(x * W, GROUND - 128, beat.say);
   }

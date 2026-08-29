@@ -43,9 +43,13 @@ MAX_BEATS = 6
 
 # Допустимые значения. Модель обязана выбирать из них, а всё постороннее
 # заменяется ближайшим разумным: проигрыватель умеет рисовать только это.
-BACKDROPS = ["meadow", "forest", "city", "room", "night", "sea", "space", "snow"]
-KINDS = ["girl", "boy", "cat", "dog", "bird", "robot", "bear", "fish"]
-ACTIONS = ["walk", "jump", "turn", "wave", "idle", "shake", "grow"]
+BACKDROPS = ["meadow", "forest", "city", "room", "night", "sea", "space", "snow",
+             "castle", "throne", "cave", "ruins"]
+KINDS = ["girl", "boy", "princess", "king", "knight", "wizard",
+         "dragon", "monster", "cat", "dog", "bear", "rabbit", "horse",
+         "bird", "fish", "robot"]
+ACTIONS = ["walk", "jump", "turn", "wave", "idle", "shake", "grow", "fly", "breathe"]
+MOODS = ["happy", "sad", "angry", "scared", "calm"]
 
 DIRECTOR = """Ты раскадровщик детского мультфильма. По рассказу пользователя
 верни ТОЛЬКО JSON, без пояснений и без markdown-обёртки.
@@ -56,8 +60,9 @@ DIRECTOR = """Ты раскадровщик детского мультфиль�
     {{"bg": один из {backdrops},
       "narration": "фраза рассказчика, до 120 знаков",
       "actors": [{{"id": "латиницей", "name": "имя", "kind": один из {kinds},
-                  "color": "#rrggbb", "x": 0.0..1.0}}],
+                  "color": "#rrggbb", "x": 0.0..1.0, "size": 0.5..1.8}}],
       "beats": [{{"actor": "id", "action": один из {actions},
+                 "mood": один из {moods},
                  "to": 0.0..1.0, "say": "реплика до 80 знаков"}}]
     }}
   ]}}
@@ -66,9 +71,14 @@ DIRECTOR = """Ты раскадровщик детского мультфиль�
 - от 2 до {max_scenes} сцен, в каждой до {max_actors} персонажей и до {max_beats} действий;
 - "to" нужен только для walk — куда персонаж идёт;
 - "say" необязателен; без реплики персонаж просто действует;
+- "size" — рост относительно взрослого человека: ребёнок 0.6, взрослый 1.0,
+  крупный зверь 1.4. Если персонаж по ходу истории растёт, ставьте ему
+  разный размер в разных сценах;
+- "mood" обязателен и должен отражать чувство персонажа в этот миг: на нём
+  держится половина смысла;
 - имена и текст на языке рассказа;
-- цвета яркие и разные у разных персонажей;
-- история должна быть доброй и понятной ребёнку, без насилия."""
+- цвета разные у разных персонажей;
+- сложные и печальные сюжеты допустимы, сцен жестокости не рисуем."""
 
 
 class Making(StatesGroup):
@@ -118,16 +128,18 @@ def sanitize(raw: dict) -> dict:
                 "kind": kind if kind in KINDS else "girl",
                 "color": _color(a.get("color")),
                 "x": _num(a.get("x"), 0.05, 0.95, .5),
+                "size": _num(a.get("size"), 0.45, 1.9, 1.0),
             })
 
         beats = []
         for b in (s.get("beats") or [])[:MAX_BEATS]:
             if not isinstance(b, dict):
                 continue
-            action = b.get("action")
+            action, mood = b.get("action"), b.get("mood")
             beats.append({
                 "actor": re.sub(r"[^a-zA-Z0-9_]", "", str(b.get("actor", "")))[:20],
                 "action": action if action in ACTIONS else "idle",
+                "mood": mood if mood in MOODS else "calm",
                 "to": _num(b.get("to"), 0.05, 0.95, .5),
                 "say": str(b.get("say", ""))[:80],
             })
@@ -152,8 +164,8 @@ async def build(story: str):
         return None, "Модель не подключена: не задан ANTHROPIC_API_KEY."
 
     prompt = DIRECTOR.format(backdrops=BACKDROPS, kinds=KINDS, actions=ACTIONS,
-                             max_scenes=MAX_SCENES, max_actors=MAX_ACTORS,
-                             max_beats=MAX_BEATS)
+                             moods=MOODS, max_scenes=MAX_SCENES,
+                             max_actors=MAX_ACTORS, max_beats=MAX_BEATS)
     try:
         response = await client.messages.create(
             model=MODEL, max_tokens=2000, system=prompt,
