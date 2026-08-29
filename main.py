@@ -18,6 +18,7 @@ import common, block1_sport, block2_creative, block3_intellect, block4_claude, p
 import finance
 import digest
 import growth
+import race
 import inline_kb
 
 
@@ -134,6 +135,31 @@ def make_handle_ping(bot: Bot, dp: Dispatcher):
                 except Exception as e:
                     logging.exception(f"Ошибка разбора webhook-обновления: {e}")
                 response = b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+
+        elif path == "/game" and method == "GET":
+            body_bytes = race.page()
+            response = (
+                f"HTTP/1.1 200 OK\r\n"
+                f"Content-Type: text/html; charset=utf-8\r\n"
+                f"Cache-Control: no-cache\r\n"
+                f"Content-Length: {len(body_bytes)}\r\n"
+                f"Connection: close\r\n\r\n"
+            ).encode('utf-8') + body_bytes
+
+        elif path == "/game/score" and method == "POST":
+            try:
+                code, result = await race.handle_score(body, config.TOKEN)
+            except Exception as e:
+                logging.error(f"Гонка: ошибка приёма счёта: {e}")
+                code, result = 500, {"status": "error"}
+            payload = json.dumps(result, ensure_ascii=False)
+            response = (
+                f"HTTP/1.1 {code} {'OK' if code == 200 else 'Error'}\r\n"
+                f"Content-Type: application/json\r\n"
+                f"{cors_headers}"
+                f"Content-Length: {len(payload.encode('utf-8'))}\r\n"
+                f"Connection: close\r\n\r\n{payload}"
+            ).encode('utf-8')
 
         elif path == "/api/metrics" and method == "GET":
             dau, mau, total_clicks = 0, 0, 0
@@ -326,6 +352,7 @@ async def main():
     dp.include_router(fx_rates.router)
     dp.include_router(digest.router)
     dp.include_router(growth.router)
+    dp.include_router(race.router)
 
     dp.include_router(tennis_live.router)
     dp.include_router(travel.router)

@@ -466,7 +466,18 @@ async def init_db():
             PRIMARY KEY (section, item_id)
         )""")
 
-        # 21. Анкеты поиска партнёра для игры
+        # 21. Рекорды браузерной гонки. Ключ — игрок, а не заезд: в таблице
+        # хранится лучший результат, а не история попыток.
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.race_scores (
+            user_id BIGINT PRIMARY KEY,
+            name TEXT,
+            best INTEGER NOT NULL DEFAULT 0,
+            played INTEGER NOT NULL DEFAULT 0,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+
+        # 22. Анкеты поиска партнёра для игры
         await conn.execute(f"""
         CREATE TABLE IF NOT EXISTS {SCHEMA}.game_partners (
             id SERIAL PRIMARY KEY,
@@ -1174,6 +1185,47 @@ async def totals_by_asset(year: int):
 
 
 # --- НАСТРОЙКИ, МЕНЯЕМЫЕ ИЗ БОТА ---
+
+async def save_race_score(user_id: int, name: str, score: int):
+    """Сохраняет результат и возвращает (место в таблице, личный рекорд).
+
+    Храним лучший результат игрока, а не каждый заезд: таблица рекордов из
+    двадцати строк одного упорного человека никому не интересна.
+    """
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            best = await conn.fetchval(
+                f"""INSERT INTO {SCHEMA}.race_scores (user_id, name, best, played)
+                    VALUES ($1, $2, $3, 1)
+                    ON CONFLICT (user_id) DO UPDATE
+                    SET best = GREATEST(race_scores.best, EXCLUDED.best),
+                        name = EXCLUDED.name,
+                        played = race_scores.played + 1,
+                        updated_at = CURRENT_TIMESTAMP
+                    RETURNING best""",
+                user_id, name, score)
+            place = await conn.fetchval(
+                f"SELECT COUNT(*) + 1 FROM {SCHEMA}.race_scores WHERE best > $1", best)
+        return place, best
+    except Exception as e:
+        logging.error(f"Не удалось сохранить результат гонки: {e}")
+        return None, score
+
+
+async def race_top(limit: int = 10):
+    """(id, имя, рекорд) лучших игроков"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT user_id, name, best FROM {SCHEMA}.race_scores "
+                "ORDER BY best DESC, updated_at LIMIT $1", limit)
+        return [(r["user_id"], r["name"], r["best"]) for r in rows]
+    except Exception as e:
+        logging.error(f"Таблица рекордов недоступна: {e}")
+        return []
+
 
 async def all_user_ids() -> list[tuple[int, str]]:
     """(id, язык) всех, кто когда-либо запускал бота — для разовой рассылки.

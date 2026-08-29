@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>Гонка</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root{
+    --bg:#11131a; --road:#23262f; --line:#4a4f5c; --ink:#f2f3f5; --dim:#9aa0ad;
+    --accent:#48b0ff; --bad:#ff5a5a;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--ink);
+    font:16px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    user-select:none;touch-action:none}
+  #wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center}
+  canvas{display:block;touch-action:none}
+
+  .hud{position:fixed;top:calc(env(safe-area-inset-top) + 12px);left:0;right:0;
+    display:flex;justify-content:space-between;padding:0 18px;
+    font-variant-numeric:tabular-nums;pointer-events:none}
+  .hud b{font-size:26px;font-weight:700}
+  .hud span{display:block;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
+  .hud .right{text-align:right}
+
+  .panel{position:fixed;inset:0;display:none;flex-direction:column;
+    align-items:center;justify-content:center;gap:18px;padding:28px;
+    background:rgba(17,19,26,.94);backdrop-filter:blur(6px);text-align:center}
+  .panel.on{display:flex}
+  .panel h1{font-size:30px;font-weight:700;letter-spacing:-.02em}
+  .panel p{color:var(--dim);max-width:19em;font-size:15px}
+  .big{font-size:58px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums}
+  .best{color:var(--dim);font-size:14px}
+  button{appearance:none;border:0;border-radius:14px;padding:15px 34px;
+    font-size:17px;font-weight:600;color:#08111c;background:var(--accent);
+    cursor:pointer;transition:transform .08s}
+  button:active{transform:scale(.97)}
+  button.ghost{background:transparent;color:var(--dim);
+    box-shadow:inset 0 0 0 1px var(--line);padding:12px 26px;font-size:15px}
+  .hint{font-size:13px;color:var(--dim)}
+  .saved{font-size:13px;min-height:1.2em;color:var(--accent)}
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="cv"></canvas></div>
+
+<div class="hud" id="hud" style="display:none">
+  <div><span>Счёт</span><b id="score">0</b></div>
+  <div class="right"><span>Рекорд</span><b id="hi">0</b></div>
+</div>
+
+<div class="panel on" id="start">
+  <h1>🏎 Гонка</h1>
+  <p>Уворачивайтесь от встречных. Чем дальше — тем быстрее.</p>
+  <button id="go">Поехали</button>
+  <div class="hint">Слева / справа по экрану — или стрелками</div>
+</div>
+
+<div class="panel" id="over">
+  <h1>Приехали</h1>
+  <div class="big" id="final">0</div>
+  <div class="best" id="bestline"></div>
+  <div class="saved" id="saved"></div>
+  <button id="again">Ещё раз</button>
+  <button class="ghost" id="close">Выйти</button>
+</div>
+
+<script>
+"use strict";
+const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+if (tg) { tg.ready(); tg.expand(); try { tg.setHeaderColor("#11131a"); } catch(e){} }
+
+const cv = document.getElementById("cv"), ctx = cv.getContext("2d");
+const $ = id => document.getElementById(id);
+
+// --- размеры. Играем в вертикальном поле 360x640, вписанном в экран,
+//     чтобы механика не зависела от диагонали телефона.
+const W = 360, H = 640;
+let scale = 1;
+function fit(){
+  scale = Math.min(innerWidth / W, innerHeight / H);
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  cv.width = W * dpr; cv.height = H * dpr;
+  cv.style.width = (W * scale) + "px";
+  cv.style.height = (H * scale) + "px";
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+addEventListener("resize", fit); fit();
+
+// --- поле
+const LANES = 3, ROAD_W = 300, ROAD_X = (W - ROAD_W) / 2;
+const laneX = i => ROAD_X + ROAD_W / LANES * (i + .5);
+const CAR_W = 54, CAR_H = 92;
+
+// Хранилище может быть запрещено настройками браузера или вебвью, и тогда
+// само обращение к нему бросает исключение. Без обёртки одна такая строка
+// роняет весь скрипт, и игра не запускается вовсе.
+const store = {
+  get(k){ try { return localStorage.getItem(k); } catch(e){ return null; } },
+  set(k, v){ try { localStorage.setItem(k, v); } catch(e){} }
+};
+
+let state = "menu", score = 0, best = +(store.get("race_best") || 0);
+let lane = 1, carX = laneX(1), speed = 0, dist = 0, dash = 0;
+let cars = [], spawnIn = 0, last = 0;
+
+const PALETTE = ["#ff5a5a","#ffb648","#7ee081","#c78bff","#4ad9d9"];
+
+// Скорость растёт до потолка, а не бесконечно: без него через две минуты
+// машина проходит экран быстрее, чем человек успевает моргнуть.
+const SPEED0 = 250, SPEED_MAX = 760, ACCEL = 8;
+// Расстояние между волнами держим в пикселях, а не в секундах: тогда с
+// ростом скорости сокращается время на реакцию, а не плотность движения.
+// Сверх того промежуток немного сужается — иначе на потолке скорости гонка
+// перестаёт заканчиваться, а бесконечная гонка не гонка.
+const GAP_MAX = 320, GAP_MIN = 215, GAP_K = .2;
+const gapPx = () => Math.max(GAP_MIN, GAP_MAX - (speed - SPEED0) * GAP_K);
+
+let gapLane = 1;
+
+function reset(){
+  score = 0; lane = 1; carX = laneX(1); speed = SPEED0; dist = 0;
+  cars = []; gapLane = 1; spawnIn = .5; last = performance.now();
+}
+
+function spawn(){
+  // Волна — стена ровно с одним проходом, и проход смещается не больше чем
+  // на полосу. Только так гонка честна: игрок, идущий по проходу, всегда
+  // достаёт следующий одним движением.
+  //
+  // Оставлять вторую свободную полосу нельзя, хотя это и выглядит проще:
+  // она приводит туда, откуда следующий проход уже не достать, и участок
+  // становится непроезжим — сколько бы игрок ни старался.
+  const step = Math.random() < .7 ? (Math.random() < .5 ? -1 : 1) : 0;
+  gapLane = Math.max(0, Math.min(LANES - 1, gapLane + step));
+
+  if (Math.random() < .15) return;      // редкая пустая волна — передышка
+
+  for (let l = 0; l < LANES; l++){
+    if (l === gapLane) continue;
+    cars.push({
+      lane: l, y: -CAR_H,
+      color: PALETTE[Math.floor(Math.random() * PALETTE.length)]
+    });
+  }
+}
+
+function roundRect(x, y, w, h, r){
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function drawCar(x, y, color, flip){
+  const w = CAR_W, h = CAR_H, left = x - w / 2;
+  ctx.fillStyle = "rgba(0,0,0,.35)";
+  roundRect(left + 3, y + 6, w, h, 12); ctx.fill();
+  ctx.fillStyle = color;
+  roundRect(left, y, w, h, 12); ctx.fill();
+  // стекло
+  ctx.fillStyle = "rgba(255,255,255,.22)";
+  roundRect(left + 9, y + (flip ? h - 40 : 14), w - 18, 26, 7); ctx.fill();
+  // фары
+  ctx.fillStyle = flip ? "rgba(255,240,190,.95)" : "rgba(255,120,120,.9)";
+  const ly = flip ? y + h - 8 : y + 3;
+  roundRect(left + 7, ly, 12, 5, 2); ctx.fill();
+  roundRect(left + w - 19, ly, 12, 5, 2); ctx.fill();
+}
+
+function draw(){
+  ctx.fillStyle = "#11131a"; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = "#23262f"; ctx.fillRect(ROAD_X, 0, ROAD_W, H);
+
+  // обочина
+  ctx.fillStyle = "#31343d";
+  ctx.fillRect(ROAD_X - 6, 0, 6, H); ctx.fillRect(ROAD_X + ROAD_W, 0, 6, H);
+
+  // разметка
+  ctx.strokeStyle = "#4a4f5c"; ctx.lineWidth = 4; ctx.setLineDash([26, 24]);
+  ctx.lineDashOffset = -dash;
+  for (let i = 1; i < LANES; i++){
+    const x = ROAD_X + ROAD_W / LANES * i;
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+  }
+  ctx.setLineDash([]);
+
+  cars.forEach(c => drawCar(laneX(c.lane), c.y, c.color, false));
+  drawCar(carX, H - CAR_H - 40, "#48b0ff", true);
+}
+
+function tick(now){
+  if (state !== "play") return;
+  const dt = Math.min((now - last) / 1000, .05); last = now;
+
+  speed = Math.min(SPEED_MAX, speed + dt * ACCEL);
+  dist += speed * dt; dash += speed * dt;
+  score = Math.floor(dist / 10);
+  $("score").textContent = score;
+
+  carX += (laneX(lane) - carX) * Math.min(dt * 14, 1);
+
+  spawnIn -= dt;
+  if (spawnIn <= 0){ spawn(); spawnIn = gapPx() / speed; }
+
+  const py = H - CAR_H - 40;
+  for (const c of cars){
+    c.y += speed * dt;
+    const sameLane = Math.abs(laneX(c.lane) - carX) < CAR_W * .8;
+    if (sameLane && c.y + CAR_H > py + 10 && c.y < py + CAR_H - 10){ crash(); return; }
+  }
+  cars = cars.filter(c => c.y < H + CAR_H);
+
+  draw();
+  requestAnimationFrame(tick);
+}
+
+function crash(){
+  state = "over";
+  if (tg && tg.HapticFeedback) { try { tg.HapticFeedback.notificationOccurred("error"); } catch(e){} }
+  ctx.fillStyle = "rgba(255,90,90,.28)"; ctx.fillRect(0, 0, W, H);
+
+  const record = score > best;
+  if (record){ best = score; store.set("race_best", best); }
+  $("final").textContent = score;
+  $("bestline").textContent = record ? "Новый личный рекорд" : "Рекорд: " + best;
+  $("hi").textContent = best;
+  $("saved").textContent = "";
+  $("over").classList.add("on");
+  send(score);
+}
+
+function play(){
+  $("start").classList.remove("on"); $("over").classList.remove("on");
+  $("hud").style.display = "flex"; $("hi").textContent = best;
+  reset(); state = "play"; requestAnimationFrame(tick);
+}
+
+// --- отправка результата. initData подписан Telegram, сервер проверит подпись:
+//     без этого счёт мог бы прислать кто угодно и любой.
+async function send(value){
+  if (!tg || !tg.initData){ $("saved").textContent = "Результат сохранён только здесь"; return; }
+  try {
+    const r = await fetch("/game/score", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ initData: tg.initData, score: value })
+    });
+    const d = await r.json();
+    $("saved").textContent = d.status === "ok"
+      ? (d.place ? "В таблице вы " + d.place + "-й" : "Результат засчитан")
+      : "Результат не сохранился";
+  } catch(e){ $("saved").textContent = "Результат не сохранился"; }
+}
+
+// --- управление
+function steer(dir){ if (state === "play") lane = Math.max(0, Math.min(LANES - 1, lane + dir)); }
+addEventListener("keydown", e => {
+  if (e.key === "ArrowLeft" || e.key === "a") steer(-1);
+  if (e.key === "ArrowRight" || e.key === "d") steer(1);
+  if (e.key === " " && state !== "play") play();
+});
+let touchX = null;
+cv.addEventListener("pointerdown", e => { touchX = e.clientX; });
+cv.addEventListener("pointerup", e => {
+  if (touchX === null) return;
+  const dx = e.clientX - touchX;
+  if (Math.abs(dx) > 24) steer(dx > 0 ? 1 : -1);          // свайп
+  else steer(e.clientX < innerWidth / 2 ? -1 : 1);         // касание половины
+  touchX = null;
+});
+
+$("go").onclick = play;
+$("again").onclick = play;
+$("close").onclick = () => { if (tg) tg.close(); };
+$("hi").textContent = best;
+draw();
+</script>
+</body>
+</html>

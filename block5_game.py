@@ -87,8 +87,11 @@ async def start_game_block(call: CallbackQuery):
         lang = "ru"
     t = GAME_TEXTS.get(lang, GAME_TEXTS["en"])
     
+    race_titles = {"ru": "🏎 Гонка", "en": "🏎 Race", "fr": "🏎 Course", "he": "🏎 מרוץ"}
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=t["btn_start"], callback_data="game_step1")],
+        [InlineKeyboardButton(text=race_titles.get(lang, race_titles["en"]),
+                              callback_data="race_open")],
         [InlineKeyboardButton(text=inline_kb.label(inline_kb.HOME_TEXTS, lang), callback_data="go_home")]
     ])
     await call.message.edit_caption(caption=t["intro"], reply_markup=kb, parse_mode="Markdown")
