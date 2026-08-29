@@ -105,7 +105,20 @@ let state = "menu", score = 0, best = +(store.get("race_best") || 0);
 let lane = 1, carX = laneX(1), speed = 0, dist = 0, dash = 0;
 let cars = [], spawnIn = 0, last = 0;
 
-const PALETTE = ["#ff5a5a","#ffb648","#7ee081","#c78bff","#4ad9d9"];
+// Настоящие автомобильные цвета, а не радуга: белый, серебро, графит,
+// красный, синий, зелёный, песок.
+const PALETTE = ["#e8eaee","#b6bcc6","#3c4048","#c9382f","#2f5fa8","#2f6b4f","#c9a15a"];
+
+// Типы кузова. Габарит у всех один — от него зависит столкновение, и разный
+// размер при одинаковой зоне удара воспринимался бы как обман. Различаются
+// силуэтом: где кабина, насколько сужается нос, чем занята корма.
+const BODIES = [
+  { name:"седан",      cabin:[.30,.68], cabW:.86, noseF:.88, noseR:.94, r:9 },
+  { name:"спорткар",   cabin:[.26,.56], cabW:.80, noseF:.78, noseR:1.0, r:7, wing:true },
+  { name:"внедорожник",cabin:[.24,.74], cabW:.92, noseF:.95, noseR:.97, r:5, rails:true },
+  { name:"пикап",      cabin:[.20,.52], cabW:.88, noseF:.92, noseR:.96, r:6, bed:true },
+  { name:"фургон",     cabin:[.14,.44], cabW:.94, noseF:.96, noseR:.98, r:5, tall:true },
+];
 
 // Скорость растёт до потолка, а не бесконечно: без него через две минуты
 // машина проходит экран быстрее, чем человек успевает моргнуть.
@@ -141,7 +154,8 @@ function spawn(){
     if (l === gapLane) continue;
     cars.push({
       lane: l, y: -CAR_H,
-      color: PALETTE[Math.floor(Math.random() * PALETTE.length)]
+      color: PALETTE[Math.floor(Math.random() * PALETTE.length)],
+      body: BODIES[Math.floor(Math.random() * BODIES.length)]
     });
   }
 }
@@ -156,20 +170,111 @@ function roundRect(x, y, w, h, r){
   ctx.closePath();
 }
 
-function drawCar(x, y, color, flip){
-  const w = CAR_W, h = CAR_H, left = x - w / 2;
-  ctx.fillStyle = "rgba(0,0,0,.35)";
-  roundRect(left + 3, y + 6, w, h, 12); ctx.fill();
-  ctx.fillStyle = color;
-  roundRect(left, y, w, h, 12); ctx.fill();
-  // стекло
-  ctx.fillStyle = "rgba(255,255,255,.22)";
-  roundRect(left + 9, y + (flip ? h - 40 : 14), w - 18, 26, 7); ctx.fill();
-  // фары
-  ctx.fillStyle = flip ? "rgba(255,240,190,.95)" : "rgba(255,120,120,.9)";
-  const ly = flip ? y + h - 8 : y + 3;
-  roundRect(left + 7, ly, 12, 5, 2); ctx.fill();
-  roundRect(left + w - 19, ly, 12, 5, 2); ctx.fill();
+function shade(hex, k){
+  const n = parseInt(hex.slice(1), 16);
+  const f = c => Math.max(0, Math.min(255, Math.round(c * k)));
+  return `rgb(${f(n >> 16 & 255)},${f(n >> 8 & 255)},${f(n & 255)})`;
+}
+
+// Рисуем машину носом вверх в начале координат, а встречные разворачиваем
+// поворотом холста. Иначе каждую деталь пришлось бы считать в двух вариантах.
+function drawBody(b, color){
+  const w = CAR_W, h = CAR_H, hw = w / 2, hh = h / 2;
+  const [c0, c1] = b.cabin;
+  const glass = "#1b2430";
+
+  // колёса — чуть выступают из-под кузова
+  ctx.fillStyle = "#15171c";
+  for (const [sx, sy] of [[-1,-1],[1,-1],[-1,1],[1,1]]){
+    roundRect(sx * hw - (sx < 0 ? 3 : w * .12 - 3), -hh + h * (sy < 0 ? .13 : .68),
+              w * .12, h * .19, 3);
+    ctx.fill();
+  }
+
+  // Кузов: нос уже кормы, поэтому контур — трапеция, а не прямоугольник.
+  // Той же формой рисуем тень: прямоугольная тень под сужающимся кузовом
+  // выдаёт себя тёмным углом у переднего крыла.
+  const fw = hw * b.noseF, rw = hw * b.noseR;
+  const path = () => {
+    ctx.beginPath();
+    ctx.moveTo(-fw + b.r, -hh);
+    ctx.lineTo(fw - b.r, -hh);
+    ctx.quadraticCurveTo(fw, -hh, fw, -hh + b.r);
+    ctx.lineTo(rw, hh - b.r);
+    ctx.quadraticCurveTo(rw, hh, rw - b.r, hh);
+    ctx.lineTo(-rw + b.r, hh);
+    ctx.quadraticCurveTo(-rw, hh, -rw, hh - b.r);
+    ctx.lineTo(-fw, -hh + b.r);
+    ctx.quadraticCurveTo(-fw, -hh, -fw + b.r, -hh);
+    ctx.closePath();
+  };
+
+  ctx.save();
+  ctx.translate(2, 4);
+  path(); ctx.fillStyle = "rgba(0,0,0,.42)"; ctx.fill();
+  ctx.restore();
+
+  path();
+  const g = ctx.createLinearGradient(-hw, 0, hw, 0);
+  g.addColorStop(0, shade(color, .78));
+  g.addColorStop(.35, color);
+  g.addColorStop(.62, shade(color, 1.12));
+  g.addColorStop(1, shade(color, .72));
+  ctx.fillStyle = g; ctx.fill();
+
+  // кузов пикапа: открытый борт вместо крыши
+  if (b.bed){
+    ctx.fillStyle = shade(color, .55);
+    roundRect(-hw * .74, -hh + h * .58, w * .74, h * .3, 4); ctx.fill();
+  }
+
+  // остекление: лобовое, крыша, заднее
+  const cy0 = -hh + h * c0, cy1 = -hh + h * c1, cw = hw * b.cabW;
+  ctx.fillStyle = glass;
+  ctx.beginPath();
+  ctx.moveTo(-cw * .74, cy0); ctx.lineTo(cw * .74, cy0);
+  ctx.lineTo(cw, cy0 + h * .11); ctx.lineTo(-cw, cy0 + h * .11);
+  ctx.closePath(); ctx.fill();
+  if (!b.bed){
+    ctx.beginPath();
+    ctx.moveTo(-cw, cy1 - h * .1); ctx.lineTo(cw, cy1 - h * .1);
+    ctx.lineTo(cw * .78, cy1); ctx.lineTo(-cw * .78, cy1);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = shade(color, 1.02);
+    roundRect(-cw * .92, cy0 + h * .11, cw * 1.84, (cy1 - h * .1) - (cy0 + h * .11), 3);
+    ctx.fill();
+  }
+
+  // зеркала
+  ctx.fillStyle = shade(color, .7);
+  roundRect(-hw - 2, cy0 + h * .02, 5, 7, 2); ctx.fill();
+  roundRect(hw - 3, cy0 + h * .02, 5, 7, 2); ctx.fill();
+
+  if (b.rails){                       // рейлинги внедорожника
+    ctx.fillStyle = shade(color, .6);
+    roundRect(-cw * .95, cy0 + h * .12, 3, h * .34, 1.5); ctx.fill();
+    roundRect(cw * .95 - 3, cy0 + h * .12, 3, h * .34, 1.5); ctx.fill();
+  }
+  if (b.wing){                        // антикрыло спорткара
+    ctx.fillStyle = shade(color, .6);
+    roundRect(-rw * .9, hh - h * .12, rw * 1.8, 5, 2); ctx.fill();
+  }
+
+  // фары и фонари
+  ctx.fillStyle = "#ffe9b0";
+  roundRect(-fw + 4, -hh + 2, 11, 5, 2); ctx.fill();
+  roundRect(fw - 15, -hh + 2, 11, 5, 2); ctx.fill();
+  ctx.fillStyle = "#d8433a";
+  roundRect(-rw + 4, hh - 7, 10, 4, 2); ctx.fill();
+  roundRect(rw - 14, hh - 7, 10, 4, 2); ctx.fill();
+}
+
+function drawCar(x, y, color, body, facingUp){
+  ctx.save();
+  ctx.translate(x, y + CAR_H / 2);
+  if (!facingUp) ctx.rotate(Math.PI);
+  drawBody(body, color);
+  ctx.restore();
 }
 
 function draw(){
@@ -189,8 +294,8 @@ function draw(){
   }
   ctx.setLineDash([]);
 
-  cars.forEach(c => drawCar(laneX(c.lane), c.y, c.color, false));
-  drawCar(carX, H - CAR_H - 40, "#48b0ff", true);
+  cars.forEach(c => drawCar(laneX(c.lane), c.y, c.color, c.body, false));
+  drawCar(carX, H - CAR_H - 40, "#48b0ff", BODIES[1], true);   // игрок — спорткар
 }
 
 function tick(now){
