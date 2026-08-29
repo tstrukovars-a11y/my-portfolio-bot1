@@ -19,6 +19,7 @@ import finance
 import digest
 import growth
 import race
+import cartoon
 import inline_kb
 
 
@@ -156,6 +157,35 @@ def make_handle_ping(bot: Bot, dp: Dispatcher):
             response = (
                 f"HTTP/1.1 {code} {'OK' if code == 200 else 'Error'}\r\n"
                 f"Content-Type: application/json\r\n"
+                f"{cors_headers}"
+                f"Content-Length: {len(payload.encode('utf-8'))}\r\n"
+                f"Connection: close\r\n\r\n{payload}"
+            ).encode('utf-8')
+
+        elif path == "/cartoon" and method == "GET":
+            body_bytes = cartoon.page()
+            response = (
+                f"HTTP/1.1 200 OK\r\n"
+                f"Content-Type: text/html; charset=utf-8\r\n"
+                f"Cache-Control: no-cache\r\n"
+                f"Content-Length: {len(body_bytes)}\r\n"
+                f"Connection: close\r\n\r\n"
+            ).encode('utf-8') + body_bytes
+
+        elif path == "/cartoon/data" and method == "GET":
+            try:
+                board = await database.get_cartoon(int(query_params.get("id", "0")))
+            except ValueError:
+                board = None
+            if board:
+                payload = '{"status":"ok","film":' + board + '}'
+                status_line = "HTTP/1.1 200 OK"
+            else:
+                payload = json.dumps({"status": "error", "message": "not found"})
+                status_line = "HTTP/1.1 404 Not Found"
+            response = (
+                f"{status_line}\r\n"
+                f"Content-Type: application/json; charset=utf-8\r\n"
                 f"{cors_headers}"
                 f"Content-Length: {len(payload.encode('utf-8'))}\r\n"
                 f"Connection: close\r\n\r\n{payload}"
@@ -353,6 +383,7 @@ async def main():
     dp.include_router(digest.router)
     dp.include_router(growth.router)
     dp.include_router(race.router)
+    dp.include_router(cartoon.router)
 
     dp.include_router(tennis_live.router)
     dp.include_router(travel.router)

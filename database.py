@@ -477,7 +477,18 @@ async def init_db():
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""")
 
-        # 22. Анкеты поиска партнёра для игры
+        # 22. Мультфильмы: хранится раскадровка, а не видео — она занимает
+        # килобайты и проигрывается заново на каждом устройстве.
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.cartoons (
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT,
+            story TEXT,
+            board TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+
+        # 23. Анкеты поиска партнёра для игры
         await conn.execute(f"""
         CREATE TABLE IF NOT EXISTS {SCHEMA}.game_partners (
             id SERIAL PRIMARY KEY,
@@ -1185,6 +1196,31 @@ async def totals_by_asset(year: int):
 
 
 # --- НАСТРОЙКИ, МЕНЯЕМЫЕ ИЗ БОТА ---
+
+async def save_cartoon(user_id: int, story: str, board_json: str):
+    """Сохраняет раскадровку и возвращает её номер — он же адрес просмотра"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            return await conn.fetchval(
+                f"INSERT INTO {SCHEMA}.cartoons (user_id, story, board) "
+                "VALUES ($1, $2, $3) RETURNING id", user_id, story, board_json)
+    except Exception as e:
+        logging.error(f"Мультфильм не сохранён: {e}")
+        return None
+
+
+async def get_cartoon(cartoon_id: int):
+    """Раскадровка в виде строки JSON либо None"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            return await conn.fetchval(
+                f"SELECT board FROM {SCHEMA}.cartoons WHERE id = $1", cartoon_id)
+    except Exception as e:
+        logging.error(f"Мультфильм не читается: {e}")
+        return None
+
 
 async def save_race_score(user_id: int, name: str, score: int):
     """Сохраняет результат и возвращает (место в таблице, личный рекорд).

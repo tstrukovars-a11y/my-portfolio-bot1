@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Мультфильм</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%;overflow:hidden;background:#0d1017;color:#f2f3f5;
+    font:16px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    user-select:none}
+  #wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center}
+  canvas{display:block;border-radius:14px}
+
+  .bar{position:fixed;left:0;right:0;bottom:calc(env(safe-area-inset-bottom) + 14px);
+    display:flex;gap:10px;align-items:center;justify-content:center;padding:0 18px}
+  button{appearance:none;border:0;border-radius:12px;padding:12px 26px;font-size:16px;
+    font-weight:600;color:#0b1220;background:#7cc4ff;cursor:pointer}
+  button:active{transform:scale(.97)}
+  button.ghost{background:transparent;color:#98a0b0;box-shadow:inset 0 0 0 1px #2a3040}
+  .title{position:fixed;top:calc(env(safe-area-inset-top) + 14px);left:0;right:0;
+    text-align:center;font-size:15px;font-weight:600;color:#c8cfdd;padding:0 20px}
+  .msg{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+    padding:30px;text-align:center;color:#98a0b0}
+</style>
+</head>
+<body>
+<div class="title" id="title"></div>
+<div id="wrap"><canvas id="cv"></canvas></div>
+<div class="bar" id="bar" style="display:none">
+  <button id="replay">↻ Сначала</button>
+  <button class="ghost" id="close">Закрыть</button>
+</div>
+<div class="msg" id="msg">Загружаю…</div>
+
+<script>
+"use strict";
+const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+if (tg){ tg.ready(); tg.expand(); }
+const $ = id => document.getElementById(id);
+const cv = $("cv"), ctx = cv.getContext("2d");
+
+// Сцена живёт в постоянных координатах, а на экран вписывается целиком:
+// иначе на узком телефоне персонажи уезжают за край.
+const W = 420, H = 620;
+function fit(){
+  const scale = Math.min(innerWidth / W, (innerHeight - 130) / H);
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  cv.width = W * dpr; cv.height = H * dpr;
+  cv.style.width = W * scale + "px"; cv.style.height = H * scale + "px";
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+addEventListener("resize", fit); fit();
+
+const GROUND = H * .72;
+const rnd = (s) => { let x = Math.sin(s) * 10000; return x - Math.floor(x); };
+
+// ---------- задники ----------
+const SKIES = {
+  meadow:["#8fd3ff","#dff3d8"], forest:["#7fc0e8","#cfe8c4"], city:["#9fb8d8","#e6e9f0"],
+  room:["#f0dcc0","#e6cfae"],   night:["#131a33","#2a3358"], sea:["#8ad6f0","#d9f2fb"],
+  space:["#080b1c","#1b1140"],  snow:["#cfe6f5","#f2f8fb"]
+};
+function backdrop(bg, t){
+  const [a, b] = SKIES[bg] || SKIES.meadow;
+  const g = ctx.createLinearGradient(0, 0, 0, GROUND);
+  g.addColorStop(0, a); g.addColorStop(1, b);
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, GROUND);
+
+  if (bg === "night" || bg === "space"){
+    for (let i = 0; i < 60; i++){
+      const x = rnd(i) * W, y = rnd(i + 99) * GROUND;
+      ctx.globalAlpha = .4 + rnd(i + 7) * .6;
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(x, y, 2, 2);
+    }
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = "#f4f1d0";
+    ctx.beginPath(); ctx.arc(W * .78, GROUND * .22, 26, 0, 7); ctx.fill();
+  } else {
+    ctx.fillStyle = "#ffe680";
+    ctx.beginPath(); ctx.arc(W * .82, GROUND * .18, 30, 0, 7); ctx.fill();
+    ctx.globalAlpha = .55; ctx.fillStyle = "#fff";
+    for (const [cx, cy, s] of [[70,90,1],[300,60,.8],[190,130,.6]]){
+      const dx = (t * 8 + cx) % (W + 120) - 60;
+      ctx.beginPath();
+      ctx.arc(dx, cy, 22*s, 0, 7); ctx.arc(dx+22*s, cy+4*s, 17*s, 0, 7);
+      ctx.arc(dx-20*s, cy+5*s, 15*s, 0, 7); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  if (bg === "forest"){
+    for (let i = 0; i < 7; i++){
+      const x = 20 + i * 62 + rnd(i) * 20, h = 120 + rnd(i + 3) * 70;
+      ctx.fillStyle = "#6b4a2f"; ctx.fillRect(x - 5, GROUND - h * .4, 10, h * .4);
+      ctx.fillStyle = i % 2 ? "#2f8f4e" : "#3aa85c";
+      ctx.beginPath(); ctx.arc(x, GROUND - h * .45, h * .3, 0, 7); ctx.fill();
+    }
+  }
+  if (bg === "city"){
+    for (let i = 0; i < 8; i++){
+      const x = i * 55, h = 90 + rnd(i + 11) * 170;
+      ctx.fillStyle = i % 2 ? "#5f6c85" : "#4d596f";
+      ctx.fillRect(x, GROUND - h, 48, h);
+      ctx.fillStyle = "#ffe08a";
+      for (let r = 0; r < Math.floor(h / 28); r++)
+        for (let c = 0; c < 3; c++)
+          if (rnd(i * 40 + r * 4 + c) > .45)
+            ctx.fillRect(x + 7 + c * 14, GROUND - h + 12 + r * 26, 7, 10);
+    }
+  }
+  if (bg === "room"){
+    ctx.fillStyle = "#cbb18d"; ctx.fillRect(0, GROUND - 150, W, 150);
+    ctx.fillStyle = "#9fd0e8"; ctx.fillRect(W * .12, GROUND - 250, 110, 90);
+    ctx.strokeStyle = "#8a6a45"; ctx.lineWidth = 6;
+    ctx.strokeRect(W * .12, GROUND - 250, 110, 90);
+  }
+
+  // земля
+  const ground = {meadow:"#5fbf68", forest:"#4e9e57", city:"#59606f", room:"#8a6a45",
+                  night:"#2b3350", sea:"#e8dca8", space:"#241a4a", snow:"#eef6fb"}[bg] || "#5fbf68";
+  ctx.fillStyle = ground; ctx.fillRect(0, GROUND, W, H - GROUND);
+  if (bg === "sea"){
+    ctx.fillStyle = "#2ba3d6"; ctx.fillRect(0, GROUND - 34, W, 34);
+  }
+}
+
+// ---------- персонажи ----------
+function shade(hex, k){
+  const n = parseInt(hex.slice(1), 16), f = c => Math.max(0, Math.min(255, Math.round(c * k)));
+  return `rgb(${f(n>>16&255)},${f(n>>8&255)},${f(n&255)})`;
+}
+
+// Все персонажи строятся из одних частей: тело, голова, глаза. Отличаются
+// ушами, хвостом и пропорциями — так восемь видов помещаются в один рисунок,
+// а не в восемь отдельных.
+const SCALE = 1.4;      // персонажи должны занимать кадр, а не теряться в небе
+
+function actor(a, x, y, phase, action){
+  const bob = action === "walk" ? Math.sin(phase * 9) * 3 : Math.sin(phase * 2) * 1.5;
+  const jump = action === "jump" ? Math.abs(Math.sin(phase * 6)) * 34 : 0;
+  const tilt = action === "shake" ? Math.sin(phase * 22) * .12 : 0;
+  const grow = action === "grow" ? 1 + Math.min(.5, phase * .25) : 1;
+
+  ctx.save();
+  ctx.translate(x, y - jump + bob);
+  ctx.rotate(tilt);
+  ctx.scale(grow * SCALE * (a.face === -1 ? -1 : 1), grow * SCALE);
+
+  const fish = a.kind === "fish", bird = a.kind === "bird";
+  const bodyH = fish || bird ? 34 : 46, bodyW = fish ? 46 : 32;
+
+  // тень
+  ctx.fillStyle = "rgba(0,0,0,.18)";
+  ctx.beginPath(); ctx.ellipse(0, 6, 26, 7, 0, 0, 7); ctx.fill();
+
+  // ноги
+  if (!fish && !bird){
+    const swing = action === "walk" ? Math.sin(phase * 9) * 7 : 0;
+    ctx.strokeStyle = shade(a.color, .7); ctx.lineWidth = 7; ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(-7, -8); ctx.lineTo(-7 + swing, 4); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(7, -8); ctx.lineTo(7 - swing, 4); ctx.stroke();
+  }
+
+  // тело
+  ctx.fillStyle = a.color;
+  ctx.beginPath();
+  ctx.ellipse(0, -bodyH * .5, bodyW * .5, bodyH * .5, 0, 0, 7); ctx.fill();
+
+  // руки / крылья / плавники
+  const armSwing = action === "wave" ? Math.sin(phase * 10) * .9 - .6
+                 : action === "walk" ? Math.sin(phase * 9) * .5 : .15;
+  ctx.strokeStyle = a.color; ctx.lineWidth = 6;
+  ctx.beginPath(); ctx.moveTo(-bodyW * .4, -bodyH * .7);
+  ctx.lineTo(-bodyW * .4 - 14 * Math.cos(armSwing), -bodyH * .7 + 14 * Math.sin(armSwing));
+  ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(bodyW * .4, -bodyH * .7);
+  ctx.lineTo(bodyW * .4 + 14, -bodyH * .7 + 10); ctx.stroke();
+
+  if (fish){                       // хвост
+    ctx.fillStyle = shade(a.color, .8);
+    ctx.beginPath(); ctx.moveTo(bodyW * .45, -bodyH * .5);
+    ctx.lineTo(bodyW * .8, -bodyH * .9); ctx.lineTo(bodyW * .8, -bodyH * .1);
+    ctx.closePath(); ctx.fill();
+  }
+
+  // голова
+  const hy = -bodyH - 14, hr = 17;
+  ctx.fillStyle = shade(a.color, 1.08);
+  ctx.beginPath(); ctx.arc(0, hy, hr, 0, 7); ctx.fill();
+
+  if (a.kind === "cat" || a.kind === "bear" || a.kind === "dog"){
+    ctx.fillStyle = shade(a.color, .85);
+    const ear = a.kind === "bear" ? 7 : 9;
+    if (a.kind === "dog"){
+      ctx.beginPath(); ctx.ellipse(-hr*.8, hy, 5, 11, .3, 0, 7); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(hr*.8, hy, 5, 11, -.3, 0, 7); ctx.fill();
+    } else if (a.kind === "bear"){
+      ctx.beginPath(); ctx.arc(-hr*.75, hy - hr*.7, ear, 0, 7); ctx.fill();
+      ctx.beginPath(); ctx.arc(hr*.75, hy - hr*.7, ear, 0, 7); ctx.fill();
+    } else {
+      ctx.beginPath(); ctx.moveTo(-hr*.9, hy-hr*.5); ctx.lineTo(-hr*.5, hy-hr*1.4);
+      ctx.lineTo(-hr*.1, hy-hr*.75); ctx.closePath(); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(hr*.9, hy-hr*.5); ctx.lineTo(hr*.5, hy-hr*1.4);
+      ctx.lineTo(hr*.1, hy-hr*.75); ctx.closePath(); ctx.fill();
+    }
+  }
+  if (a.kind === "robot"){
+    ctx.strokeStyle = shade(a.color, .7); ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(0, hy - hr); ctx.lineTo(0, hy - hr - 9); ctx.stroke();
+    ctx.fillStyle = "#ffd85e";
+    ctx.beginPath(); ctx.arc(0, hy - hr - 11, 4, 0, 7); ctx.fill();
+  }
+  if (a.kind === "bird"){
+    ctx.fillStyle = "#ffb02e";
+    ctx.beginPath(); ctx.moveTo(hr*.8, hy); ctx.lineTo(hr*1.7, hy+4);
+    ctx.lineTo(hr*.8, hy+7); ctx.closePath(); ctx.fill();
+  }
+  if (a.kind === "girl"){
+    ctx.fillStyle = shade(a.color, .6);
+    ctx.beginPath(); ctx.arc(0, hy - 4, hr + 3, Math.PI, 0); ctx.fill();
+  }
+
+  // глаза и рот
+  ctx.fillStyle = "#22252c";
+  ctx.beginPath(); ctx.arc(-6, hy - 2, 2.6, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.arc(6, hy - 2, 2.6, 0, 7); ctx.fill();
+  ctx.strokeStyle = "#22252c"; ctx.lineWidth = 2; ctx.lineCap = "round";
+  ctx.beginPath(); ctx.arc(0, hy + 3, 5, .25, Math.PI - .25); ctx.stroke();
+
+  ctx.restore();
+}
+
+function bubble(x, y, text){
+  ctx.font = "600 14px -apple-system,Segoe UI,Roboto,sans-serif";
+  const words = text.split(" ");
+  const lines = []; let line = "";
+  for (const w of words){
+    if (ctx.measureText(line + " " + w).width > 150 && line){ lines.push(line); line = w; }
+    else line = line ? line + " " + w : w;
+  }
+  if (line) lines.push(line);
+
+  const wdt = Math.max(...lines.map(l => ctx.measureText(l).width)) + 22;
+  const hgt = lines.length * 18 + 16;
+  const bx = Math.max(6, Math.min(W - wdt - 6, x - wdt / 2)), by = y - hgt - 12;
+
+  ctx.fillStyle = "rgba(255,255,255,.96)";
+  ctx.beginPath();
+  ctx.roundRect ? ctx.roundRect(bx, by, wdt, hgt, 12) : ctx.rect(bx, by, wdt, hgt);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(x - 7, by + hgt); ctx.lineTo(x, by + hgt + 10); ctx.lineTo(x + 7, by + hgt);
+  ctx.closePath(); ctx.fill();
+
+  ctx.fillStyle = "#1d2129"; ctx.textAlign = "center";
+  lines.forEach((l, i) => ctx.fillText(l, bx + wdt / 2, by + 22 + i * 18));
+  ctx.textAlign = "left";
+}
+
+function caption(text){
+  if (!text) return;
+  ctx.font = "500 14px -apple-system,Segoe UI,Roboto,sans-serif";
+  const wdt = Math.min(W - 28, ctx.measureText(text).width + 26);
+  ctx.fillStyle = "rgba(10,13,20,.72)";
+  ctx.beginPath();
+  ctx.roundRect ? ctx.roundRect((W - wdt) / 2, H - 52, wdt, 34, 10)
+                : ctx.rect((W - wdt) / 2, H - 52, wdt, 34);
+  ctx.fill();
+  ctx.fillStyle = "#eef1f6"; ctx.textAlign = "center";
+  ctx.fillText(text, W / 2, H - 30);
+  ctx.textAlign = "left";
+}
+
+// ---------- проигрыватель ----------
+const BEAT = 2.6;                 // секунд на действие
+let film = null, t0 = 0, playing = false;
+
+function totalTime(){
+  return film.scenes.reduce((s, sc) => s + Math.max(1, sc.beats.length) * BEAT, 0);
+}
+
+function frame(now){
+  if (!playing) return;
+  const t = (now - t0) / 1000;
+
+  // ищем текущую сцену и такт
+  let acc = 0, scene = null, local = 0;
+  for (const sc of film.scenes){
+    const dur = Math.max(1, sc.beats.length) * BEAT;
+    if (t < acc + dur){ scene = sc; local = t - acc; break; }
+    acc += dur;
+  }
+  if (!scene){ finish(); return; }
+
+  const bi = Math.min(scene.beats.length - 1, Math.floor(local / BEAT));
+  const beat = scene.beats[bi] || null;
+  const inBeat = (local % BEAT) / BEAT;
+
+  backdrop(scene.bg, t);
+
+  // положение каждого персонажа: до своего такта стоит, в такте идёт
+  for (const a of scene.actors){
+    let x = a.x, action = "idle";
+    for (let i = 0; i <= bi; i++){
+      const b = scene.beats[i];
+      if (!b || b.actor !== a.id) continue;
+      if (b.action === "walk"){
+        const p = i === bi ? inBeat : 1;
+        x = a.x + (b.to - a.x) * p;
+        if (i < bi) a.x = b.to;              // дошёл — закрепляем
+      }
+      if (i === bi) action = b.action;
+    }
+    a.face = beat && beat.actor === a.id && beat.action === "turn" ? -1 : 1;
+    actor(a, x * W, GROUND + 6, t, action);
+    if (beat && beat.actor === a.id && beat.say)
+      bubble(x * W, GROUND - 128, beat.say);
+  }
+
+  caption(scene.narration);
+
+  // затемнение на стыке сцен
+  const dur = Math.max(1, scene.beats.length) * BEAT;
+  const edge = Math.min(local, dur - local);
+  if (edge < .35){
+    ctx.fillStyle = `rgba(8,10,16,${(1 - edge / .35) * .8})`;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  requestAnimationFrame(frame);
+}
+
+function finish(){
+  playing = false;
+  ctx.fillStyle = "rgba(8,10,16,.82)"; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = "#eef1f6"; ctx.textAlign = "center";
+  ctx.font = "700 24px -apple-system,Segoe UI,Roboto,sans-serif";
+  ctx.fillText("Конец", W / 2, H / 2);
+  ctx.textAlign = "left";
+}
+
+function start(){
+  // Персонажи двигаются по ходу дела, поэтому каждый показ начинаем
+  // с чистой копии: иначе повтор играет с того места, где кончил прошлый.
+  film = JSON.parse(film.source);
+  film.source = JSON.stringify(film);
+  playing = true; t0 = performance.now();
+  requestAnimationFrame(frame);
+}
+
+async function load(){
+  const id = new URLSearchParams(location.search).get("id");
+  if (!id){ $("msg").textContent = "Не указан мультфильм."; return; }
+  try {
+    const r = await fetch("/cartoon/data?id=" + encodeURIComponent(id));
+    const d = await r.json();
+    if (d.status !== "ok") throw new Error(d.message || "нет данных");
+    film = d.film; film.source = JSON.stringify(d.film);
+    $("msg").style.display = "none";
+    $("bar").style.display = "flex";
+    $("title").textContent = film.title || "";
+    start();
+  } catch(e){
+    $("msg").textContent = "Мультфильм не загрузился.";
+  }
+}
+
+$("replay").onclick = start;
+$("close").onclick = () => { if (tg) tg.close(); };
+load();
+</script>
+</body>
+</html>
