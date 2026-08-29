@@ -15,6 +15,8 @@ from urllib.parse import quote
 
 from aiogram import Router, F, Bot
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.exceptions import (TelegramForbiddenError, TelegramNetworkError,
+                                TelegramRetryAfter)
 
 import config
 import database
@@ -47,6 +49,7 @@ LAST_AT_KEY = "digest_last_at"
 
 MAX_CAPTION = 1024
 MAX_MESSAGE = 4096
+MAX_FAILS = 3        # столько раз пробуем материал, прежде чем пропустить
 
 # Порядок обхода. Меняется здесь же — раздел добавляется одной строкой,
 # если он есть в database.DIGEST_SOURCES.
@@ -96,6 +99,59 @@ async def _build(section: str, item_id: int):
         return f"{place} · {country}", text, photo, video, link
 
     return None
+
+
+def _split_caption(caption: str) -> tuple[str, str]:
+    """Подпись под медиа и остаток. Режем по последнему переводу строки или
+    пробелу, чтобы слово не разрывалось посередине."""
+    if len(caption) <= MAX_CAPTION:
+        return caption, ""
+    head = caption[:MAX_CAPTION]
+    cut = max(head.rfind("\n"), head.rfind(" "))
+    if cut < MAX_CAPTION // 2:      # сплошной текст без пробелов — режем как есть
+        cut = MAX_CAPTION
+    return caption[:cut].rstrip(), caption[cut:].strip()
+
+
+async def _send(bot: Bot, chat: int, thread, caption: str, photo, video, markup):
+    """Отправляет пост и возвращает сообщение, к которому привязана публикация.
+
+    При отказе повторяет один раз без кнопок: битая ссылка в кнопке — самая
+    частая причина отказа, и пост без кнопки несравнимо лучше, чем материал,
+    который третий день не может выйти.
+
+    Повтор — только для той части, которая не прошла: общий повтор всего
+    поста отправил бы картинку во второй раз.
+    """
+    async def once(send, kb, **kwargs):
+        try:
+            return await send(reply_markup=kb, **kwargs)
+        except Exception as e:
+            if not kb:
+                raise
+            logging.warning(f"Дайджест: отказ с кнопками ({e}) — повторяю без них")
+            return await send(reply_markup=None, **kwargs)
+
+    if photo or video:
+        media = bot.send_video if video else bot.send_photo
+        head, tail = _split_caption(caption)
+        # Подпись под картинкой несёт настоящий текст, а не одно название
+        # раздела: если продолжение не уйдёт, пост всё равно осмысленный.
+        sent = await once(
+            lambda **kw: media(chat, video or photo, caption=head, parse_mode=None,
+                               message_thread_id=thread, **kw),
+            None if tail else markup)
+        if tail:
+            await once(
+                lambda **kw: bot.send_message(chat, tail[:MAX_MESSAGE], parse_mode=None,
+                                              message_thread_id=thread, **kw),
+                markup)
+        return sent
+
+    return await once(
+        lambda **kw: bot.send_message(chat, caption[:MAX_MESSAGE], parse_mode=None,
+                                      message_thread_id=thread, **kw),
+        markup)
 
 
 async def _mirror_thread(section: str) -> str:
@@ -170,8 +226,13 @@ async def publish_next(bot: Bot) -> str:
         caption = f"{head}\n\n{body}" + await _ad_block()
 
         rows = []
-        if link:
-            rows.append([InlineKeyboardButton(text="🔗 Подробнее", url=link)])
+        # Ссылку чиним перед тем, как ставить в кнопку: материалы, ввезённые
+        # до починки смещений, хранят обрубки вида «ttps://…», а такую кнопку
+        # Telegram отвергает вместе со всем сообщением.
+        import genetics
+        safe_link = genetics.normalize_link(link)
+        if safe_link:
+            rows.append([InlineKeyboardButton(text="🔗 Подробнее", url=safe_link)])
         # Делимся каналом, а не отдельным постом: ссылка на пост приводит
         # читателя к одной записи, ссылка на канал — к подписке.
         channel_url = await database.get_setting("channel_url")
@@ -183,22 +244,30 @@ async def publish_next(bot: Bot) -> str:
 
         try:
             # parse_mode=None: текст пришёл из чужого поста и разметкой не является
-            if video and len(caption) <= MAX_CAPTION:
-                sent = await bot.send_video(chat, video, caption=caption, parse_mode=None,
-                                            message_thread_id=thread, reply_markup=markup)
-            elif photo and len(caption) <= MAX_CAPTION:
-                sent = await bot.send_photo(chat, photo, caption=caption, parse_mode=None,
-                                            message_thread_id=thread, reply_markup=markup)
-            else:
-                if photo or video:
-                    media = bot.send_video if video else bot.send_photo
-                    await media(chat, video or photo, caption=head, parse_mode=None,
-                                message_thread_id=thread)
-                sent = await bot.send_message(chat, caption[:MAX_MESSAGE], parse_mode=None,
-                                              message_thread_id=thread, reply_markup=markup)
+            sent = await _send(bot, chat, thread, caption, photo, video, markup)
+        except (TelegramForbiddenError, TelegramNetworkError, TelegramRetryAfter) as e:
+            # Канал недоступен целиком — материал ни при чём. Очередь стоит
+            # на месте: иначе за время недоступности весь архив пометился бы
+            # вышедшим, ни разу не выйдя.
+            await database.set_setting(
+                "digest_last_error", f"канал недоступен: {str(e)[:180]}")
+            logging.error(f"Дайджест: канал недоступен — {e}")
+            return f"канал недоступен: {e}"
         except Exception as e:
-            logging.error(f"Дайджест: не удалось опубликовать {section}/{item_id}: {e}")
-            return f"ошибка публикации: {e}"
+            # Отказ по самому материалу. Три попытки — и пропускаем: один
+            # непубликуемый материал три дня подряд не давал каналу ни одной
+            # новой записи, и это хуже, чем потерять одну запись.
+            key = f"digest_fail_{section}_{item_id}"
+            fails = int(await database.get_setting(key) or 0) + 1
+            await database.set_setting(key, str(fails))
+            await database.set_setting(
+                "digest_last_error", f"{section}/{item_id} ({fails}): {str(e)[:180]}")
+            logging.error(f"Дайджест: {section}/{item_id} не вышел ({fails}/{MAX_FAILS}) — {e}")
+            if fails >= MAX_FAILS:
+                await database.mark_published(section, item_id)
+                await database.set_setting(LAST_AT_KEY, datetime.now().isoformat())
+                return f"материал пропущен после {fails} попыток: {e}"
+            return f"ошибка публикации, попытка {fails} из {MAX_FAILS}: {e}"
 
         await database.mark_published(section, item_id, sent.message_id)
         await database.set_setting("digest_last_section", section)
@@ -356,6 +425,10 @@ async def digest_command(message: Message, bot: Bot):
 
     ad = await database.get_setting("digest_ad")
     lines.append(f"Реклама: {'есть' if ad else 'нет'}")
+
+    error = await database.get_setting("digest_last_error")
+    if error:
+        lines.append(f"\n⚠️ Последний сбой: <code>{html.escape(error)}</code>")
     lines.append("\n<code>/digest now</code> — опубликовать сейчас\n"
                  "<code>/digest chat -100…</code> — задать канал\n"
                  "<code>/digest mirror -100… тема раздел</code> — дубль в группу\n"
