@@ -317,8 +317,17 @@ async def make_cartoon(message: Message, state: FSMContext):
                                       callback_data="go_home")])
 
     scenes = len(board["scenes"])
-    art = f", кадров нарисовано {drawn}" if drawn else ""
+    # О кадрах говорим всегда, в том числе когда их ноль: молчание в этом
+    # месте неотличимо от «всё хорошо», и владелец ищет неисправность там,
+    # где её нет.
+    if not imagegen.provider():
+        art = "🖍 Рисованные кадры выключены: ключ не задан."
+    elif drawn:
+        art = f"🎨 Кадров нарисовано: {drawn} из {scenes}."
+    else:
+        art = ("⚠️ Кадры не нарисовались — мультик играется векторно.\n"
+               "Причину покажет <code>/imagetest</code>.")
     await note.edit_text(
-        f"🎬 <b>{board['title']}</b>\n\nСцен: {scenes}{art}. Готово к просмотру.",
+        f"🎬 <b>{board['title']}</b>\n\nСцен: {scenes}. {art}",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
     await state.clear()
