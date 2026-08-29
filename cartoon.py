@@ -25,6 +25,7 @@ from aiogram.fsm.state import StatesGroup, State
 
 import config
 import database
+import imagegen
 import inline_kb
 
 router = Router()
@@ -275,6 +276,17 @@ async def make_cartoon(message: Message, state: FSMContext):
         await note.edit_text("⚠️ Не удалось сохранить мультфильм.")
         return
 
+    # Кадры рисуются дольше сценария, поэтому сперва отдаём готовый мультик,
+    # а картинки подставляем следом: смотреть можно уже сейчас.
+    drawn = 0
+    if imagegen.provider():
+        await note.edit_text(f"🎬 <b>{board['title']}</b>\n\nРисую кадры…")
+        try:
+            drawn = await database.save_cartoon_frames(
+                cartoon_id, await imagegen.render(board))
+        except Exception as e:
+            logging.error(f"Мультфильм: кадры не нарисовались: {e}")
+
     url = watch_url(cartoon_id)
     rows = []
     if url:
@@ -286,7 +298,8 @@ async def make_cartoon(message: Message, state: FSMContext):
                                       callback_data="go_home")])
 
     scenes = len(board["scenes"])
+    art = f", кадров нарисовано {drawn}" if drawn else ""
     await note.edit_text(
-        f"🎬 <b>{board['title']}</b>\n\nСцен: {scenes}. Готово к просмотру.",
+        f"🎬 <b>{board['title']}</b>\n\nСцен: {scenes}{art}. Готово к просмотру.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
     await state.clear()

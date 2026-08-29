@@ -598,6 +598,32 @@ function totalTime(){
   return film.scenes.reduce((s, sc) => s + Math.max(1, sc.beats.length) * BEAT, 0);
 }
 
+// Нарисованные кадры. Пока картинка не загрузилась — и если её нет вовсе —
+// сцена играется прежней векторной отрисовкой: мультик не должен зависеть
+// от того, дошёл ли кадр.
+const art = {};
+function loadArt(id, indexes){
+  for (const i of indexes){
+    const img = new Image();
+    img.onload = () => { art[i] = img; };
+    img.src = "/cartoon/img?id=" + encodeURIComponent(id) + "&scene=" + i;
+  }
+}
+
+// Наезд камеры: неподвижная картинка оживает медленным приближением и
+// сдвигом. Без него иллюстрация читается как остановленный кадр.
+function drawArt(img, p){
+  const zoom = 1.06 + p * .08;
+  const ar = img.width / img.height, box = W / GROUND;
+  let w, h;
+  if (ar > box){ h = GROUND * zoom; w = h * ar; } else { w = W * zoom; h = w / ar; }
+  const dx = (W - w) / 2 - (p - .5) * 16, dy = (GROUND - h) / 2 - (p - .5) * 10;
+  ctx.save();
+  ctx.beginPath(); ctx.rect(0, 0, W, H); ctx.clip();
+  ctx.drawImage(img, dx, dy, w, h);
+  ctx.restore();
+}
+
 function frame(now){
   if (!playing) return;
   const t = (now - t0) / 1000;
@@ -615,10 +641,16 @@ function frame(now){
   const beat = scene.beats[bi] || null;
   const inBeat = (local % BEAT) / BEAT;
 
-  backdrop(scene.bg, t);
+  const sceneIndex = film.scenes.indexOf(scene);
+  const picture = art[sceneIndex];
+  const dur0 = Math.max(1, scene.beats.length) * BEAT;
 
-  // положение каждого персонажа: до своего такта стоит, в такте идёт
-  for (const a of scene.actors){
+  if (picture) drawArt(picture, local / dur0);
+  else backdrop(scene.bg, t);
+
+  // положение каждого персонажа: до своего такта стоит, в такте идёт.
+  // Поверх нарисованного кадра фигур нет — они уже на картинке.
+  for (const a of picture ? [] : scene.actors){
     // Настроение держится до следующей своей реплики, а не гаснет вместе с
     // тактом: обиженный персонаж не веселеет оттого, что заговорил другой.
     let x = a.x, action = "idle", mood = "calm";
@@ -639,10 +671,15 @@ function frame(now){
       bubble(x * W, GROUND - 128, beat.say);
   }
 
+  // Реплику над картинкой всё равно показываем: слова несёт раскадровка,
+  // а на кадре их нет — рисовать текст моделью значит получить каракули.
+  if (picture && beat && beat.say)
+    bubble(W * .5, GROUND * .42, beat.say);
+
   caption(scene.narration);
 
   // затемнение на стыке сцен
-  const dur = Math.max(1, scene.beats.length) * BEAT;
+  const dur = dur0;
   const edge = Math.min(local, dur - local);
   if (edge < .35){
     ctx.fillStyle = `rgba(8,10,16,${(1 - edge / .35) * .8})`;
@@ -678,6 +715,7 @@ async function load(){
     const d = await r.json();
     if (d.status !== "ok") throw new Error(d.message || "нет данных");
     film = d.film; film.source = JSON.stringify(d.film);
+    if (d.frames && d.frames.length) loadArt(id, d.frames);
     $("msg").style.display = "none";
     $("bar").style.display = "flex";
     $("title").textContent = film.title || "";

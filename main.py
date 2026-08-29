@@ -178,7 +178,13 @@ def make_handle_ping(bot: Bot, dp: Dispatcher):
             except ValueError:
                 board = None
             if board:
-                payload = '{"status":"ok","film":' + board + '}'
+                try:
+                    frames = await database.cartoon_frame_list(
+                        int(query_params.get("id", "0")))
+                except ValueError:
+                    frames = []
+                payload = ('{"status":"ok","frames":' + json.dumps(frames)
+                           + ',"film":' + board + '}')
                 status_line = "HTTP/1.1 200 OK"
             else:
                 payload = json.dumps({"status": "error", "message": "not found"})
@@ -190,6 +196,28 @@ def make_handle_ping(bot: Bot, dp: Dispatcher):
                 f"Content-Length: {len(payload.encode('utf-8'))}\r\n"
                 f"Connection: close\r\n\r\n{payload}"
             ).encode('utf-8')
+
+        elif path == "/cartoon/img" and method == "GET":
+            frame = None
+            try:
+                frame = await database.cartoon_frame(
+                    int(query_params.get("id", "0")), int(query_params.get("scene", "0")))
+            except ValueError:
+                pass
+            if frame:
+                data, mime = frame
+                response = (
+                    f"HTTP/1.1 200 OK\r\n"
+                    f"Content-Type: {mime}\r\n"
+                    # Кадр неизменен: он нарисован один раз и навсегда,
+                    # поэтому пусть браузер держит его у себя.
+                    f"Cache-Control: public, max-age=31536000, immutable\r\n"
+                    f"{cors_headers}"
+                    f"Content-Length: {len(data)}\r\n"
+                    f"Connection: close\r\n\r\n"
+                ).encode('utf-8') + bytes(data)
+            else:
+                response = b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
 
         elif path == "/api/metrics" and method == "GET":
             dau, mau, total_clicks = 0, 0, 0

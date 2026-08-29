@@ -488,7 +488,20 @@ async def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""")
 
-        # 23. Анкеты поиска партнёра для игры
+        # 23. Нарисованные кадры к сценам. Хранятся в базе, а не файлами:
+        # своего файлового хранилища у сервиса нет, а кадр нужен ровно там же,
+        # где раскадровка, и живёт ровно столько же.
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.cartoon_frames (
+            cartoon_id INTEGER NOT NULL,
+            scene_index INTEGER NOT NULL,
+            mime TEXT NOT NULL DEFAULT 'image/png',
+            data BYTEA NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (cartoon_id, scene_index)
+        )""")
+
+        # 24. Анкеты поиска партнёра для игры
         await conn.execute(f"""
         CREATE TABLE IF NOT EXISTS {SCHEMA}.game_partners (
             id SERIAL PRIMARY KEY,
@@ -1208,6 +1221,51 @@ async def save_cartoon(user_id: int, story: str, board_json: str):
     except Exception as e:
         logging.error(f"Мультфильм не сохранён: {e}")
         return None
+
+
+async def save_cartoon_frames(cartoon_id: int, frames) -> int:
+    """Кладёт нарисованные кадры. frames — [(номер сцены, байты, тип)]"""
+    if not frames:
+        return 0
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.executemany(
+                f"INSERT INTO {SCHEMA}.cartoon_frames (cartoon_id, scene_index, mime, data) "
+                "VALUES ($1, $2, $3, $4) ON CONFLICT (cartoon_id, scene_index) DO NOTHING",
+                [(cartoon_id, i, mime, data) for i, data, mime in frames])
+        return len(frames)
+    except Exception as e:
+        logging.error(f"Кадры не сохранены: {e}")
+        return 0
+
+
+async def cartoon_frame(cartoon_id: int, scene_index: int):
+    """(байты, тип) одного кадра либо None"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                f"SELECT data, mime FROM {SCHEMA}.cartoon_frames "
+                "WHERE cartoon_id = $1 AND scene_index = $2", cartoon_id, scene_index)
+        return (row["data"], row["mime"]) if row else None
+    except Exception as e:
+        logging.error(f"Кадр не читается: {e}")
+        return None
+
+
+async def cartoon_frame_list(cartoon_id: int):
+    """Номера сцен, для которых кадр нарисован"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT scene_index FROM {SCHEMA}.cartoon_frames "
+                "WHERE cartoon_id = $1 ORDER BY scene_index", cartoon_id)
+        return [r["scene_index"] for r in rows]
+    except Exception as e:
+        logging.error(f"Список кадров недоступен: {e}")
+        return []
 
 
 async def get_cartoon(cartoon_id: int):
