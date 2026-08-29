@@ -75,12 +75,30 @@ STYLE = ("Children's storybook illustration, soft gouache texture, warm "
          "no text, no letters, no watermark, no frame borders.")
 
 
-def provider() -> str:
-    if os.environ.get("GEMINI_API_KEY"):
-        return "gemini"
+def providers() -> list:
+    """Поставщики, у которых есть ключ, в порядке предпочтения.
+
+    Порядок важен: у Gemini ключ может лежать с бесплатных времён и давать
+    сплошной отказ по квоте. Если рядом есть второй ключ, надо переходить
+    к нему, а не упираться в первый.
+    """
+    have = []
     if os.environ.get("FAL_KEY"):
-        return "fal"
-    return ""
+        have.append("fal")
+    if os.environ.get("GEMINI_API_KEY"):
+        have.append("gemini")
+
+    prefer = os.environ.get("IMAGE_PROVIDER", "").strip().lower()
+    if prefer in have:
+        have.remove(prefer)
+        have.insert(0, prefer)
+    return have
+
+
+def provider() -> str:
+    """Первый доступный поставщик либо пусто — для тех, кому нужен один ответ"""
+    got = providers()
+    return got[0] if got else ""
 
 
 # =====================================================================
@@ -270,9 +288,24 @@ async def _gemini(client: httpx.AsyncClient, prompt: str):
 
 
 async def diagnose():
-    """Строки отчёта для команды проверки: что с ключом, моделями и запросом"""
+    """Строки отчёта для команды проверки: что с ключами, моделями и запросом"""
     out = []
+    fal_key = os.environ.get("FAL_KEY", "")
     key = os.environ.get("GEMINI_API_KEY", "")
+    out.append("Порядок поставщиков: " + (", ".join(providers()) or "ни одного ключа"))
+    out.append("")
+
+    if fal_key:
+        out.append(f"FAL_KEY: виден, {len(fal_key)} знаков")
+        async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+            try:
+                got = await _fal(client, STYLE + " Scene: a sunny meadow. A green dragon stands nearby.")
+                out.append("fal.ai: " + (f"РАБОТАЕТ, {len(got[0]) // 1024} КБ" if got
+                                         else "не вернул кадр, подробности в логах"))
+            except Exception as e:
+                out.append(f"fal.ai: {type(e).__name__}: {str(e)[:120]}")
+        out.append("")
+
     out.append(f"Ключ GEMINI_API_KEY: {'виден, ' + str(len(key)) + ' знаков' if key else 'НЕ ЗАДАН'}")
     out.append(f"Модель: {GEMINI_MODEL}")
     if not key:
@@ -346,28 +379,35 @@ async def render(board: dict):
     Неудача отдельного кадра не отменяет остальные: сцена без картинки
     просто отыграется прежней векторной отрисовкой.
     """
-    which = provider()
-    if not which:
+    available = providers()
+    if not available:
         return []
 
     cast = build_cast(board)
     prompts = [(i, scene_prompt(s, cast)) for i, s in enumerate(board.get("scenes", []))]
-    draw = _gemini if which == "gemini" else _fal
     gate = asyncio.Semaphore(PARALLEL)
-    out = []
 
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        async def one(index, prompt):
-            async with gate:
-                try:
-                    got = await draw(client, prompt)
-                except Exception as e:
-                    logging.error(f"Кадр {index}: {type(e).__name__}: {e}")
-                    return
-                if got:
-                    out.append((index, got[0], got[1]))
+        # Если первый поставщик не дал ни одного кадра — пробуем следующего.
+        # Частичная удача второй попытки не нужна: перерисовывать уже готовое
+        # значит платить дважды.
+        for which in available:
+            draw = _gemini if which == "gemini" else _fal
+            out = []
 
-        await asyncio.gather(*(one(i, p) for i, p in prompts))
+            async def one(index, prompt):
+                async with gate:
+                    try:
+                        got = await draw(client, prompt)
+                    except Exception as e:
+                        logging.error(f"Кадр {index} ({which}): {type(e).__name__}: {e}")
+                        return
+                    if got:
+                        out.append((index, got[0], got[1]))
 
-    logging.info(f"Кадры ({which}): нарисовано {len(out)} из {len(prompts)}")
-    return sorted(out)
+            await asyncio.gather(*(one(i, p) for i, p in prompts))
+            logging.info(f"Кадры ({which}): нарисовано {len(out)} из {len(prompts)}")
+            if out:
+                return sorted(out)
+
+    return []
