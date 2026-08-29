@@ -12,6 +12,7 @@
 # Раскадровка — JSON и приходит от модели, то есть из ненадёжного источника.
 # Поэтому она не идёт на страницу как есть: всё проверяется и приводится к
 # допустимым значениям. Иначе одна опечатка модели ломает проигрыватель.
+import html
 import json
 import logging
 import os
@@ -250,6 +251,24 @@ def _back(lang):
     return InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text=inline_kb.label(inline_kb.HOME_TEXTS, lang),
                              callback_data="go_home")]])
+
+
+@router.message(F.text == "/imagetest")
+async def image_test(message: Message):
+    """Проверка рисовальщика прямо в чате.
+
+    Логи Render владельцу неудобны, а причина отказа нужна дословно:
+    неверное имя модели и незаданный ключ выглядят одинаково — «кадров нет».
+    """
+    if not config.is_admin(message.from_user.id):
+        return
+    note = await message.answer("🔍 Проверяю рисовальщик…")
+    try:
+        lines = await imagegen.diagnose()
+    except Exception as e:
+        lines = [f"Проверка сорвалась: {type(e).__name__}: {e}"]
+    await note.edit_text("🔍 <b>Рисовальщик</b>\n\n" + "\n".join(
+        f"• {html.escape(str(l))}" for l in lines))
 
 
 @router.callback_query(F.data == "cartoon_open")

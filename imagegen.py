@@ -18,10 +18,15 @@ import httpx
 TIMEOUT = 90
 PARALLEL = 3          # больше — упираемся в лимиты, меньше — долго ждать
 
-GEMINI_MODEL = "gemini-2.5-flash-image"
-GEMINI_URL = ("https://generativelanguage.googleapis.com/v1beta/models/"
-              f"{GEMINI_MODEL}:generateContent")
+# Имя модели вынесено в переменную окружения: у Google оно меняется от
+# версии к версии, и подобрать верное должно быть можно без выкладки кода.
+GEMINI_MODEL = os.environ.get("GEMINI_IMAGE_MODEL", "gemini-2.5-flash-image")
+GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta"
 FAL_URL = "https://fal.run/fal-ai/flux/schnell"
+
+
+def gemini_url(model: str = None) -> str:
+    return f"{GEMINI_BASE}/models/{model or GEMINI_MODEL}:generateContent"
 
 # Общий для всех кадров зачин. Стиль задаётся один раз и слово в слово:
 # любое расхождение в описании стиля — и соседние сцены выглядят из разных
@@ -164,21 +169,78 @@ def build_cast(board: dict) -> dict:
 # ПОСТАВЩИКИ
 # =====================================================================
 
-async def _gemini(client: httpx.AsyncClient, prompt: str):
-    key = os.environ["GEMINI_API_KEY"]
-    r = await client.post(
-        GEMINI_URL, params={"key": key},
-        json={"contents": [{"parts": [{"text": prompt}]}]},
-    )
-    if r.status_code != 200:
-        logging.error(f"Кадр: Gemini ответил {r.status_code}: {r.text[:200]}")
-        return None
-    for part in r.json().get("candidates", [{}])[0].get("content", {}).get("parts", []):
-        blob = part.get("inlineData") or part.get("inline_data")
-        if blob and blob.get("data"):
-            return base64.b64decode(blob["data"]), blob.get("mimeType", "image/png")
-    logging.error("Кадр: Gemini не вернул изображения")
+def _picture(payload):
+    """Достаёт картинку из ответа Gemini, как бы он её ни назвал"""
+    for cand in payload.get("candidates", []):
+        for part in cand.get("content", {}).get("parts", []):
+            blob = part.get("inlineData") or part.get("inline_data")
+            if blob and blob.get("data"):
+                return (base64.b64decode(blob["data"]),
+                        blob.get("mimeType") or blob.get("mime_type") or "image/png")
     return None
+
+
+async def _gemini_call(client: httpx.AsyncClient, prompt: str, model: str = None):
+    """(картинка, описание ошибки). Описание нужно, чтобы проверка могла
+    показать владельцу настоящую причину, а не «не получилось»."""
+    key = os.environ.get("GEMINI_API_KEY", "")
+    body = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        # Без этого поля модель отвечает текстом «вот ваша картинка» и
+        # никакой картинки. С ним — картинкой. Старые версии поля не знают,
+        # поэтому при отказе повторяем без него.
+        "generationConfig": {"responseModalities": ["TEXT", "IMAGE"]},
+    }
+    for attempt in (body, {"contents": body["contents"]}):
+        r = await client.post(gemini_url(model), params={"key": key}, json=attempt)
+        if r.status_code == 200:
+            got = _picture(r.json())
+            if got:
+                return got, None
+            return None, "ответ без изображения: " + r.text[:200]
+        if r.status_code != 400:
+            return None, f"HTTP {r.status_code}: {r.text[:200]}"
+    return None, f"HTTP 400: {r.text[:250]}"
+
+
+async def _gemini(client: httpx.AsyncClient, prompt: str):
+    got, error = await _gemini_call(client, prompt)
+    if error:
+        logging.error(f"Кадр: Gemini — {error}")
+    return got
+
+
+async def diagnose():
+    """Строки отчёта для команды проверки: что с ключом, моделями и запросом"""
+    out = []
+    key = os.environ.get("GEMINI_API_KEY", "")
+    out.append(f"Ключ GEMINI_API_KEY: {'виден, ' + str(len(key)) + ' знаков' if key else 'НЕ ЗАДАН'}")
+    out.append(f"Модель: {GEMINI_MODEL}")
+    if not key:
+        return out
+
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        try:
+            r = await client.get(f"{GEMINI_BASE}/models", params={"key": key})
+            if r.status_code != 200:
+                out.append(f"Список моделей: HTTP {r.status_code} — {r.text[:160]}")
+            else:
+                names = [m.get("name", "").replace("models/", "")
+                         for m in r.json().get("models", [])]
+                image = [n for n in names if "image" in n]
+                out.append(f"Моделей доступно: {len(names)}")
+                out.append("С картинками: " + (", ".join(image[:8]) if image else "ни одной"))
+                out.append("Нужная модель в списке: "
+                           + ("да" if GEMINI_MODEL in names else "НЕТ"))
+        except Exception as e:
+            out.append(f"Список моделей: {type(e).__name__}: {e}")
+
+        try:
+            got, error = await _gemini_call(client, STYLE + " Scene: a sunny meadow. A green dragon stands nearby.")
+            out.append("Пробный кадр: " + (f"получен, {len(got[0])} байт" if got else f"НЕТ — {error}"))
+        except Exception as e:
+            out.append(f"Пробный кадр: {type(e).__name__}: {e}")
+    return out
 
 
 async def _fal(client: httpx.AsyncClient, prompt: str):
