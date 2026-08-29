@@ -28,6 +28,45 @@ FAL_URL = "https://fal.run/fal-ai/flux/schnell"
 def gemini_url(model: str = None) -> str:
     return f"{GEMINI_BASE}/models/{model or GEMINI_MODEL}:generateContent"
 
+
+# Порядок перебора: от самых дешёвых к дорогим. У бесплатного доступа квота
+# на картинки разная у разных моделей, и облегчённая часто работает там, где
+# старшая отвечает «квота исчерпана».
+PREFERRED = [
+    "gemini-3.1-flash-lite-image",
+    "gemini-3.1-flash-image",
+    "gemini-2.5-flash-image",
+    "gemini-3.1-flash-image-preview",
+    "gemini-3-pro-image",
+    "gemini-3-pro-image-preview",
+]
+
+# Найденная рабочая модель запоминается на время жизни процесса: искать её
+# заново перед каждым кадром значит тратить квоту на заведомые отказы.
+_working = None
+
+
+async def image_models(client: httpx.AsyncClient) -> list:
+    """Картиночные модели аккаунта, от дешёвых к дорогим"""
+    try:
+        r = await client.get(f"{GEMINI_BASE}/models",
+                             params={"key": os.environ.get("GEMINI_API_KEY", "")})
+        if r.status_code != 200:
+            return []
+        names = [m.get("name", "").replace("models/", "") for m in r.json().get("models", [])]
+    except Exception as e:
+        logging.error(f"Кадр: список моделей недоступен: {e}")
+        return []
+
+    have = [n for n in names if "image" in n]
+    ordered = [n for n in PREFERRED if n in have]
+    ordered += [n for n in have if n not in ordered]
+    # Заданная владельцем модель идёт первой, если она вообще есть
+    if GEMINI_MODEL in ordered:
+        ordered.remove(GEMINI_MODEL)
+        ordered.insert(0, GEMINI_MODEL)
+    return ordered
+
 # Общий для всех кадров зачин. Стиль задаётся один раз и слово в слово:
 # любое расхождение в описании стиля — и соседние сцены выглядят из разных
 # мультфильмов.
@@ -204,10 +243,30 @@ async def _gemini_call(client: httpx.AsyncClient, prompt: str, model: str = None
 
 
 async def _gemini(client: httpx.AsyncClient, prompt: str):
-    got, error = await _gemini_call(client, prompt)
-    if error:
-        logging.error(f"Кадр: Gemini — {error}")
-    return got
+    """Рисует кадр, перебирая модели, пока не найдётся та, где есть квота.
+
+    Отказ по квоте (429) — не поломка, а свойство бесплатного доступа: на
+    одной модели лимит исчерпан, на соседней ещё есть. Поэтому перебираем,
+    а найденную запоминаем.
+    """
+    global _working
+
+    if _working:
+        got, error = await _gemini_call(client, prompt, _working)
+        if got:
+            return got
+        logging.warning(f"Кадр: модель {_working} перестала отвечать — {error}")
+        _working = None
+
+    for model in await image_models(client) or [GEMINI_MODEL]:
+        got, error = await _gemini_call(client, prompt, model)
+        if got:
+            if model != _working:
+                logging.info(f"Кадры рисует модель {model}")
+            _working = model
+            return got
+        logging.warning(f"Кадр: {model} — {error}")
+    return None
 
 
 async def diagnose():
@@ -235,11 +294,31 @@ async def diagnose():
         except Exception as e:
             out.append(f"Список моделей: {type(e).__name__}: {e}")
 
-        try:
-            got, error = await _gemini_call(client, STYLE + " Scene: a sunny meadow. A green dragon stands nearby.")
-            out.append("Пробный кадр: " + (f"получен, {len(got[0])} байт" if got else f"НЕТ — {error}"))
-        except Exception as e:
-            out.append(f"Пробный кадр: {type(e).__name__}: {e}")
+        # Перебираем модели по очереди: важно не «работает ли Gemini вообще»,
+        # а какая именно модель доступна этому аккаунту прямо сейчас.
+        probe = STYLE + " Scene: a sunny meadow. A green dragon stands nearby."
+        out.append("")
+        found = None
+        for model in await image_models(client) or [GEMINI_MODEL]:
+            if found:
+                out.append(f"{model}: не проверяли")
+                continue
+            try:
+                got, error = await _gemini_call(client, probe, model)
+            except Exception as e:
+                out.append(f"{model}: {type(e).__name__}")
+                continue
+            if got:
+                found = model
+                out.append(f"{model}: РАБОТАЕТ, {len(got[0]) // 1024} КБ")
+            elif "429" in (error or ""):
+                out.append(f"{model}: квота исчерпана")
+            else:
+                out.append(f"{model}: {(error or '')[:90]}")
+
+        out.append("")
+        out.append("Итог: рисуем моделью " + found if found
+                   else "Итог: ни одна модель не доступна — нужен платёжный аккаунт")
     return out
 
 
