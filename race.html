@@ -40,6 +40,27 @@
     box-shadow:inset 0 0 0 1px var(--line);padding:12px 26px;font-size:15px}
   .hint{font-size:13px;color:var(--dim)}
   .saved{font-size:13px;min-height:1.2em;color:var(--accent)}
+
+  /* шкала закиси и кнопка — единственное, что перекрывает дорогу,
+     поэтому держим их у нижнего края и узкими */
+  #nitro{position:fixed;left:0;right:0;bottom:calc(env(safe-area-inset-bottom) + 16px);
+    display:none;flex-direction:column;align-items:center;gap:8px;pointer-events:none}
+  #nitro.on{display:flex}
+  #nbar{width:min(62%,240px);height:7px;border-radius:4px;background:#1c2030;
+    box-shadow:inset 0 0 0 1px #2b3145;overflow:hidden}
+  #nfill{height:100%;width:0;border-radius:4px;
+    background:linear-gradient(90deg,#25e0ff,#ff2fb0);transition:width .12s linear}
+  #nbtn{pointer-events:auto;padding:12px 30px;font-size:15px;border-radius:12px;
+    background:#191d2b;color:#5d6478;box-shadow:inset 0 0 0 1px #2b3145;
+    letter-spacing:.06em;text-transform:uppercase}
+  #nbtn.ready{background:linear-gradient(90deg,#25e0ff,#ff2fb0);color:#06070c;
+    box-shadow:0 0 22px rgba(255,47,176,.5)}
+
+  .garage{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+  .sw{width:30px;height:30px;border-radius:50%;cursor:pointer;
+    box-shadow:inset 0 0 0 2px rgba(255,255,255,.14)}
+  .sw.pick{box-shadow:0 0 0 2px #fff, 0 0 14px currentColor}
+  .lbl{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
 </style>
 </head>
 <body>
@@ -50,11 +71,20 @@
   <div class="right"><span>Рекорд</span><b id="hi">0</b></div>
 </div>
 
+<div id="nitro">
+  <div id="nbar"><div id="nfill"></div></div>
+  <button id="nbtn">Азот</button>
+</div>
+
 <div class="panel on" id="start">
-  <h1>🏎 Гонка</h1>
+  <h1>🏎 Ночная гонка</h1>
   <p>Уворачивайтесь от встречных. Чем дальше — тем быстрее.</p>
+  <div class="lbl">Кузов</div>
+  <div class="garage" id="colors"></div>
+  <div class="lbl">Неон</div>
+  <div class="garage" id="glows"></div>
   <button id="go">Поехали</button>
-  <div class="hint">Слева / справа по экрану — или стрелками</div>
+  <div class="hint">Слева / справа по экрану — или стрелками.<br>Азот копится за объезды.</div>
 </div>
 
 <div class="panel" id="over">
@@ -132,9 +162,39 @@ const gapPx = () => Math.max(GAP_MIN, GAP_MAX - (speed - SPEED0) * GAP_K);
 
 let gapLane = 1;
 
+// Закись копится за пройденные стены и тратится разом. Обмен честный:
+// разгон даёт очки быстрее, но и отнимает время на реакцию — решает игрок,
+// а не случай.
+const NITRO_FULL = 100, NITRO_PER_WAVE = 12, NITRO_SEC = 2.2, NITRO_BOOST = 1.55;
+const nitro = { charge: 0, on: false, left: 0 };
+
+// Тюнинг переживает выход из игры: цвет и неон — это «моя машина»,
+// и подбирать их заново каждый заезд незачем.
+const TUNE_COLORS = ["#48b0ff","#ff2fb0","#2bff88","#ff8a1e","#e8eaee","#9d4bff"];
+const tune = {
+  color: store.get("race_color") || "#48b0ff",
+  glow: store.get("race_glow") || "#ff2fb0"
+};
+
 function reset(){
   score = 0; lane = 1; carX = laneX(1); speed = SPEED0; dist = 0;
   cars = []; gapLane = 1; spawnIn = .5; last = performance.now();
+  lights = []; lightIn = 0;
+  nitro.charge = 0; nitro.on = false; nitro.left = 0;
+  setNitroUI();
+}
+
+function setNitroUI(){
+  const pct = Math.round(nitro.charge);
+  $("nfill").style.width = pct + "%";
+  $("nbtn").classList.toggle("ready", nitro.charge >= NITRO_FULL || nitro.on);
+}
+
+function fireNitro(){
+  if (state !== "play" || nitro.on || nitro.charge < NITRO_FULL) return;
+  nitro.on = true; nitro.left = NITRO_SEC; nitro.charge = 0;
+  if (tg && tg.HapticFeedback) { try { tg.HapticFeedback.impactOccurred("heavy"); } catch(e){} }
+  setNitroUI();
 }
 
 function spawn(){
@@ -277,16 +337,54 @@ function drawCar(x, y, color, body, facingUp){
   ctx.restore();
 }
 
-function draw(){
-  ctx.fillStyle = "#11131a"; ctx.fillRect(0, 0, W, H);
-  ctx.fillStyle = "#23262f"; ctx.fillRect(ROAD_X, 0, ROAD_W, H);
+// --- ночная обочина. Огни живут в своём списке и уезжают вместе с дорогой,
+//     иначе город стоит на месте, а едет одна разметка.
+const NEON = ["#ff2fb0","#25e0ff","#ff8a1e","#9d4bff","#2bff88"];
+let lights = [], lightIn = 0;
 
-  // обочина
-  ctx.fillStyle = "#31343d";
+function spawnLight(){
+  const side = Math.random() < .5 ? -1 : 1;
+  lights.push({
+    side, y: -60,
+    h: 40 + Math.random() * 90,
+    color: NEON[Math.floor(Math.random() * NEON.length)],
+    w: 6 + Math.random() * 16
+  });
+}
+
+function drawCity(){
+  for (const L of lights){
+    const x = L.side < 0 ? ROAD_X - 6 - L.w : ROAD_X + ROAD_W + 6;
+    ctx.globalAlpha = .85;
+    ctx.fillStyle = L.color;
+    ctx.fillRect(x, L.y, L.w, L.h);
+    // отблеск на мокром асфальте: та же вывеска, размазанная по краю дороги
+    ctx.globalAlpha = .16;
+    const gx = L.side < 0 ? ROAD_X : ROAD_X + ROAD_W - 46;
+    const g = ctx.createLinearGradient(L.side < 0 ? ROAD_X : ROAD_X + ROAD_W, 0,
+                                       L.side < 0 ? ROAD_X + 46 : ROAD_X + ROAD_W - 46, 0);
+    g.addColorStop(0, L.color); g.addColorStop(1, "transparent");
+    ctx.fillStyle = g;
+    ctx.fillRect(gx, L.y - 10, 46, L.h + 20);
+    ctx.globalAlpha = 1;
+  }
+}
+
+function draw(){
+  ctx.fillStyle = "#07080d"; ctx.fillRect(0, 0, W, H);
+  drawCity();
+
+  // мокрый асфальт: к центру полосы светлее, у краёв уходит в темноту
+  const road = ctx.createLinearGradient(ROAD_X, 0, ROAD_X + ROAD_W, 0);
+  road.addColorStop(0, "#12141b");
+  road.addColorStop(.5, "#1c1f28");
+  road.addColorStop(1, "#12141b");
+  ctx.fillStyle = road; ctx.fillRect(ROAD_X, 0, ROAD_W, H);
+
+  ctx.fillStyle = "#2a2d36";
   ctx.fillRect(ROAD_X - 6, 0, 6, H); ctx.fillRect(ROAD_X + ROAD_W, 0, 6, H);
 
-  // разметка
-  ctx.strokeStyle = "#4a4f5c"; ctx.lineWidth = 4; ctx.setLineDash([26, 24]);
+  ctx.strokeStyle = "#4e5361"; ctx.lineWidth = 4; ctx.setLineDash([26, 24]);
   ctx.lineDashOffset = -dash;
   for (let i = 1; i < LANES; i++){
     const x = ROAD_X + ROAD_W / LANES * i;
@@ -295,7 +393,35 @@ function draw(){
   ctx.setLineDash([]);
 
   cars.forEach(c => drawCar(laneX(c.lane), c.y, c.color, c.body, false));
-  drawCar(carX, H - CAR_H - 40, "#48b0ff", BODIES[1], true);   // игрок — спорткар
+
+  const py = H - CAR_H - 40;
+  glow(carX, py);
+  drawCar(carX, py, tune.color, BODIES[1], true);
+
+  if (nitro.on) streaks();
+}
+
+// подсветка днища — то, ради чего в Underground и покупали неон
+function glow(x, y){
+  const g = ctx.createRadialGradient(x, y + CAR_H / 2, 4, x, y + CAR_H / 2, CAR_W * 1.5);
+  g.addColorStop(0, tune.glow);
+  g.addColorStop(1, "transparent");
+  ctx.globalAlpha = nitro.on ? .75 : .45;
+  ctx.fillStyle = g;
+  ctx.fillRect(x - CAR_W * 1.6, y - CAR_W, CAR_W * 3.2, CAR_H + CAR_W * 2);
+  ctx.globalAlpha = 1;
+}
+
+// смаз на закиси: полосы вдоль движения, гуще у краёв
+function streaks(){
+  ctx.globalAlpha = .5;
+  ctx.strokeStyle = "#bfe9ff"; ctx.lineWidth = 2;
+  for (let i = 0; i < 22; i++){
+    const x = ROAD_X + Math.random() * ROAD_W;
+    const y = Math.random() * H, len = 60 + Math.random() * 120;
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y + len); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
 }
 
 function tick(now){
@@ -303,18 +429,36 @@ function tick(now){
   const dt = Math.min((now - last) / 1000, .05); last = now;
 
   speed = Math.min(SPEED_MAX, speed + dt * ACCEL);
-  dist += speed * dt; dash += speed * dt;
+  if (nitro.on){
+    nitro.left -= dt;
+    if (nitro.left <= 0){ nitro.on = false; setNitroUI(); }
+  }
+  // Ход считаем по скорости с ускорителем, а сам разгон в speed не пишем:
+  // иначе закись навсегда задирала бы базовую скорость.
+  const v = nitro.on ? speed * NITRO_BOOST : speed;
+
+  dist += v * dt; dash += v * dt;
   score = Math.floor(dist / 10);
   $("score").textContent = score;
 
   carX += (laneX(lane) - carX) * Math.min(dt * 14, 1);
 
+  lightIn -= dt;
+  if (lightIn <= 0){ spawnLight(); lightIn = .18 + Math.random() * .3; }
+  for (const L of lights) L.y += v * dt * 1.15;   // обочина ближе, значит быстрее
+  lights = lights.filter(L => L.y < H + 120);
+
   spawnIn -= dt;
-  if (spawnIn <= 0){ spawn(); spawnIn = gapPx() / speed; }
+  if (spawnIn <= 0){ spawn(); spawnIn = gapPx() / v; }
 
   const py = H - CAR_H - 40;
   for (const c of cars){
-    c.y += speed * dt;
+    const wasAbove = c.y + CAR_H <= py + 10;
+    c.y += v * dt;
+    if (wasAbove && c.y + CAR_H > py + 10 && !nitro.on){
+      nitro.charge = Math.min(NITRO_FULL, nitro.charge + NITRO_PER_WAVE / 2);
+      setNitroUI();
+    }
     const sameLane = Math.abs(laneX(c.lane) - carX) < CAR_W * .8;
     if (sameLane && c.y + CAR_H > py + 10 && c.y < py + CAR_H - 10){ crash(); return; }
   }
@@ -326,6 +470,8 @@ function tick(now){
 
 function crash(){
   state = "over";
+  nitro.on = false;
+  $("nitro").classList.remove("on");
   if (tg && tg.HapticFeedback) { try { tg.HapticFeedback.notificationOccurred("error"); } catch(e){} }
   ctx.fillStyle = "rgba(255,90,90,.28)"; ctx.fillRect(0, 0, W, H);
 
@@ -341,7 +487,8 @@ function crash(){
 
 function play(){
   $("start").classList.remove("on"); $("over").classList.remove("on");
-  $("hud").style.display = "flex"; $("hi").textContent = best;
+  $("hud").style.display = "flex"; $("nitro").classList.add("on");
+  $("hi").textContent = best;
   reset(); state = "play"; requestAnimationFrame(tick);
 }
 
@@ -366,7 +513,8 @@ function steer(dir){ if (state === "play") lane = Math.max(0, Math.min(LANES - 1
 addEventListener("keydown", e => {
   if (e.key === "ArrowLeft" || e.key === "a") steer(-1);
   if (e.key === "ArrowRight" || e.key === "d") steer(1);
-  if (e.key === " " && state !== "play") play();
+  if (e.key === "ArrowUp" || e.key === "w") fireNitro();
+  if (e.key === " "){ state === "play" ? fireNitro() : play(); }
 });
 let touchX = null;
 cv.addEventListener("pointerdown", e => { touchX = e.clientX; });
@@ -378,9 +526,29 @@ cv.addEventListener("pointerup", e => {
   touchX = null;
 });
 
+// --- гараж
+function swatches(host, list, key, apply){
+  host.innerHTML = "";
+  list.forEach(c => {
+    const el = document.createElement("div");
+    el.className = "sw"; el.style.background = c; el.style.color = c;
+    if (tune[key] === c) el.classList.add("pick");
+    el.onclick = () => {
+      tune[key] = c; store.set(apply, c);
+      [...host.children].forEach(n => n.classList.remove("pick"));
+      el.classList.add("pick");
+      draw();
+    };
+    host.appendChild(el);
+  });
+}
+swatches($("colors"), TUNE_COLORS, "color", "race_color");
+swatches($("glows"), NEON, "glow", "race_glow");
+
 $("go").onclick = play;
 $("again").onclick = play;
 $("close").onclick = () => { if (tg) tg.close(); };
+$("nbtn").onclick = fireNitro;
 $("hi").textContent = best;
 draw();
 </script>
