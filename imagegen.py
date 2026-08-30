@@ -12,6 +12,7 @@ import asyncio
 import base64
 import logging
 import os
+import urllib.parse
 
 import httpx
 
@@ -70,9 +71,13 @@ async def image_models(client: httpx.AsyncClient) -> list:
 # Общий для всех кадров зачин. Стиль задаётся один раз и слово в слово:
 # любое расхождение в описании стиля — и соседние сцены выглядят из разных
 # мультфильмов.
-STYLE = ("Children's storybook illustration, soft gouache texture, warm "
-         "lighting, clean shapes, gentle outlines, wide cinematic composition, "
-         "no text, no letters, no watermark, no frame borders.")
+# Стиль разрезан надвое намеренно. Короткий якорь идёт в начало запроса,
+# где внимание модели наибольшее, — иначе картинка выходит в чужой манере.
+# Подробности уезжают в конец, чтобы не оттеснять героев из начала.
+STYLE_LEAD = "Children's storybook illustration, soft gouache painting."
+STYLE_TAIL = ("Warm lighting, clean rounded shapes, gentle outlines, friendly faces, "
+              "wide cinematic composition. No text, no letters, no watermark.")
+STYLE = STYLE_LEAD + " " + STYLE_TAIL
 
 
 def providers() -> list:
@@ -87,6 +92,10 @@ def providers() -> list:
         have.append("fal")
     if os.environ.get("GEMINI_API_KEY"):
         have.append("gemini")
+    # Бесплатный рисовальщик идёт последним и не требует ключа вовсе. Он
+    # медленнее и без обещаний доступности, но позволяет увидеть результат
+    # до всякой оплаты — и остаётся страховкой, когда платный отказал.
+    have.append("free")
 
     prefer = os.environ.get("IMAGE_PROVIDER", "").strip().lower()
     if prefer in have:
@@ -149,7 +158,7 @@ def _size_clause(size: float) -> str:
     if size <= .7:
         return ", small and young"
     if size >= 1.35:
-        return ", huge and towering"
+        return ", enormous, towering over everyone else"
     return ""
 
 
@@ -197,19 +206,32 @@ def scene_prompt(scene: dict, cast: dict) -> str:
     # один миг сцены — тот, ради которого она снята.
     beat = (scene.get("beats") or [{}])[0]
 
-    lines = []
-    for a in scene.get("actors", []):
+    # Действующий персонаж идёт первым и с действием, остальные следом.
+    # Порядок решает: модель дописывает картинку слева направо по тексту и
+    # то, что стоит в конце длинного запроса, попросту не рисует — так из
+    # кадра пропал дракон, ради которого сцена и снималась.
+    actors = list(scene.get("actors", []))
+    actors.sort(key=lambda a: a["id"] != beat.get("actor"))
+
+    parts = []
+    for i, a in enumerate(actors):
         who = cast.get(a["id"], character(a)) + _size_clause(a.get("size", 1))
-        who = who[:1].upper() + who[1:]
-        if beat.get("actor") == a["id"]:
-            lines.append(f"{who}, is {DOING.get(beat.get('action'), 'standing')}, "
-                         f"{MOODS.get(beat.get('mood'), 'calm')}.")
+        if i == 0 and beat.get("actor") == a["id"]:
+            parts.append(f"{who}, {DOING.get(beat.get('action'), 'standing')}, "
+                         f"{MOODS.get(beat.get('mood'), 'calm')}")
         else:
-            lines.append(f"{who}, stands nearby.")
+            parts.append(who)
+
+    count = {1: "One character", 2: "Two characters", 3: "Three characters"}.get(
+        len(parts), f"{len(parts)} characters")
+    who_line = f"{count} in one picture: " + "; and ".join(parts) if len(parts) > 1 \
+        else parts[0] if parts else "an empty landscape"
 
     # Текст рассказчика в запрос не идёт: он на языке истории, а подмешивать
     # кириллицу в английский запрос — верный способ получить каракули в кадре.
-    return f"{STYLE} Scene: {setting}. " + " ".join(lines)
+    # Стиль в конце: начало запроса модель слушает внимательнее, и тратить
+    # его на манеру рисования вместо героев — значит терять героев.
+    return f"{STYLE_LEAD} {who_line}. Setting: {setting}. {STYLE_TAIL}"
 
 
 def build_cast(board: dict) -> dict:
@@ -373,6 +395,28 @@ async def _fal(client: httpx.AsyncClient, prompt: str):
     return got.content, images[0].get("content_type", "image/jpeg")
 
 
+FREE_URL = "https://image.pollinations.ai/prompt/"
+
+
+async def _free(client: httpx.AsyncClient, prompt: str):
+    """Бесплатный рисовальщик без ключа.
+
+    Отдаёт картинку прямо в ответ на GET, поэтому обходится без учётной
+    записи. Взамен — ни скорости, ни гарантий: отказ здесь ожидаем и
+    просто означает, что сцена отыграется векторно.
+    """
+    url = FREE_URL + urllib.parse.quote(prompt[:1400], safe="")
+    r = await client.get(url, params={"width": 1024, "height": 768,
+                                      "nologo": "true", "model": "flux"})
+    if r.status_code != 200:
+        logging.error(f"Кадр: бесплатный рисовальщик ответил {r.status_code}")
+        return None
+    if not r.content or not r.headers.get("content-type", "").startswith("image/"):
+        logging.error("Кадр: бесплатный рисовальщик вернул не картинку")
+        return None
+    return r.content, r.headers.get("content-type", "image/jpeg")
+
+
 async def render(board: dict):
     """[(номер сцены, байты, тип)] — сколько кадров удалось нарисовать.
 
@@ -392,7 +436,7 @@ async def render(board: dict):
         # Частичная удача второй попытки не нужна: перерисовывать уже готовое
         # значит платить дважды.
         for which in available:
-            draw = _gemini if which == "gemini" else _fal
+            draw = {"gemini": _gemini, "fal": _fal, "free": _free}[which]
             out = []
 
             async def one(index, prompt):
