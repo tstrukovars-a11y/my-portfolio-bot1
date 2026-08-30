@@ -217,20 +217,37 @@ async def build(story: str, own: dict = None):
 # АДРЕСА
 # =====================================================================
 
-PAGE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cartoon.html")
-_page_cache = None
+HERE = os.path.dirname(os.path.abspath(__file__))
+PAGE_PATH = os.path.join(HERE, "cartoon.html")
+# Готовый мультфильм со встроенными кадрами. Нужен затем, что пустой раздел
+# ничего о себе не рассказывает: человек скорее напишет историю, увидев,
+# что из неё выйдет, чем прочитав описание.
+EXAMPLE_PATH = os.path.join(HERE, "cartoon_example.html")
+_pages = {}
+
+
+def _read(path: str) -> bytes:
+    if path not in _pages:
+        try:
+            with open(path, "rb") as f:
+                _pages[path] = f.read()
+        except OSError as e:
+            logging.error(f"Страница не читается ({path}): {e}")
+            _pages[path] = b"<h1>404</h1>"
+    return _pages[path]
 
 
 def page() -> bytes:
-    global _page_cache
-    if _page_cache is None:
-        try:
-            with open(PAGE_PATH, "rb") as f:
-                _page_cache = f.read()
-        except OSError as e:
-            logging.error(f"Страница мультфильма не читается: {e}")
-            _page_cache = b"<h1>404</h1>"
-    return _page_cache
+    return _read(PAGE_PATH)
+
+
+def example_page() -> bytes:
+    return _read(EXAMPLE_PATH)
+
+
+def example_url() -> str:
+    base = os.environ.get("RENDER_EXTERNAL_URL", "").rstrip("/")
+    return f"{base}/cartoon/example" if base.startswith("https://") else ""
 
 
 def watch_url(cartoon_id: int) -> str:
@@ -264,8 +281,17 @@ MY_CHARS = {"ru": "🎨 Мои персонажи", "en": "🎨 My characters",
             "fr": "🎨 Mes personnages", "he": "🎨 הדמויות שלי"}
 
 
+EXAMPLE = {"ru": "🍿 Посмотреть пример", "en": "🍿 See an example",
+           "fr": "🍿 Voir un exemple", "he": "🍿 לראות דוגמה"}
+
+
 def _back(lang):
-    return InlineKeyboardMarkup(inline_keyboard=[
+    rows = []
+    demo = example_url()
+    if demo:
+        rows.append([InlineKeyboardButton(text=EXAMPLE.get(lang, EXAMPLE["en"]),
+                                          web_app=WebAppInfo(url=demo))])
+    return InlineKeyboardMarkup(inline_keyboard=rows + [
         [InlineKeyboardButton(text=MY_CHARS.get(lang, MY_CHARS["en"]),
                               callback_data="char_list")],
         [InlineKeyboardButton(text=inline_kb.label(inline_kb.HOME_TEXTS, lang),

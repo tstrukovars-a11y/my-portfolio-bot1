@@ -173,6 +173,16 @@ def make_handle_ping(bot: Bot, dp: Dispatcher):
                 f"Connection: close\r\n\r\n"
             ).encode('utf-8') + body_bytes
 
+        elif path == "/cartoon/example" and method == "GET":
+            body_bytes = cartoon.example_page()
+            response = (
+                f"HTTP/1.1 200 OK\r\n"
+                f"Content-Type: text/html; charset=utf-8\r\n"
+                f"Cache-Control: public, max-age=3600\r\n"
+                f"Content-Length: {len(body_bytes)}\r\n"
+                f"Connection: close\r\n\r\n"
+            ).encode('utf-8') + body_bytes
+
         elif path == "/cartoon/data" and method == "GET":
             try:
                 board = await database.get_cartoon(int(query_params.get("id", "0")))
