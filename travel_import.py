@@ -283,6 +283,78 @@ def _places_menu(places, title: str):
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+async def _next_place(state: FSMContext):
+    """Следующее место без фото, минуя уже пропущенные в этом заходе"""
+    data = await state.get_data()
+    skipped = set(data.get("skipped", []))
+    for pid, country, place in await database.travel_without_photo():
+        if pid not in skipped:
+            return pid, country, place
+    return None
+
+
+def _shooting_menu(place_id: int):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⏭ Пропустить", callback_data="travel_skip"),
+         InlineKeyboardButton(text="✏️ Текст",
+                              callback_data=f"travel_edit_{place_id}")],
+        [InlineKeyboardButton(text="⏹ Закончить", callback_data="travel_stop")],
+    ])
+
+
+async def _ask_next(target, state: FSMContext, prefix: str = ""):
+    """Показывает следующее место и ждёт снимок. Возвращает False, когда мест
+    не осталось — тогда поток закончен и состояние сбрасывается."""
+    nxt = await _next_place(state)
+    if not nxt:
+        await state.clear()
+        await target.answer(prefix + "✅ Мест без фотографии не осталось.")
+        return False
+
+    pid, country, place = nxt
+    left = len(await database.travel_without_photo())
+    await state.set_state(Importing.waiting_photo)
+    await state.update_data(place_id=pid, place=place)
+    await target.answer(
+        f"{prefix}📷 <b>{html.escape(place)}</b> · {html.escape(country)}\n\n"
+        f"Пришлите снимок. Осталось без фото: {left}",
+        reply_markup=_shooting_menu(pid))
+    return True
+
+
+@router.callback_query(F.data == "travel_shoot")
+async def shoot_in_row(call: CallbackQuery, state: FSMContext):
+    """Съёмка подряд: место — снимок — сразу следующее место.
+
+    Возврат в меню после каждой фотографии делал загрузку семидесяти
+    снимков невыполнимой работой.
+    """
+    if not config.is_admin(call.from_user.id):
+        await call.answer()
+        return
+    await state.update_data(skipped=[])
+    await _ask_next(call.message, state)
+    await call.answer()
+
+
+@router.callback_query(F.data == "travel_skip")
+async def skip_place(call: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    skipped = list(data.get("skipped", []))
+    if data.get("place_id"):
+        skipped.append(data["place_id"])
+    await state.update_data(skipped=skipped)
+    await _ask_next(call.message, state)
+    await call.answer("Пропущено")
+
+
+@router.callback_query(F.data == "travel_stop")
+async def stop_shooting(call: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await call.message.answer("Готово. Вернуться можно кнопкой «Приложить фотографии».")
+    await call.answer()
+
+
 @router.callback_query(F.data == "travel_photos")
 async def list_without_photo(call: CallbackQuery, state: FSMContext):
     if not config.is_admin(call.from_user.id):
@@ -294,9 +366,15 @@ async def list_without_photo(call: CallbackQuery, state: FSMContext):
         await call.message.answer("✅ У всех мест уже есть фотографии.")
         await call.answer()
         return
+    rows = [[InlineKeyboardButton(text="📷 Загружать подряд",
+                                  callback_data="travel_shoot")]]
+    menu = _places_menu(places, "без фото")
+    menu.inline_keyboard = rows + menu.inline_keyboard
     await call.message.answer(
-        f"📷 <b>Без фотографии: {len(places)}</b>\n\nВыберите место — и пришлите снимок.",
-        reply_markup=_places_menu(places, "без фото"))
+        f"📷 <b>Без фотографии: {len(places)}</b>\n\n"
+        "«Подряд» — бот сам ведёт по списку, возвращаться в меню не нужно. "
+        "Либо выберите место вручную.",
+        reply_markup=menu)
     await call.answer()
 
 
@@ -340,18 +418,14 @@ async def take_photo(message: Message, state: FSMContext):
         return
 
     ok = await database.set_travel_photo(place_id, message.photo[-1].file_id)
-    await state.clear()
-
-    left = await database.travel_without_photo()
     if not ok:
-        await message.answer("⚠️ Не удалось сохранить фотографию.")
+        await message.answer("⚠️ Не удалось сохранить фотографию. Пришлите ещё раз.")
         return
-    await message.answer(
-        f"✅ Фото для «{html.escape(data.get('place', ''))}» сохранено.\n"
-        f"Осталось без фото: {len(left)}",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📷 Следующее место",
-                                  callback_data="travel_photos")]]))
+
+    # Сразу следующее место: пауза на меню между снимками и есть то, что
+    # превращает загрузку семидесяти фотографий в невыполнимую работу.
+    await _ask_next(message, state,
+                    prefix=f"✅ {html.escape(data.get('place', ''))}\n\n")
 
 
 @router.callback_query(F.data.startswith("travel_edit_"))
