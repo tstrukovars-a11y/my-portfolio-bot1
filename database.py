@@ -901,6 +901,47 @@ async def add_travel_place(country_ru, country_en, place, text_content,
         return f"error:{type(e).__name__}: {e}"
 
 
+async def travel_without_photo(limit: int = 40):
+    """(id, страна, место) мест без фотографии — по ним и идёт дозагрузка"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT id, country_ru, place FROM {SCHEMA}.travel_places "
+                "WHERE photo_file_id IS NULL OR photo_file_id = '' "
+                "ORDER BY country_ru, place LIMIT $1", limit)
+        return [(r["id"], r["country_ru"], r["place"]) for r in rows]
+    except Exception as e:
+        logging.error(f"Список мест без фото недоступен: {e}")
+        return []
+
+
+async def set_travel_photo(place_id: int, file_id: str) -> bool:
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            done = await conn.execute(
+                f"UPDATE {SCHEMA}.travel_places SET photo_file_id = $1 WHERE id = $2",
+                file_id, place_id)
+        return done.endswith("1")
+    except Exception as e:
+        logging.error(f"Фото места не сохранено: {e}")
+        return False
+
+
+async def set_travel_text(place_id: int, text: str) -> bool:
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            done = await conn.execute(
+                f"UPDATE {SCHEMA}.travel_places SET text_content = $1 WHERE id = $2",
+                text, place_id)
+        return done.endswith("1")
+    except Exception as e:
+        logging.error(f"Текст места не сохранён: {e}")
+        return False
+
+
 async def get_travel_countries():
     """Страны со счётчиком локаций, по алфавиту"""
     try:
