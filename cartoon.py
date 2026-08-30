@@ -40,7 +40,7 @@ except ImportError:
 
 MODEL = "claude-haiku-4-5-20251001"
 MAX_STORY = 1500          # длиннее — уже не история, а повесть
-MAX_SCENES = 6
+MAX_SCENES = 8       # история с завязкой и развязкой в шесть сцен не влезает
 MAX_ACTORS = 4
 MAX_BEATS = 6
 
@@ -67,7 +67,7 @@ DIRECTOR = """Ты раскадровщик детского мультфиль�
                   "own": "имя из списка своих персонажей, если это он"}}],
       "beats": [{{"actor": "id", "action": один из {actions},
                  "mood": один из {moods},
-                 "to": 0.0..1.0, "say": "реплика до 80 знаков"}}]
+                 "to": 0.0..1.0, "say": "реплика до 180 знаков"}}]
     }}
   ]}}
 
@@ -149,7 +149,7 @@ def sanitize(raw: dict, own: dict = None) -> dict:
                 "action": action if action in ACTIONS else "idle",
                 "mood": mood if mood in MOODS else "calm",
                 "to": _num(b.get("to"), 0.05, 0.95, .5),
-                "say": str(b.get("say", ""))[:80],
+                "say": str(b.get("say", ""))[:180],
             })
 
         bg = s.get("bg")

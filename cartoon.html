@@ -703,7 +703,7 @@ let film = null, t0 = 0, playing = false, spoken = "";
 // успеть договориться до смены кадра.
 function beatDur(beat){
   const chars = ((beat && beat.say) || "").length;
-  return Math.max(2.2, Math.min(7.5, 1.5 + chars / 11));
+  return Math.max(2.2, Math.min(11, 1.5 + chars / 11));
 }
 
 function sceneDur(scene){
