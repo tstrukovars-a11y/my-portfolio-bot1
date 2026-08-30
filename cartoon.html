@@ -30,6 +30,7 @@
 <div id="wrap"><canvas id="cv"></canvas></div>
 <div class="bar" id="bar" style="display:none">
   <button id="replay">↻ Сначала</button>
+  <button class="ghost" id="sound">🔇 Звук</button>
   <button class="ghost" id="close">Закрыть</button>
 </div>
 <div class="msg" id="msg">Загружаю…</div>
@@ -586,53 +587,132 @@ function actor(a, x, y, phase, action, mood){
   ctx.restore();
 }
 
-function bubble(x, y, text){
-  ctx.font = "600 14px -apple-system,Segoe UI,Roboto,sans-serif";
-  const words = text.split(" ");
-  const lines = []; let line = "";
-  for (const w of words){
-    if (ctx.measureText(line + " " + w).width > 150 && line){ lines.push(line); line = w; }
+// Текст живёт в двух отведённых полосах — рассказчик сверху, реплики снизу.
+// Облачко над головой всякий раз накрывало чьё-нибудь лицо: где стоит лицо
+// на сгенерированной картинке, заранее неизвестно, а полосы известны всегда.
+function wrap(text, maxWidth){
+  const out = []; let line = "";
+  for (const w of text.split(" ")){
+    if (ctx.measureText(line + " " + w).width > maxWidth && line){ out.push(line); line = w; }
     else line = line ? line + " " + w : w;
   }
-  if (line) lines.push(line);
-
-  const wdt = Math.max(...lines.map(l => ctx.measureText(l).width)) + 22;
-  const hgt = lines.length * 18 + 16;
-  const bx = Math.max(6, Math.min(W - wdt - 6, x - wdt / 2)), by = y - hgt - 12;
-
-  ctx.fillStyle = "rgba(255,255,255,.96)";
-  ctx.beginPath();
-  ctx.roundRect ? ctx.roundRect(bx, by, wdt, hgt, 12) : ctx.rect(bx, by, wdt, hgt);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.moveTo(x - 7, by + hgt); ctx.lineTo(x, by + hgt + 10); ctx.lineTo(x + 7, by + hgt);
-  ctx.closePath(); ctx.fill();
-
-  ctx.fillStyle = "#1d2129"; ctx.textAlign = "center";
-  lines.forEach((l, i) => ctx.fillText(l, bx + wdt / 2, by + 22 + i * 18));
-  ctx.textAlign = "left";
+  if (line) out.push(line);
+  return out;
 }
 
-function caption(text){
+function scrim(y, h, from){
+  const g = ctx.createLinearGradient(0, from === "top" ? y : y + h, 0,
+                                     from === "top" ? y + h : y);
+  g.addColorStop(0, "rgba(6,8,14,.9)");
+  g.addColorStop(1, "rgba(6,8,14,0)");
+  ctx.fillStyle = g; ctx.fillRect(0, y, W, h);
+}
+
+function narration(text){
   if (!text) return;
-  ctx.font = "500 14px -apple-system,Segoe UI,Roboto,sans-serif";
-  const wdt = Math.min(W - 28, ctx.measureText(text).width + 26);
-  ctx.fillStyle = "rgba(10,13,20,.72)";
-  ctx.beginPath();
-  ctx.roundRect ? ctx.roundRect((W - wdt) / 2, H - 52, wdt, 34, 10)
-                : ctx.rect((W - wdt) / 2, H - 52, wdt, 34);
-  ctx.fill();
-  ctx.fillStyle = "#eef1f6"; ctx.textAlign = "center";
-  ctx.fillText(text, W / 2, H - 30);
+  ctx.font = "500 15px -apple-system,Segoe UI,Roboto,sans-serif";
+  const lines = wrap(text, W - 52);
+  scrim(0, 40 + lines.length * 21, "top");
+  ctx.fillStyle = "#e7ecf5"; ctx.textAlign = "center";
+  lines.forEach((l, i) => ctx.fillText(l, W / 2, 32 + i * 21));
   ctx.textAlign = "left";
 }
+
+// Реплика — субтитром, с именем говорящего его же цветом. Так видно, кто
+// говорит, и ничьё лицо не закрыто.
+function speech(name, color, text){
+  if (!text) return;
+  ctx.font = "600 17px -apple-system,Segoe UI,Roboto,sans-serif";
+  const lines = wrap(text, W - 56);
+  const block = lines.length * 23 + (name ? 20 : 0);
+  const top = H - block - 26;
+
+  scrim(top - 46, block + 72, "bottom");
+  ctx.textAlign = "center";
+  let y = top;
+  if (name){
+    ctx.font = "700 12px -apple-system,Segoe UI,Roboto,sans-serif";
+    ctx.fillStyle = color || "#9fd0ff";
+    ctx.fillText(name.toUpperCase(), W / 2, y);
+    y += 20;
+  }
+  ctx.font = "600 17px -apple-system,Segoe UI,Roboto,sans-serif";
+  ctx.fillStyle = "#ffffff";
+  lines.forEach((l, i) => ctx.fillText(l, W / 2, y + 17 + i * 23));
+  ctx.textAlign = "left";
+}
+
+// ---------- голоса ----------
+// Говорит браузер. Это бесплатно, работает без сети и без ключей; голос
+// синтетический, но рассказчика от принцессы и дракона отличает — а именно
+// это и нужно, чтобы понимать, кто произносит реплику.
+const store = {
+  get(k){ try { return localStorage.getItem(k); } catch(e){ return null; } },
+  set(k, v){ try { localStorage.setItem(k, v); } catch(e){} }
+};
+const speech_ok = "speechSynthesis" in window;
+let voiceOn = store.get("cartoon_voice") === "1";
+let ruVoices = [];
+
+function pickVoices(){
+  const all = speechSynthesis.getVoices() || [];
+  ruVoices = all.filter(v => (v.lang || "").toLowerCase().startsWith("ru"));
+  if (!ruVoices.length) ruVoices = all;
+}
+if (speech_ok){
+  pickVoices();
+  speechSynthesis.onvoiceschanged = pickVoices;
+}
+
+// Высота голоса выводится из роли и роста: дракон ниже и медленнее,
+// принцесса выше. Отдельных голосов в системе может не быть вовсе, а
+// высота и темп настраиваются всегда.
+const PITCH = {
+  princess: 1.5, girl: 1.45, boy: 1.1, king: .65, knight: .8, wizard: .7,
+  dragon: .45, monster: .5, bear: .6, cat: 1.4, dog: 1.1, rabbit: 1.6,
+  horse: .8, bird: 1.7, fish: 1.3, robot: .9,
+};
+
+function voiceFor(actor){
+  if (!actor) return { pitch: 1, rate: .96, voice: ruVoices[0] };
+  const base = PITCH[actor.kind] ?? 1;
+  const size = actor.size || 1;
+  return {
+    pitch: Math.max(.3, Math.min(2, base / Math.sqrt(size))),
+    rate: actor.kind === "dragon" || actor.kind === "king" ? .88 : 1,
+    voice: ruVoices[(actor.id || "").length % Math.max(1, ruVoices.length)],
+  };
+}
+
+function say(text, profile){
+  if (!voiceOn || !speech_ok || !text) return;
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = "ru-RU";
+  u.pitch = profile.pitch; u.rate = profile.rate;
+  if (profile.voice) u.voice = profile.voice;
+  speechSynthesis.speak(u);
+}
+
+function hush(){ if (speech_ok) try { speechSynthesis.cancel(); } catch(e){} }
 
 // ---------- проигрыватель ----------
-const BEAT = 2.6;                 // секунд на действие
-let film = null, t0 = 0, playing = false;
+let film = null, t0 = 0, playing = false, spoken = "";
+
+// Длительность такта считается по длине реплики: короткое «Ага» не должно
+// висеть столько же, сколько две строки, а под озвучку фраза обязана
+// успеть договориться до смены кадра.
+function beatDur(beat){
+  const chars = ((beat && beat.say) || "").length;
+  return Math.max(2.2, Math.min(7.5, 1.5 + chars / 11));
+}
+
+function sceneDur(scene){
+  if (!scene.beats.length) return 2.6;
+  return scene.beats.reduce((s, b) => s + beatDur(b), 0);
+}
 
 function totalTime(){
-  return film.scenes.reduce((s, sc) => s + Math.max(1, sc.beats.length) * BEAT, 0);
+  return film.scenes.reduce((s, sc) => s + sceneDur(sc), 0);
 }
 
 // Нарисованные кадры. Пока картинка не загрузилась — и если её нет вовсе —
@@ -670,19 +750,35 @@ function frame(now){
   // ищем текущую сцену и такт
   let acc = 0, scene = null, local = 0;
   for (const sc of film.scenes){
-    const dur = Math.max(1, sc.beats.length) * BEAT;
+    const dur = sceneDur(sc);
     if (t < acc + dur){ scene = sc; local = t - acc; break; }
     acc += dur;
   }
   if (!scene){ finish(); return; }
 
-  const bi = Math.min(scene.beats.length - 1, Math.floor(local / BEAT));
+  // Такты разной длины, поэтому идём по ним накопительно, а не делением
+  let bi = 0, inBeat = 0, spent = 0;
+  for (let i = 0; i < scene.beats.length; i++){
+    const d = beatDur(scene.beats[i]);
+    if (local < spent + d){ bi = i; inBeat = (local - spent) / d; break; }
+    spent += d; bi = i; inBeat = 1;
+  }
   const beat = scene.beats[bi] || null;
-  const inBeat = (local % BEAT) / BEAT;
 
   const sceneIndex = film.scenes.indexOf(scene);
   const picture = art[sceneIndex];
-  const dur0 = Math.max(1, scene.beats.length) * BEAT;
+  const dur0 = sceneDur(scene);
+
+  // Голос подаём один раз на такт — на первом кадре, где он появился
+  const mark = sceneIndex + ":" + bi;
+  if (mark !== spoken){
+    spoken = mark;
+    if (bi === 0) say(scene.narration, { pitch: 1, rate: .98, voice: ruVoices[0] });
+    if (beat && beat.say){
+      const who = scene.actors.find(a => a.id === beat.actor);
+      say(beat.say, voiceFor(who));
+    }
+  }
 
   if (picture) drawArt(picture, local / dur0);
   else backdrop(scene.bg, t);
@@ -710,17 +806,13 @@ function frame(now){
     }
     a.face = beat && beat.actor === a.id && beat.action === "turn" ? -1 : 1;
     actor(a, x * W, GROUND + 6, t, action, mood);
-    if (beat && beat.actor === a.id && beat.say)
-      bubble(x * W, GROUND - 128, beat.say);
   }
 
-  // Реплику над готовой картинкой всё равно показываем: слова несёт
-  // раскадровка, а на кадре их нет — рисовать текст моделью значит
-  // получить каракули.
-  if (picture && !overlay && beat && beat.say)
-    bubble(W * .5, GROUND * .42, beat.say);
-
-  caption(scene.narration);
+  narration(scene.narration);
+  if (beat && beat.say){
+    const who = scene.actors.find(a => a.id === beat.actor);
+    speech(who && who.name, who && who.color, beat.say);
+  }
 
   // затемнение на стыке сцен
   const dur = dur0;
@@ -734,7 +826,7 @@ function frame(now){
 }
 
 function finish(){
-  playing = false;
+  playing = false; hush();
   ctx.fillStyle = "rgba(8,10,16,.82)"; ctx.fillRect(0, 0, W, H);
   ctx.fillStyle = "#eef1f6"; ctx.textAlign = "center";
   ctx.font = "700 24px -apple-system,Segoe UI,Roboto,sans-serif";
@@ -747,7 +839,7 @@ function start(){
   // с чистой копии: иначе повтор играет с того места, где кончил прошлый.
   film = JSON.parse(film.source);
   film.source = JSON.stringify(film);
-  playing = true; t0 = performance.now();
+  playing = true; t0 = performance.now(); spoken = ""; hush();
   requestAnimationFrame(frame);
 }
 
@@ -770,8 +862,22 @@ async function load(){
   }
 }
 
+function paintSound(){
+  $("sound").textContent = voiceOn ? "🔊 Звук" : "🔇 Звук";
+}
+$("sound").onclick = () => {
+  voiceOn = !voiceOn;
+  store.set("cartoon_voice", voiceOn ? "1" : "0");
+  paintSound();
+  // Браузеры пускают речь только после касания, поэтому включение звука
+  // и есть то самое касание: начинаем мультик заново, уже с голосом.
+  if (voiceOn) start(); else hush();
+};
+if (!speech_ok) $("sound").style.display = "none";
+paintSound();
+
 $("replay").onclick = start;
-$("close").onclick = () => { if (tg) tg.close(); };
+$("close").onclick = () => { hush(); if (tg) tg.close(); };
 load();
 </script>
 </body>
