@@ -371,6 +371,12 @@ async def init_db():
             source_key TEXT,
             added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""")
+        # Порядок мест внутри страны. Нужен отдельным столбцом: алфавит
+        # ставит Авиньон перед Ниццей, а по стране осмысленнее двигаться
+        # маршрутом — с юга на север.
+        await conn.execute(
+            f"ALTER TABLE {SCHEMA}.travel_places "
+            "ADD COLUMN IF NOT EXISTS ordering INTEGER NOT NULL DEFAULT 0")
         await conn.execute(
             f"CREATE UNIQUE INDEX IF NOT EXISTS travel_source_uniq "
             f"ON {SCHEMA}.travel_places (source_key)"
@@ -901,6 +907,21 @@ async def add_travel_place(country_ru, country_en, place, text_content,
         return f"error:{type(e).__name__}: {e}"
 
 
+async def set_travel_order(source_key: str, ordering: int) -> bool:
+    """Ставит место на его место в маршруте. Отдельно от вставки затем,
+    что вставка существующее не трогает, а порядок поправить надо."""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"UPDATE {SCHEMA}.travel_places SET ordering = $1 WHERE source_key = $2",
+                ordering, source_key)
+        return True
+    except Exception as e:
+        logging.error(f"Порядок места не сохранён: {e}")
+        return False
+
+
 async def travel_without_photo(limit: int = 40):
     """(id, страна, место) мест без фотографии — по ним и идёт дозагрузка"""
     try:
@@ -909,7 +930,7 @@ async def travel_without_photo(limit: int = 40):
             rows = await conn.fetch(
                 f"SELECT id, country_ru, place FROM {SCHEMA}.travel_places "
                 "WHERE photo_file_id IS NULL OR photo_file_id = '' "
-                "ORDER BY country_ru, place LIMIT $1", limit)
+                "ORDER BY country_ru, ordering, place LIMIT $1", limit)
         return [(r["id"], r["country_ru"], r["place"]) for r in rows]
     except Exception as e:
         logging.error(f"Список мест без фото недоступен: {e}")
@@ -964,7 +985,7 @@ async def get_travel_places(country_ru: str):
         async with pool.acquire() as conn:
             rows = await conn.fetch(
                 f"SELECT id, place FROM {SCHEMA}.travel_places "
-                "WHERE country_ru = $1 ORDER BY lower(place), id", country_ru
+                "WHERE country_ru = $1 ORDER BY ordering, lower(place), id", country_ru
             )
         return [(r["id"], r["place"]) for r in rows]
     except Exception as e:

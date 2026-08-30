@@ -180,15 +180,20 @@ async def load_seed(message: Message):
     note = await message.answer(f"🌍 Загружаю {len(places)} мест…")
     added = duplicate = failed = 0
     for p in places:
+        key = _source_key(p["country_ru"], p["place"])
         result = await database.add_travel_place(
             p["country_ru"], p["country_en"], p["place"], p["text"],
-            None, None, None, _source_key(p["country_ru"], p["place"]))
+            None, None, None, key)
         if result == "added":
             added += 1
         elif result == "duplicate":
             duplicate += 1
         else:
             failed += 1
+        # Порядок ставим и уже загруженным: вставка существующее не трогает,
+        # а маршрут мог измениться — иначе повторный запуск ничего не чинит.
+        if result in ("added", "duplicate"):
+            await database.set_travel_order(key, p.get("ordering", 0))
 
     countries = {}
     for p in places:
@@ -212,10 +217,15 @@ def parse_seed(raw: dict) -> list:
         place = _clean(p.get("place"), 80)
         country = _clean(p.get("country_ru"), 80)
         if place and country:
+            try:
+                ordering = int(p.get("ordering", 0))
+            except (TypeError, ValueError):
+                ordering = 0
             out.append({"country_ru": country,
                         "country_en": _clean(p.get("country_en"), 80) or country,
                         "place": place,
-                        "text": _clean(p.get("text"), 900)})
+                        "text": _clean(p.get("text"), 900),
+                        "ordering": ordering})
     return out
 
 
