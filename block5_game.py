@@ -10,8 +10,8 @@ router = Router()
 # Полноценная локализация бизнес-квиза на 4 языка
 GAME_TEXTS = {
     "ru": {
-        "intro": "🎮 **Бизнес-Квиз: Проверь свою управленческую интуицию!**\n\nВам предстоит решить 3 реальные ситуации из топ-менеджмента. Готовы?",
-        "btn_start": "🚀 Начать игру",
+        "intro": "🎮 **Интерактив**\n\nЗдесь три занятия:\n\n🧩 **Бизнес-квиз** — три реальные ситуации из топ-менеджмента.\n🏎 **Гонка** — ночной город, три полосы, встречный поток.\n🎬 **Мультфильм** — вы пишете историю, бот её снимает.\n\nВыбирайте:",
+        "btn_start": "🧩 Бизнес-квиз",
         "q1": "❓ **Ситуация 1**: Ключевой разработчик за день до релиза заявляет, что уходит к конкурентам на х2 оклад. Ваши действия?",
         "q1_a": "🤝 Предложить контр-оффер х2.5",
         "q1_b": "🛑 Заблокировать доступы, дожать релиз силами команды",
@@ -27,8 +27,8 @@ GAME_TEXTS = {
         "result": "🏆 **Тест завершен!**\n\nВаш результат: {score} из 9 баллов.\n\n🤖 *Управленческий вердикт*: Вы отлично ориентируетесь в кризисных ситуациях и принимаете взвешенные ROI-решения!"
     },
     "en": {
-        "intro": "🎮 **Business Quiz: Test your management intuition!**\n\nYou have to solve 3 real situations from top management. Ready?",
-        "btn_start": "🚀 Start Game",
+        "intro": "🎮 **Interactive**\n\nThree things here:\n\n🧩 **Business quiz** — three real situations from top management.\n🏎 **Race** — a neon night city, three lanes, oncoming traffic.\n🎬 **Cartoon** — you write a story, the bot films it.\n\nTake your pick:",
+        "btn_start": "🧩 Business quiz",
         "q1": "❓ **Situation 1**: A key developer announces a day before the release that they are leaving for a competitor for x2 salary. Your actions?",
         "q1_a": "🤝 Offer a counter-offer x2.5",
         "q1_b": "🛑 Block access, push release with the remaining team",
@@ -44,8 +44,8 @@ GAME_TEXTS = {
         "result": "🏆 **Quiz completed!**\n\nYour score: {score} out of 9.\n\n🤖 *Management Verdict*: You navigate crises well and make balanced, high-ROI business decisions!"
     },
     "fr": {
-        "intro": "🎮 **Quiz Business : Testez votre intuition managériale !**\n\nVous devez résoudre 3 situations réelles de top management. Prêt ?",
-        "btn_start": "🚀 Commencer",
+        "intro": "🎮 **Interactif**\n\nTrois choses ici :\n\n🧩 **Quiz business** — trois situations réelles de top management.\n🏎 **Course** — ville de nuit, trois voies, trafic venant en face.\n🎬 **Dessin animé** — vous écrivez, le bot filme.\n\nChoisissez :",
+        "btn_start": "🧩 Quiz business",
         "q1": "❓ **Situation 1** : Un développeur clé démissionne la veille de la livraison pour un salaire x2 chez un concurrent. Que faites-vous ?",
         "q1_a": "🤝 Faire une contre-offre x2.5",
         "q1_b": "🛑 Bloquer les accès, livrer avec l'équipe restante",
@@ -61,8 +61,8 @@ GAME_TEXTS = {
         "result": "🏆 **Quiz terminé !**\n\nVotre score : {score} sur 9.\n\n🤖 *Verdict* : Vous gérez efficacement les crises et prenez des décisions rentables !"
     },
     "he": {
-        "intro": "🎮 **קוויז עסקי: בחן את האינטואיציה הניהולית שלך!**\n\nעליך לפתור 3 מצבים אמיתיים מהניהול הבכיר. מוכן?",
-        "btn_start": "🚀 התחל משחק",
+        "intro": "🎮 **אינטראקטיבי**\n\nשלושה דברים כאן:\n\n🧩 **קוויז עסקי** — שלושה מצבים אמיתיים מהניהול הבכיר.\n🏎 **מרוץ** — עיר לילה, שלושה נתיבים, תנועה נגדית.\n🎬 **סרטון** — אתם כותבים סיפור, הבוט מצלם.\n\nבחרו:",
+        "btn_start": "🧩 קוויז עסקי",
         "q1": "❓ **מצב 1**: מפתח מפתח מודיע יום לפני השחרור שהוא עוזב למתחרה עבור שכר כפול. מה עושים?",
         "q1_a": "🤝 הצע הצעה נגדית פי 2.5",
         "q1_b": "🛑 חסום גישה, דחף שחרור עם הצוות הנותר",
@@ -89,6 +89,8 @@ async def start_game_block(call: CallbackQuery):
     
     cartoon_titles = {"ru": "\U0001F3AC Мультфильм по описанию", "en": "\U0001F3AC Cartoon from a description",
                       "fr": "\U0001F3AC Dessin animé sur description", "he": "\U0001F3AC סרטון לפי תיאור"}
+    chars_titles = {"ru": "🎨 Мои персонажи", "en": "🎨 My characters",
+                    "fr": "🎨 Mes personnages", "he": "🎨 הדמויות שלי"}
     race_titles = {"ru": "🏎 Гонка", "en": "🏎 Race", "fr": "🏎 Course", "he": "🏎 מרוץ"}
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=t["btn_start"], callback_data="game_step1")],
@@ -96,6 +98,8 @@ async def start_game_block(call: CallbackQuery):
                               callback_data="race_open")],
         [InlineKeyboardButton(text=cartoon_titles.get(lang, cartoon_titles["en"]),
                               callback_data="cartoon_open")],
+        [InlineKeyboardButton(text=chars_titles.get(lang, chars_titles["en"]),
+                              callback_data="char_list")],
         [InlineKeyboardButton(text=inline_kb.label(inline_kb.HOME_TEXTS, lang), callback_data="go_home")]
     ])
     await call.message.edit_caption(caption=t["intro"], reply_markup=kb, parse_mode="Markdown")

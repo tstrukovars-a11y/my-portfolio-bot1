@@ -35,10 +35,10 @@ CHANNEL_TITLES = {
 
 def get_main_menu(lang, is_admin=False):
     titles = {
-        "ru": ["🏆 Блок 1: Спорт и путешествия", "🎨 Блок 2: Творчество", "🧠 Блок 3: Интеллект и карьера", "🤖 Чат AI", "💼 Профили: HH & LinkedIn", "🎮 Интерактив: Игра"],
-        "en": ["🏆 Block 1: Sports & Travel", "🎨 Block 2: Creativity", "🧠 Block 3: Intellect & Career", "🤖 AI Chat", "💼 Profiles: HH & LinkedIn", "🎮 Interactive: Game"],
-        "fr": ["🏆 Bloc 1 : Sport & Voyage", "🎨 Bloc 2 : Créativité", "🧠 Bloc 3 : Intellect & Carrière", "🤖 Chat IA", "💼 Profils : HH & LinkedIn", "🎮 Interactif: Jeu"],
-        "he": ["בלוק 1: ספורט וטיולים 🏆", "בלוק 2: יצירתיות 🎨", "בלוק 3: אינטלקט וקריירה 🧠", "צ'אט AI 🤖", "פרופילים: HH & LinkedIn 💼", "משחק אינטראקטיבי 🎮"]
+        "ru": ["🏆 Спорт и путешествия", "🎨 Творчество", "🧠 Интеллект и карьера", "🤖 Чат AI", "💼 Профили: HH & LinkedIn", "🎮 Интерактив"],
+        "en": ["🏆 Sports & Travel", "🎨 Creativity", "🧠 Intellect & Career", "🤖 AI Chat", "💼 Profiles: HH & LinkedIn", "🎮 Interactive"],
+        "fr": ["🏆 Sport & Voyage", "🎨 Créativité", "🧠 Intellect & Carrière", "🤖 Chat IA", "💼 Profils : HH & LinkedIn", "🎮 Interactif"],
+        "he": ["ספורט וטיולים 🏆", "יצירתיות 🎨", "אינטלקט וקריירה 🧠", "צ'אט AI 🤖", "פרופילים: HH & LinkedIn 💼", "אינטראקטיבי 🎮"]
     }
     m = titles.get(lang, titles["en"])
     # Тексты для кнопки VPN на 4 языках
@@ -64,7 +64,6 @@ def get_main_menu(lang, is_admin=False):
         [InlineKeyboardButton(text=m[1], callback_data="menu_creative")],
         [InlineKeyboardButton(text=m[2], callback_data="menu_intellect")],
         [InlineKeyboardButton(text=m[3], callback_data="menu_claude")],
-        [InlineKeyboardButton(text=m[4], callback_data="menu_profiles")],
         [InlineKeyboardButton(text=m[5], callback_data="menu_game")],
         [InlineKeyboardButton(text=v_title, callback_data="menu_vpn")],
         [InlineKeyboardButton(text=a_title, callback_data="menu_analytics")],
@@ -72,6 +71,10 @@ def get_main_menu(lang, is_admin=False):
     if CHANNEL_URL:
         rows.append([InlineKeyboardButton(
             text=CHANNEL_TITLES.get(lang, CHANNEL_TITLES["en"]), url=CHANNEL_URL)])
+
+    # Профили идут последними: это визитная карточка для тех, кто уже
+    # заинтересовался, а не то, с чего начинают знакомство с ботом.
+    rows.append([InlineKeyboardButton(text=m[4], callback_data="menu_profiles")])
 
     # Служебная кнопка рисуется только владельцу бота
     if is_admin:

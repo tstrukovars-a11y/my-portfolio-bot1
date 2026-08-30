@@ -20,6 +20,7 @@ import digest
 import growth
 import race
 import cartoon
+import characters
 import inline_kb
 
 
@@ -196,6 +197,24 @@ def make_handle_ping(bot: Bot, dp: Dispatcher):
                 f"Content-Length: {len(payload.encode('utf-8'))}\r\n"
                 f"Connection: close\r\n\r\n{payload}"
             ).encode('utf-8')
+
+        elif path == "/cartoon/char" and method == "GET":
+            # Адрес персонажа случаен, поэтому подписи не требуется: угадать
+            # его нельзя, а ссылка живёт только внутри мультика автора.
+            drawing = await database.own_character_by_token(
+                query_params.get("t", "")[:64])
+            if drawing:
+                data, mime = drawing
+                response = (
+                    f"HTTP/1.1 200 OK\r\n"
+                    f"Content-Type: {mime}\r\n"
+                    f"Cache-Control: private, max-age=86400\r\n"
+                    f"{cors_headers}"
+                    f"Content-Length: {len(data)}\r\n"
+                    f"Connection: close\r\n\r\n"
+                ).encode('utf-8') + bytes(data)
+            else:
+                response = b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
 
         elif path == "/cartoon/img" and method == "GET":
             frame = None
@@ -412,6 +431,7 @@ async def main():
     dp.include_router(growth.router)
     dp.include_router(race.router)
     dp.include_router(cartoon.router)
+    dp.include_router(characters.router)
 
     dp.include_router(tennis_live.router)
     dp.include_router(travel.router)

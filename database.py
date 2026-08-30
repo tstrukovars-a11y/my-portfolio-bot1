@@ -1,6 +1,7 @@
 import json
 import os
 import logging
+import secrets
 from datetime import datetime, timedelta
 
 import asyncpg
@@ -501,7 +502,29 @@ async def init_db():
             PRIMARY KEY (cartoon_id, scene_index)
         )""")
 
-        # 24. Анкеты поиска партнёра для игры
+        # 24. Персонажи, нарисованные самими пользователями. Каждый видит и
+        # использует только своих: чужой рисунок в своей истории — не то, что
+        # человек ожидает увидеть, и не то, на что он давал согласие.
+        # lower_name — вычисляемый столбец: он и держит уникальность имени,
+        # потому что ON CONFLICT по выражению Postgres вывести не может.
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.own_characters (
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT NOT NULL,
+            -- Случайный адрес вместо порядкового номера: картинку забирает
+            -- тег <img> на странице, приложить к нему подпись Telegram
+            -- нельзя, а номер подбирается перебором за минуту.
+            token TEXT NOT NULL UNIQUE,
+            name TEXT NOT NULL,
+            lower_name TEXT GENERATED ALWAYS AS (lower(name)) STORED,
+            kind TEXT NOT NULL DEFAULT 'character',
+            mime TEXT NOT NULL DEFAULT 'image/jpeg',
+            data BYTEA NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (user_id, lower_name)
+        )""")
+
+        # 25. Анкеты поиска партнёра для игры
         await conn.execute(f"""
         CREATE TABLE IF NOT EXISTS {SCHEMA}.game_partners (
             id SERIAL PRIMARY KEY,
@@ -1221,6 +1244,88 @@ async def save_cartoon(user_id: int, story: str, board_json: str):
     except Exception as e:
         logging.error(f"Мультфильм не сохранён: {e}")
         return None
+
+
+MAX_OWN_CHARACTERS = 8      # больше не помещается в подсказку раскадровщику
+
+
+async def add_own_character(user_id: int, name: str, kind: str, data: bytes,
+                            mime: str) -> str:
+    """Сохраняет присланный рисунок. «занято», если имя уже есть у автора."""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            count = await conn.fetchval(
+                f"SELECT COUNT(*) FROM {SCHEMA}.own_characters WHERE user_id = $1", user_id)
+            if count >= MAX_OWN_CHARACTERS:
+                return "лимит"
+            done = await conn.execute(
+                f"INSERT INTO {SCHEMA}.own_characters (user_id, token, name, kind, mime, data) "
+                "VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (user_id, lower_name) DO NOTHING",
+                user_id, secrets.token_urlsafe(16), name, kind, mime, data)
+            return "ok" if done.endswith("1") else "занято"
+    except Exception as e:
+        logging.error(f"Персонаж не сохранён: {e}")
+        return "ошибка"
+
+
+async def own_characters(user_id: int):
+    """[(id, имя, вид)] персонажей автора — без самих картинок"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT id, name, kind, token FROM {SCHEMA}.own_characters "
+                "WHERE user_id = $1 ORDER BY id", user_id)
+        return [(r["id"], r["name"], r["kind"], r["token"]) for r in rows]
+    except Exception as e:
+        logging.error(f"Персонажи недоступны: {e}")
+        return []
+
+
+async def own_character_by_token(token: str):
+    """(байты, тип) по случайному адресу — так картинку отдаёт страница"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                f"SELECT data, mime FROM {SCHEMA}.own_characters WHERE token = $1", token)
+        return (row["data"], row["mime"]) if row else None
+    except Exception as e:
+        logging.error(f"Рисунок персонажа не читается: {e}")
+        return None
+
+
+async def own_character_image(char_id: int, user_id: int = None):
+    """(байты, тип) рисунка. user_id ограничивает выдачу автором."""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            if user_id is None:
+                row = await conn.fetchrow(
+                    f"SELECT data, mime FROM {SCHEMA}.own_characters WHERE id = $1", char_id)
+            else:
+                row = await conn.fetchrow(
+                    f"SELECT data, mime FROM {SCHEMA}.own_characters "
+                    "WHERE id = $1 AND user_id = $2", char_id, user_id)
+        return (row["data"], row["mime"]) if row else None
+    except Exception as e:
+        logging.error(f"Рисунок персонажа не читается: {e}")
+        return None
+
+
+async def delete_own_character(char_id: int, user_id: int) -> bool:
+    """Удаляет — только собственного: чужой не тронуть даже зная номер"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            done = await conn.execute(
+                f"DELETE FROM {SCHEMA}.own_characters WHERE id = $1 AND user_id = $2",
+                char_id, user_id)
+        return done.endswith("1")
+    except Exception as e:
+        logging.error(f"Персонаж не удалён: {e}")
+        return False
 
 
 async def save_cartoon_frames(cartoon_id: int, frames) -> int:

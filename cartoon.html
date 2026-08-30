@@ -261,7 +261,41 @@ function face(hy, hr, mood, blink){
   ctx.stroke();
 }
 
+// Рисунки, присланные автором. Грузятся один раз и живут по имени персонажа.
+const own = {};
+function loadOwn(board){
+  for (const scene of board.scenes)
+    for (const a of scene.actors){
+      if (!a.own || a.own in own) continue;    // ключ уже есть — значит заказан
+      const img = new Image();
+      own[a.own] = img;
+      img.src = "/cartoon/char?t=" + encodeURIComponent(a.own);
+    }
+}
+
+// Пока рисунок не дошёл — играет обычная фигурка. Ждать картинку, показывая
+// пустое место, хуже, чем сыграть сцену тем, что уже есть.
+const ready = img => img && img.complete && img.naturalWidth > 0;
+
+// Присланный рисунок ставим на землю и вписываем по высоте, сохраняя
+// пропорции: чужая картинка бывает какой угодно формы, а персонаж должен
+// стоять на той же линии, что и остальные.
+function drawOwn(img, x, y, size, action, phase){
+  const h = 150 * size;
+  const w = h * (img.width / img.height || .7);
+  const jump = action === "jump" ? Math.abs(Math.sin(phase * 6)) * 36 : 0;
+  const bob = action === "walk" ? Math.sin(phase * 9) * 3 : Math.sin(phase * 2) * 1.5;
+
+  ctx.fillStyle = "rgba(0,0,0,.2)";
+  ctx.beginPath(); ctx.ellipse(x, y + 4, w * .34, 7, 0, 0, 7); ctx.fill();
+  ctx.drawImage(img, x - w / 2, y - h - jump + bob, w, h);
+}
+
 function actor(a, x, y, phase, action, mood){
+  if (a.own && ready(own[a.own])){
+    drawOwn(own[a.own], x, y, a.size || 1, action, phase);
+    return;
+  }
   const k = KIND[a.kind] || KIND.girl;
   const size = (a.size || 1) * SCALE;
   const bob = action === "walk" ? Math.sin(phase * 9) * 3
@@ -716,6 +750,7 @@ async function load(){
     if (d.status !== "ok") throw new Error(d.message || "нет данных");
     film = d.film; film.source = JSON.stringify(d.film);
     if (d.frames && d.frames.length) loadArt(id, d.frames);
+    loadOwn(film);
     $("msg").style.display = "none";
     $("bar").style.display = "flex";
     $("title").textContent = film.title || "";
