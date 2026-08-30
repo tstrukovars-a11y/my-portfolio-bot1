@@ -365,6 +365,29 @@ async def stop_shooting(call: CallbackQuery, state: FSMContext):
     await call.answer()
 
 
+@router.message(F.text == "/travel_photos")
+async def photos_command(message: Message, state: FSMContext):
+    """Отдельный вход в загрузку снимков.
+
+    Раньше туда вела только кнопка под сообщением о загрузке списка:
+    сообщение потерялось — и дороги назад нет.
+    """
+    if not config.is_admin(message.from_user.id):
+        return
+    await state.clear()
+    places = await database.travel_without_photo()
+    if not places:
+        await message.answer("✅ У всех мест уже есть фотографии.")
+        return
+    await message.answer(
+        f"📷 <b>Без фотографии: {len(places)}</b>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📷 Загружать подряд",
+                                  callback_data="travel_shoot")],
+            [InlineKeyboardButton(text="📋 Выбрать место",
+                                  callback_data="travel_photos")]]))
+
+
 @router.callback_query(F.data == "travel_photos")
 async def list_without_photo(call: CallbackQuery, state: FSMContext):
     if not config.is_admin(call.from_user.id):
