@@ -650,11 +650,13 @@ function loadArt(id, indexes){
 // Наезд камеры: неподвижная картинка оживает медленным приближением и
 // сдвигом. Без него иллюстрация читается как остановленный кадр.
 function drawArt(img, p){
+  // Кадр закрывает всё поле, а не только землю: полосы пустоты сверху и
+  // снизу выдают вставленную картинку вместо сцены.
   const zoom = 1.06 + p * .08;
-  const ar = img.width / img.height, box = W / GROUND;
+  const ar = img.width / img.height, box = W / H;
   let w, h;
-  if (ar > box){ h = GROUND * zoom; w = h * ar; } else { w = W * zoom; h = w / ar; }
-  const dx = (W - w) / 2 - (p - .5) * 16, dy = (GROUND - h) / 2 - (p - .5) * 10;
+  if (ar > box){ h = H * zoom; w = h * ar; } else { w = W * zoom; h = w / ar; }
+  const dx = (W - w) / 2 - (p - .5) * 16, dy = (H - h) / 2 - (p - .5) * 10;
   ctx.save();
   ctx.beginPath(); ctx.rect(0, 0, W, H); ctx.clip();
   ctx.drawImage(img, dx, dy, w, h);
