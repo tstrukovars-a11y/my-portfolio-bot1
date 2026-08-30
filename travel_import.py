@@ -11,6 +11,7 @@ import hashlib
 import html
 import json
 import logging
+import os
 import re
 
 from aiogram import Router, F
@@ -27,7 +28,9 @@ router = Router()
 
 MODEL = "claude-haiku-4-5-20251001"
 MAX_LIST = 3000          # список поездок длиннее — уже мемуары
-MAX_PLACES = 40          # за один заход; больше не влезает в ответ модели
+MAX_PLACES = 25          # столько модель успевает описать в одном ответе
+CHUNK = 20               # список режем на части: 60 городов в один ответ
+                         # не помещаются, и хвост списка молча пропадал
 
 LIBRARIAN = """Ты редактор раздела о путешествиях. Пользователь перечисляет
 города и страны, где он был, — как помнит, вперемешку и без порядка.
@@ -82,8 +85,33 @@ def parse(raw: dict) -> list:
     return out
 
 
+def _chunks(listing: str):
+    """Режет список на части по строкам и запятым, сохраняя целые названия"""
+    items = [x.strip() for x in re.split(r"[\n;,]+", listing) if x.strip()]
+    if len(items) <= CHUNK:
+        return [listing]
+    return ["\n".join(items[i:i + CHUNK]) for i in range(0, len(items), CHUNK)]
+
+
 async def structure(listing: str):
-    """(места, ошибка)"""
+    """(места, ошибка). Длинный список обрабатывается частями и склеивается."""
+    parts = _chunks(listing)
+    if len(parts) > 1:
+        merged, seen = [], set()
+        for part in parts:
+            got, error = await _structure_one(part)
+            if error:
+                return (merged, None) if merged else (None, error)
+            for p in got:
+                key = (p["country_ru"].lower(), p["place"].lower())
+                if key not in seen:
+                    seen.add(key)
+                    merged.append(p)
+        return merged, None
+    return await _structure_one(listing)
+
+
+async def _structure_one(listing: str):
     if not claude_client:
         return None, "Модель не подключена: не задан ANTHROPIC_API_KEY."
     try:
@@ -126,6 +154,69 @@ ASK = ("🌍 <b>Список поездок</b>\n\nНапишите одним �
        "Париж; Прага.</i>\n\n"
        "Я разложу по странам, напишу к каждому месту черновик описания, "
        "а дальше вы приложите фотографии и поправите текст.")
+
+
+SEED_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         "data", "travel_seed.json")
+
+
+@router.message(F.text == "/travel_seed")
+async def load_seed(message: Message):
+    """Загружает выверенный список из файла, без обращения к модели.
+
+    Описания в нём написаны и проверены вручную. Это дешевле и точнее, чем
+    просить модель, и годится для первого наполнения раздела.
+    """
+    if not config.is_admin(message.from_user.id):
+        return
+    try:
+        with open(SEED_PATH, encoding="utf-8") as f:
+            places = parse_seed(json.load(f))
+    except Exception as e:
+        logging.error(f"Путешествия: файл списка не читается: {e}")
+        await message.answer("⚠️ Файл со списком мест не читается.")
+        return
+
+    note = await message.answer(f"🌍 Загружаю {len(places)} мест…")
+    added = duplicate = failed = 0
+    for p in places:
+        result = await database.add_travel_place(
+            p["country_ru"], p["country_en"], p["place"], p["text"],
+            None, None, None, _source_key(p["country_ru"], p["place"]))
+        if result == "added":
+            added += 1
+        elif result == "duplicate":
+            duplicate += 1
+        else:
+            failed += 1
+
+    countries = {}
+    for p in places:
+        countries[p["country_ru"]] = countries.get(p["country_ru"], 0) + 1
+    body = "\n".join(f"{c} — {n}" for c, n in
+                     sorted(countries.items(), key=lambda x: -x[1]))
+
+    await note.edit_text(
+        f"🌍 <b>Готово</b>\n\n{body}\n\n"
+        f"Добавлено: {added}, уже было: {duplicate}"
+        + (f", не сохранилось: {failed}" if failed else ""),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📷 Приложить фотографии",
+                                  callback_data="travel_photos")]]))
+
+
+def parse_seed(raw: dict) -> list:
+    """То же, что parse, но без ограничения на число мест: файл выверен"""
+    out = []
+    for p in raw.get("places") or []:
+        place = _clean(p.get("place"), 80)
+        country = _clean(p.get("country_ru"), 80)
+        if place and country:
+            out.append({"country_ru": country,
+                        "country_en": _clean(p.get("country_en"), 80) or country,
+                        "place": place,
+                        "text": _clean(p.get("text"), 900)})
+    return out
 
 
 @router.message(F.text == "/travel_import")
