@@ -16,8 +16,12 @@ import urllib.parse
 
 import httpx
 
-TIMEOUT = 90
-PARALLEL = 3          # больше — упираемся в лимиты, меньше — долго ждать
+TIMEOUT = 120
+# Сколько запросов вести разом. У бесплатного рисовальщика лимит на
+# одновременные обращения жёсткий: три параллельных запроса он душит, и из
+# пяти сцен приходит одна. Поэтому к нему ходим по одному.
+PARALLEL = {"free": 1, "gemini": 3, "fal": 4}
+ATTEMPTS = 3          # кадр важнее скорости: пропущенная сцена рвёт мультик
 
 # Имя модели вынесено в переменную окружения: у Google оно меняется от
 # версии к версии, и подобрать верное должно быть можно без выкладки кода.
@@ -192,6 +196,24 @@ def color_name(hex_color: str) -> str:
         return ""
     return min(COLOR_NAMES,
                key=lambda c: (c[0][0]-r)**2 + (c[0][1]-g)**2 + (c[0][2]-b)**2)[1]
+
+
+def background_prompt(scene: dict) -> str:
+    """Только место, без единого героя.
+
+    Нужно, когда в мультике играют присланные автором рисунки: их ставят
+    поверх, и нарисованный моделью персонаж оказался бы вторым, лишним.
+    Запрет пишем несколько раз и разными словами — одного «no characters»
+    модели не слышат.
+    """
+    setting = SETTINGS.get(scene.get("bg"), SETTINGS["meadow"])
+    # Хвост стиля здесь свой: общий требует «приветливых лиц», а лиц в
+    # кадре быть не должно вовсе, и такое противоречие модель разрешает
+    # не в нашу пользу.
+    return (f"{STYLE_LEAD} Empty scenery with nobody in it. Setting: {setting}. "
+            f"No people, no characters, no animals, no creatures, no figures. "
+            f"Warm lighting, clean rounded shapes, wide cinematic composition, "
+            f"open space in the middle. No text, no letters, no watermark.")
 
 
 def scene_prompt(scene: dict, cast: dict) -> str:
@@ -417,7 +439,7 @@ async def _free(client: httpx.AsyncClient, prompt: str):
     return r.content, r.headers.get("content-type", "image/jpeg")
 
 
-async def render(board: dict):
+async def render(board: dict, background_only: bool = False):
     """[(номер сцены, байты, тип)] — сколько кадров удалось нарисовать.
 
     Неудача отдельного кадра не отменяет остальные: сцена без картинки
@@ -428,30 +450,43 @@ async def render(board: dict):
         return []
 
     cast = build_cast(board)
-    prompts = [(i, scene_prompt(s, cast)) for i, s in enumerate(board.get("scenes", []))]
-    gate = asyncio.Semaphore(PARALLEL)
+    prompts = [(i, background_prompt(s) if background_only else scene_prompt(s, cast))
+               for i, s in enumerate(board.get("scenes", []))]
 
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        # Если первый поставщик не дал ни одного кадра — пробуем следующего.
-        # Частичная удача второй попытки не нужна: перерисовывать уже готовое
-        # значит платить дважды.
+        # Если поставщик не дал полного набора — пробуем следующего.
         for which in available:
             draw = {"gemini": _gemini, "fal": _fal, "free": _free}[which]
+            gate = asyncio.Semaphore(PARALLEL.get(which, 2))
             out = []
 
             async def one(index, prompt):
                 async with gate:
-                    try:
-                        got = await draw(client, prompt)
-                    except Exception as e:
-                        logging.error(f"Кадр {index} ({which}): {type(e).__name__}: {e}")
-                        return
-                    if got:
-                        out.append((index, got[0], got[1]))
+                    # Повторяем несколько раз: перегруженный сервис отвечает
+                    # отказом на первый запрос и рисует на второй, а пропуск
+                    # одной сцены портит мультик сильнее, чем ожидание.
+                    for attempt in range(ATTEMPTS):
+                        try:
+                            got = await draw(client, prompt)
+                        except Exception as e:
+                            logging.warning(f"Кадр {index} ({which}, попытка {attempt + 1}): "
+                                            f"{type(e).__name__}: {e}")
+                            got = None
+                        if got:
+                            out.append((index, got[0], got[1]))
+                            return
+                        await asyncio.sleep(2 + attempt * 3)
+                    logging.error(f"Кадр {index} ({which}): не вышел за {ATTEMPTS} попытки")
 
             await asyncio.gather(*(one(i, p) for i, p in prompts))
             logging.info(f"Кадры ({which}): нарисовано {len(out)} из {len(prompts)}")
-            if out:
+
+            # Либо все сцены, либо ни одной. Один нарисованный кадр среди
+            # векторных читается не как «частично готово», а как поломка:
+            # манера скачет посреди мультфильма.
+            if out and len(out) == len(prompts):
                 return sorted(out)
+            if out:
+                logging.info(f"Кадры ({which}): неполный набор отброшен")
 
     return []

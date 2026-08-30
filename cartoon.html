@@ -263,7 +263,10 @@ function face(hy, hr, mood, blink){
 
 // Рисунки, присланные автором. Грузятся один раз и живут по имени персонажа.
 const own = {};
+let usesOwn = false;
+
 function loadOwn(board){
+  usesOwn = board.scenes.some(s => s.actors.some(a => a.own));
   for (const scene of board.scenes)
     for (const a of scene.actors){
       if (!a.own || a.own in own) continue;    // ключ уже есть — значит заказан
@@ -682,9 +685,13 @@ function frame(now){
   if (picture) drawArt(picture, local / dur0);
   else backdrop(scene.bg, t);
 
-  // положение каждого персонажа: до своего такта стоит, в такте идёт.
-  // Поверх нарисованного кадра фигур нет — они уже на картинке.
-  for (const a of picture ? [] : scene.actors){
+  // Когда в мультике играют присланные рисунки, картинка — это пейзаж без
+  // героев, и герои ставятся поверх. В остальных случаях персонажи уже
+  // нарисованы внутри кадра, и рисовать их второй раз незачем.
+  const overlay = !picture || usesOwn;
+
+  // положение каждого персонажа: до своего такта стоит, в такте идёт
+  for (const a of overlay ? scene.actors : []){
     // Настроение держится до следующей своей реплики, а не гаснет вместе с
     // тактом: обиженный персонаж не веселеет оттого, что заговорил другой.
     let x = a.x, action = "idle", mood = "calm";
@@ -705,9 +712,10 @@ function frame(now){
       bubble(x * W, GROUND - 128, beat.say);
   }
 
-  // Реплику над картинкой всё равно показываем: слова несёт раскадровка,
-  // а на кадре их нет — рисовать текст моделью значит получить каракули.
-  if (picture && beat && beat.say)
+  // Реплику над готовой картинкой всё равно показываем: слова несёт
+  // раскадровка, а на кадре их нет — рисовать текст моделью значит
+  // получить каракули.
+  if (picture && !overlay && beat && beat.say)
     bubble(W * .5, GROUND * .42, beat.say);
 
   caption(scene.narration);

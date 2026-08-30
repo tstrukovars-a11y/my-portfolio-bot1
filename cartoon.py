@@ -12,6 +12,7 @@
 # Раскадровка — JSON и приходит от модели, то есть из ненадёжного источника.
 # Поэтому она не идёт на страницу как есть: всё проверяется и приводится к
 # допустимым значениям. Иначе одна опечатка модели ломает проигрыватель.
+import asyncio
 import html
 import json
 import logging
@@ -315,22 +316,10 @@ async def make_cartoon(message: Message, state: FSMContext):
         await note.edit_text("⚠️ Не удалось сохранить мультфильм.")
         return
 
-    # Кадры рисуются дольше сценария, поэтому сперва отдаём готовый мультик,
-    # а картинки подставляем следом: смотреть можно уже сейчас.
     # Если в мультике играют свои персонажи, кадры не рисуем вовсе: их
     # рисунок — то, ради чего человек его присылал, и подменять героя
     # выдуманной иллюстрацией значит отменять его работу.
     uses_own = any(a.get("own") for s in board["scenes"] for a in s["actors"])
-    drawn = 0
-    if uses_own:
-        pass
-    elif imagegen.provider():
-        await note.edit_text(f"🎬 <b>{board['title']}</b>\n\nРисую кадры…")
-        try:
-            drawn = await database.save_cartoon_frames(
-                cartoon_id, await imagegen.render(board))
-        except Exception as e:
-            logging.error(f"Мультфильм: кадры не нарисовались: {e}")
 
     url = watch_url(cartoon_id)
     rows = []
@@ -346,16 +335,45 @@ async def make_cartoon(message: Message, state: FSMContext):
     # О кадрах говорим всегда, в том числе когда их ноль: молчание в этом
     # месте неотличимо от «всё хорошо», и владелец ищет неисправность там,
     # где её нет.
-    if uses_own:
-        art = "🎨 Играют ваши персонажи — кадры не рисовались."
+    if uses_own and imagegen.provider():
+        art = "🖌 Рисую пейзажи под ваших персонажей — это несколько минут."
+    elif uses_own:
+        art = "🎨 Играют ваши персонажи."
     elif not imagegen.provider():
         art = "🖍 Рисованные кадры выключены: ключ не задан."
-    elif drawn:
-        art = f"🎨 Кадров нарисовано: {drawn} из {scenes}."
     else:
-        art = ("⚠️ Кадры не нарисовались — мультик играется векторно.\n"
-               "Причину покажет <code>/imagetest</code>.")
-    await note.edit_text(
-        f"🎬 <b>{board['title']}</b>\n\nСцен: {scenes}. {art}",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+        art = "🖌 Рисую кадры — это несколько минут. Смотреть можно уже сейчас."
+
+    markup = InlineKeyboardMarkup(inline_keyboard=rows)
+    await note.edit_text(f"🎬 <b>{board['title']}</b>\n\nСцен: {scenes}. {art}",
+                         reply_markup=markup)
     await state.clear()
+
+    # Рисование идёт фоном: с повторами и по одному запросу оно занимает
+    # минуты, а держать человека перед надписью «рисую» всё это время
+    # незачем — мультик уже готов к просмотру.
+    if imagegen.provider():
+        asyncio.create_task(_draw_later(note, cartoon_id, board, markup, uses_own))
+
+
+async def _draw_later(note: Message, cartoon_id: int, board: dict, markup,
+                      background_only: bool = False):
+    """Дорисовывает кадры и правит сообщение, когда набор готов"""
+    title, scenes = board["title"], len(board["scenes"])
+    try:
+        frames = await imagegen.render(board, background_only)
+        drawn = await database.save_cartoon_frames(cartoon_id, frames)
+    except Exception as e:
+        logging.error(f"Мультфильм {cartoon_id}: кадры не нарисовались: {e}")
+        drawn = 0
+
+    what = "Пейзажей" if background_only else "Кадров"
+    art = (f"🎨 {what} нарисовано: {drawn} из {scenes}. Откройте заново."
+           if drawn else
+           "⚠️ Кадры не нарисовались — мультик играется векторно.\n"
+           "Причину покажет <code>/imagetest</code>.")
+    try:
+        await note.edit_text(f"🎬 <b>{title}</b>\n\nСцен: {scenes}. {art}",
+                             reply_markup=markup)
+    except Exception:
+        pass          # сообщение могли удалить, пока мы рисовали
