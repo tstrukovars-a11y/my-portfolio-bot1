@@ -41,11 +41,23 @@ router = Router()
 
 SCHEDULE = [
     ("08:00", "morning",  "Доброе утро. Вот что случилось вчера — коротко и по делу."),
+    ("11:00", "books",    None),
     ("13:00", "genetics", None),
     ("16:00", "travel",   None),
     ("19:00", "sport",    None),
     ("20:30", "dinner",   "Приятного вечера."),
 ]
+
+# Профильные каналы. «Акцент» показывает подборку, а весь материал лежит
+# в своём справочнике — и ссылка на него идёт кнопкой под каждым постом.
+# Адреса хранятся настройками: каналов будет больше, а код от этого
+# меняться не должен.
+REF_CHANNELS = {
+    "travel": ("ref_travel", "🌍 Все места"),
+    "recipes": ("ref_recipes", "🍳 Все рецепты"),
+    "books": ("ref_books", "📚 Все книги"),
+    "genetics": ("ref_genetics", "🧬 Вся генетика"),
+}
 
 TZ_KEY = "digest_tz"             # смещение от UTC в часах
 TZ_DEFAULT = 3                   # Москва
@@ -87,6 +99,7 @@ SECTION_TITLES = {
     "genetics": "🧬 Генетика",
     "recipes": "🍳 Кулинария",
     "travel": "🌍 Путешествия",
+    "books": "📚 Деловая литература",
 }
 
 # Вопрос читателю под каждым постом. Формулировка своя для раздела: «были
@@ -99,6 +112,7 @@ SECTION_TITLES = {
 # болоньезе?» — то, что выходит при подстановке в середину фразы: склонять
 # русские названия автоматически нельзя, а так грамматика верна всегда.
 REPEAT_LEAD = {
+    "books": "📚 {title} — перечитать?\n\nНапоминаю, о чём она.",
     "recipes": "🍳 {title} — приготовим?\n\nНапоминаю рецепт.",
     "travel": "🌍 {title} — помните это место?\n\nНапоминаю, чем оно хорошо.",
     "genetics": "🧬 {title} — напоминаю коротко.",
@@ -109,6 +123,7 @@ VOTE_LABELS = {
     "genetics": "💡 Знали это",
     "recipes": "🍳 Готовили",
     "travel": "📍 Были здесь",
+    "books": "📖 Читали",
 }
 
 
@@ -140,6 +155,14 @@ async def _build(section: str, item_id: int):
         text, video, link, photo = row
         title = (text or "").strip().split("\n")[0][:80]
         return title, text, photo, video, link
+
+    if section == "books":
+        row = await database.get_book_by_id(item_id)
+        if not row:
+            return None
+        text, cover = row
+        title = (text or "").strip().split("\n")[0][:80]
+        return title, text, cover, None, None
 
     if section == "travel":
         row = await database.get_travel_place(item_id)
@@ -306,6 +329,14 @@ async def publish_next(bot: Bot, only: str = None, lead: str = None,
             rows.append([InlineKeyboardButton(text="🔗 Подробнее", url=safe_link)])
         # Делимся каналом, а не отдельным постом: ссылка на пост приводит
         # читателя к одной записи, ссылка на канал — к подписке.
+        # Ссылка на профильный справочник: пост — подборка, а всё остальное
+        # лежит там, и путь туда должен быть в один щелчок.
+        ref = REF_CHANNELS.get(section)
+        if ref:
+            url = await database.get_setting(ref[0])
+            if url:
+                rows.append([InlineKeyboardButton(text=ref[1], url=url)])
+
         # Отклик читателя. Счётчик показывается прямо на кнопке — пустая
         # кнопка «нравится» не говорит ничего, а «Были здесь · 14» говорит.
         label = VOTE_LABELS.get(section)
@@ -417,7 +448,8 @@ def _sport_fact(index: int) -> str:
     return facts[index % len(facts)]["text"] if facts else ""
 
 
-SLOT_SECTION = {"genetics": "genetics", "travel": "travel", "dinner": "recipes"}
+SLOT_SECTION = {"genetics": "genetics", "travel": "travel",
+                "dinner": "recipes", "books": "books"}
 
 DINNER_LEAD = "🍳 Что приготовить на ужин"
 SPORT_LEAD = "🏅 Спортивный факт дня"
@@ -440,7 +472,15 @@ async def publish_slot(bot: Bot) -> str:
         if not news:
             logging.warning("Дайджест: утренних новостей нет — выпуск пропущен")
             return "новостей нет"
-        text = f"☀️ {greeting}\n\n{news}"
+        parts = [f"☀️ {greeting}", news]
+        try:
+            import fx_rates
+            rates = await fx_rates.morning_block()
+            if rates:
+                parts.append(rates)
+        except Exception as e:
+            logging.warning(f"Дайджест: курсы к утру не подоспели: {e}")
+        text = "\n\n".join(parts)
         try:
             await bot.send_message(chat, text[:MAX_MESSAGE],
                                    message_thread_id=thread,
@@ -578,6 +618,18 @@ async def digest_command(message: Message, bot: Bot):
                              f"Сейчас у читателя: {now:%H:%M}")
         return
 
+    if command == "ref" and len(parts) > 2:
+        # «/digest ref travel https://t.me/…» — справочник для раздела
+        bits = parts[2].split()
+        key = REF_CHANNELS.get(bits[0].lower() if bits else "")
+        if not key or len(bits) < 2:
+            await message.answer("Формат: <code>/digest ref travel https://t.me/имя</code>\n"
+                                 "Разделы: " + ", ".join(REF_CHANNELS))
+            return
+        await database.set_setting(key[0], bits[1])
+        await message.answer(f"✅ {key[1]} → {html.escape(bits[1])}")
+        return
+
     if command == "country" and len(parts) > 2:
         await database.set_setting(NEWS_COUNTRY_KEY, parts[2].strip())
         await message.answer(f"✅ Новости берём для: {html.escape(parts[2].strip())}")
@@ -679,6 +731,7 @@ async def digest_command(message: Message, bot: Bot):
     lines.append("\n<code>/digest slot</code> — выпустить то, что по времени\n"
                  "<code>/digest tz 3</code> — часовой пояс читателя\n"
                  "<code>/digest country Россия</code> — чьи новости утром\n"
+                 "<code>/digest ref travel https://t.me/…</code> — справочник раздела\n"
                  "<code>/digest now</code> — опубликовать вне сетки\n"
                  "<code>/digest chat -100…</code> — задать канал\n"
                  "<code>/digest mirror -100… тема раздел</code> — дубль в группу\n"

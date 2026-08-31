@@ -1404,6 +1404,7 @@ DIGEST_SOURCES = {
     "genetics": ("articles", "section = 'genetics'"),
     "recipes": ("recipes", "TRUE"),
     "travel": ("travel_places", "TRUE"),
+    "books": ("books", "TRUE"),
 }
 
 
@@ -2201,6 +2202,20 @@ async def get_books(category: str, limit: int = 3):
     except Exception as e:
         logging.error(f"БД недоступна при чтении книг: {e}")
         return []
+
+async def get_book_by_id(book_id: int):
+    """(текст, обложка) книги — для публикации в канал"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                f"SELECT text_content, cover_file_id FROM {SCHEMA}.books WHERE id = $1",
+                book_id)
+        return (row["text_content"], row["cover_file_id"]) if row else None
+    except Exception as e:
+        logging.error(f"Книга не читается: {e}")
+        return None
+
 
 async def add_book(category: str, text_content: str, cover_file_id: str):
     """Сохраняет новую книгу (добавляется автоматически при публикации в канале)"""

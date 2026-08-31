@@ -366,6 +366,41 @@ BTN_OTHER = {"ru": "🔄 Другая валюта", "en": "🔄 Another currenc
 BTN_DONE = {"ru": "✅ Готово", "en": "✅ Done"}
 
 
+async def morning_block() -> str:
+    """Короткая сводка курсов для утреннего выпуска.
+
+    Не полный разбор со стрелками и советами — тот живёт в разделе бота.
+    Здесь три строки: сколько сейчас, куда сдвинулось за сутки и куда за
+    месяц. Предпринимателю утром нужна цифра и направление, а не лекция.
+    """
+    series = await fetch_series()
+    if not series:
+        return ""
+
+    lines = []
+    for code, meta in CURRENCIES.items():
+        # Ряд хранит пары «дата — курс», берём только курс
+        points = [v for _, v in (series.get(code) or [])]
+        if len(points) < 2:
+            continue
+        last, prev, first = points[-1], points[-2], points[0]
+        # Изменение в процентах, а не в единицах: у евро суточный сдвиг —
+        # тысячные, и в двух знаках он выглядит нулём, хотя его видно.
+        day = (last - prev) / prev * 100 if prev else 0
+        month = (last - first) / first * 100 if first else 0
+        arrow = "▲" if day > 0 else ("▼" if day < 0 else "=")
+        digits = 2 if last >= 10 else 4
+        lines.append(
+            f"{meta['flag']} {meta['ru']}: {last:.{digits}f} за $ "
+            f"{arrow} {abs(day):.2f}% за сутки, {month:+.1f}% за месяц\n"
+            f"{sparkline(points, 20)}")
+
+    # Разметка Markdown, а не HTML: утренний выпуск собирается вместе с
+    # новостными ссылками, которые приходят из RSS уже в Markdown, и
+    # смешивать две разметки в одном сообщении нельзя.
+    return "💱 *Курсы утром*\n\n" + "\n\n".join(lines) if lines else ""
+
+
 async def latest_rates() -> dict:
     """{валюта: сколько её дают за $1}. Доллар к себе — единица."""
     series = await fetch_series()
