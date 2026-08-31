@@ -91,6 +91,43 @@ async def seed(message: Message):
                                   callback_data="bookcovers")]]))
 
 
+@router.message(F.text == "/books_check")
+async def check(message: Message):
+    """Сверяет список из файла с тем, что лежит на полке.
+
+    Счётчик «добавлено 29» не говорит, какая книга не дошла, а искать её
+    глазами среди тридцати — работа на ровном месте.
+    """
+    if not config.is_admin(message.from_user.id):
+        return
+    try:
+        books = load_seed()
+    except Exception as e:
+        await message.answer(f"⚠️ Файл не читается: {e}")
+        return
+
+    in_db = await database.books_all()
+    heads = {(t or "").split("\n")[0].strip() for _, _, t, _, _ in in_db}
+
+    missing = [b for b in books if _post(b).split("\n")[0].strip() not in heads]
+    extra = len(in_db) - (len(books) - len(missing))
+
+    lines = [f"📚 <b>Сверка</b>\n",
+             f"В файле: {len(books)}",
+             f"На полке: {len(in_db)}"]
+    if missing:
+        lines.append(f"\n<b>Не дошли ({len(missing)}):</b>")
+        lines += [f"• {html.escape(b['author'])} — {html.escape(b['title'])}"
+                  for b in missing]
+        lines.append("\nПовторите <code>/books_seed</code> — добавятся только они.")
+    else:
+        lines.append("\n✅ Все книги из файла на месте.")
+    if extra > 0:
+        lines.append(f"\nСверх файла на полке: {extra} "
+                     f"(пришли из канала по хештегу — это нормально)")
+    await message.answer("\n".join(lines))
+
+
 # =====================================================================
 # КАНАЛ-СПРАВОЧНИК
 #
