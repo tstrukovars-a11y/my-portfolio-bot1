@@ -722,6 +722,32 @@ async def digest_command(message: Message, bot: Bot):
         await message.answer(f"📤 {await publish_next(bot)}")
         return
 
+    if command == "reset":
+        # Подтверждение обязательно: восстановить историю публикаций
+        # неоткуда, а без неё канал выложит всё заново с начала.
+        confirm = parts[2].strip().lower() if len(parts) > 2 else ""
+        with_channels = "всё" in confirm or "все" in confirm
+
+        if confirm not in ("да", "да всё", "да все", "всё", "все"):
+            stats = await database.digest_stats()
+            published = sum(v["published"] for v in stats.values())
+            await message.answer(
+                f"🧹 <b>Сброс истории публикаций</b>\n\n"
+                f"Забудется: {published} публикаций и отметки сегодняшних слотов.\n"
+                f"Материал останется весь — канал просто начнёт заново.\n\n"
+                "<code>/digest reset да</code> — сбросить\n"
+                "<code>/digest reset да всё</code> — плюс забыть номера постов "
+                "в справочниках (только если вы вычистили и их каналы)")
+            return
+
+        result = await database.reset_digest(with_channels)
+        body = "\n".join(f"{k}: {v}" for k, v in result.items())
+        await message.answer(
+            f"🧹 <b>Сброшено</b>\n\n{body}\n\n"
+            "Канал начнёт с начала по расписанию. "
+            "Проверить, что готово к выходу: <code>/buffer</code>")
+        return
+
     if command == "slot":
         # Принудительный запуск сетки: удобно проверять, не дожидаясь часа.
         await message.answer(f"📤 {await publish_slot(bot)}")

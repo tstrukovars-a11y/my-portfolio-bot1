@@ -1548,6 +1548,41 @@ async def mark_repeated(section: str, item_id: int, message_id: int = None) -> b
         return False
 
 
+async def reset_digest(with_channels: bool = False) -> dict:
+    """Забывает всё, что канал уже публиковал, и начинает с чистого листа.
+
+    Стирается история публикаций и отметки слотов — сам материал остаётся.
+    with_channels дополнительно забывает номера постов в справочниках:
+    это нужно, только если их каналы тоже вычищены, иначе бот потеряет
+    связь с живыми постами и выложит их заново.
+    """
+    out = {}
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            done = await conn.execute(f"DELETE FROM {SCHEMA}.digest_log")
+            out["публикаций забыто"] = int(done.rsplit(" ", 1)[-1] or 0)
+
+            done = await conn.execute(
+                f"DELETE FROM {SCHEMA}.settings WHERE key LIKE 'digest_slot_%' "
+                "OR key LIKE 'digest_fail_%' "
+                "OR key IN ('digest_sport_n', 'digest_last_section', "
+                "'digest_last_at', 'digest_last_error')")
+            out["служебных отметок"] = int(done.rsplit(" ", 1)[-1] or 0)
+
+            if with_channels:
+                for table in ("travel_places", "books"):
+                    done = await conn.execute(
+                        f"UPDATE {SCHEMA}.{table} SET channel_msg_id = NULL "
+                        "WHERE channel_msg_id IS NOT NULL")
+                    out[f"номеров постов ({table})"] = int(done.rsplit(" ", 1)[-1] or 0)
+        _settings_cache.clear()
+        return out
+    except Exception as e:
+        logging.error(f"Сброс не выполнен: {e}")
+        return {"ошибка": str(e)[:120]}
+
+
 async def next_candidates(section: str, limit: int = 12):
     """Несколько ближайших неопубликованных, а не один.
 
