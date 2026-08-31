@@ -756,23 +756,55 @@ async def buffer_command(message: Message):
 
 @router.message(F.text == "/id")
 async def show_chat_id(message: Message):
-    """Показывает id чата и тему, откуда команду отправили.
+    """Спрашивает прямо здесь: какой раздел дублировать в эту тему.
 
-    Нужно потому, что @userinfobot по пересланному сообщению показывает
-    автора, а не чат: id группы через него не узнать в принципе.
+    Раньше команда отдавала готовую строку, которую надо было скопировать
+    и переслать боту в личку. Копирование между чатами — ровно тот шаг,
+    на котором работа и останавливается, поэтому теперь достаточно нажать.
     """
     if not config.is_admin(message.from_user.id):
         return
 
-    chat_id = message.chat.id
-    thread = message.message_thread_id
-    lines = [f"Чат: <code>{chat_id}</code>"]
-    if thread:
-        lines.append(f"Тема: <code>{thread}</code>")
-    lines.append("\nГотовая команда — допишите раздел:")
-    lines.append(f"<code>/digest mirror {chat_id}{f' {thread}' if thread else ''} генетика</code>")
-    lines.append("\nРазделы: генетика, рецепты, путешествия")
-    await message.answer("\n".join(lines))
+    chat_id, thread = message.chat.id, message.message_thread_id
+    rows = [[InlineKeyboardButton(
+        text=title, callback_data=f"setmirror_{section}_{chat_id}_{thread or 0}")]
+        for section, title in (("genetics", "🧬 Сюда — генетику"),
+                               ("recipes", "🍳 Сюда — кулинарию"),
+                               ("travel", "🌍 Сюда — путешествия"),
+                               ("books", "📚 Сюда — книги"))]
+    rows.append([InlineKeyboardButton(
+        text="📥 Сюда — вообще всё", callback_data=f"setmirror_all_{chat_id}_{thread or 0}")])
+
+    where = f"Чат <code>{chat_id}</code>" + (f", тема <code>{thread}</code>" if thread else "")
+    await message.answer(
+        f"📍 {where}\n\nЧто дублировать сюда из канала?",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+
+
+@router.callback_query(F.data.startswith("setmirror_"))
+async def set_mirror_here(call: CallbackQuery):
+    if not config.is_admin(call.from_user.id):
+        await call.answer()
+        return
+    try:
+        _, section, chat_id, thread = call.data.split("_", 3)
+    except ValueError:
+        await call.answer()
+        return
+
+    await database.set_setting(MIRROR_KEY, chat_id)
+    if section == "all":
+        await database.set_setting(MIRROR_THREAD_KEY, thread if thread != "0" else "")
+        label = "всё"
+    else:
+        await database.set_setting(f"{MIRROR_THREAD_KEY}_{section}",
+                                   thread if thread != "0" else "")
+        label = SECTION_TITLES.get(section, section)
+
+    await call.message.edit_text(
+        f"✅ {label} будет дублироваться сюда.\n\n"
+        "Для остальных разделов напишите <code>/id</code> в их темах.")
+    await call.answer("Готово")
 
 
 @router.message(F.text.startswith("/digest"))
