@@ -911,8 +911,15 @@ async def digest_command(message: Message, bot: Bot):
         # «id_группы [номер_темы] [раздел]». Без раздела тема считается общей,
         # без темы — дубль идёт в общий поток группы.
         bits = parts[2].split()
-        await database.set_setting(MIRROR_KEY, bits[0])
         thread = bits[1] if len(bits) > 1 else ""
+        if thread and not thread.isdigit():
+            # Раньше сюда попадало слово из примера — и дубль молча не шёл.
+            await message.answer(
+                f"❌ «{html.escape(thread)}» — не номер темы.\n\n"
+                "Проще всего: напишите <code>/id</code> прямо в нужной теме "
+                "группы и нажмите кнопку — номер подставится сам.")
+            return
+        await database.set_setting(MIRROR_KEY, bits[0])
 
         if len(bits) > 2:
             # Всё после номера темы — название раздела: у тем бывают имена
@@ -972,8 +979,10 @@ async def digest_command(message: Message, bot: Bot):
     today = now.strftime("%Y-%m-%d")
     for at, slot, _ in SCHEDULE:
         done = await database.get_setting(f"digest_slot_{slot}") == today
-        titles = {"morning": "новости", "genetics": "наука", "travel": "путешествия",
-                  "sport": "спортивный факт", "dinner": "рецепт на ужин"}
+        titles = {"morning": "новости и курсы", "tennis": "расписание тенниса",
+                  "books": "деловая литература", "genetics": "наука",
+                  "travel": "путешествия", "sport": "спортивный факт",
+                  "dinner": "рецепт на ужин"}
         lines.append(f"{'✅' if done else '⬜️'} {at} — {titles.get(slot, slot)}")
     lines.append("")
     for section, data in stats.items():
@@ -984,10 +993,15 @@ async def digest_command(message: Message, bot: Bot):
     mirror = await database.get_setting(MIRROR_KEY)
     lines.append(f"\nДубль в группу: <code>{mirror or 'нет'}</code>")
     if mirror:
-        for section in ROTATION:
+        for section in list(SECTION_TITLES):
             thread = await _mirror_thread(section)
-            lines.append(f"  {SECTION_TITLES.get(section, section)} → "
-                         + (f"тема {thread}" if thread else "общий поток"))
+            if thread and not str(thread).isdigit():
+                where = f"⚠️ испорчен номер темы «{html.escape(str(thread))}»"
+            elif thread:
+                where = f"тема {thread}"
+            else:
+                where = "общий поток"
+            lines.append(f"  {SECTION_TITLES.get(section, section)} → {where}")
 
     ad = await database.get_setting("digest_ad")
     lines.append(f"Реклама: {'есть' if ad else 'нет'}")
