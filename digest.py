@@ -707,6 +707,69 @@ def _with_vote(markup, section: str, item_id: int, text: str):
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+@router.message(F.text.startswith("/plan"))
+async def plan_command(message: Message):
+    """Что выйдет в ближайшие дни — заранее, чтобы успеть поправить.
+
+    План считается тем же правилом, что и публикация: первый годный из
+    очереди. Уже выбранное помечается по ходу, иначе один и тот же
+    материал показался бы во всех днях сразу.
+    """
+    if not config.is_admin(message.from_user.id):
+        return
+
+    parts = message.text.split()
+    try:
+        days = max(1, min(5, int(parts[1]))) if len(parts) > 1 else 1
+    except ValueError:
+        days = 1
+
+    now = await _local_now()
+    taken = set()
+    lines = [f"🗓 <b>План на {'завтра' if days == 1 else f'{days} дн.'}</b>"]
+
+    for day in range(1, days + 1):
+        date = (now + timedelta(days=day)).strftime("%d.%m")
+        lines.append(f"\n<b>{date}</b>")
+        for at, slot, _ in SCHEDULE:
+            if slot == "morning":
+                lines.append(f"{at} — новости и курсы <i>(соберутся утром)</i>")
+                continue
+            if slot == "tennis":
+                lines.append(f"{at} — расписание матчей <i>(по факту дня)</i>")
+                continue
+            if slot == "sport":
+                try:
+                    n = int(await database.get_setting("digest_sport_n") or 0)
+                except (TypeError, ValueError):
+                    n = 0
+                fact = _sport_fact(n + day - 1)
+                lines.append(f"{at} — {html.escape(fact[:60])}…")
+                continue
+
+            section = SLOT_SECTION.get(slot)
+            if not section:
+                continue
+            picked = None
+            for candidate in await database.next_candidates(section, limit=40):
+                if (section, candidate) in taken:
+                    continue
+                built = await _build(section, candidate)
+                if not built or readiness(section, built):
+                    continue
+                taken.add((section, candidate))
+                picked = (built[0] or "")[:52]
+                break
+            title = SECTION_TITLES.get(section, section)
+            lines.append(f"{at} — {title}: "
+                         + (html.escape(picked) if picked
+                            else "<i>нечего — пойдёт напоминанием</i>"))
+
+    lines.append("\n<i>Поправить текст или приложить фото — и план пересчитается сам.</i>")
+    lines.append("<code>/plan 3</code> — на три дня вперёд")
+    await message.answer("\n".join(lines))
+
+
 @router.message(F.text.startswith("/buffer"))
 async def buffer_command(message: Message):
     """Что сейчас нельзя опубликовать и почему.
