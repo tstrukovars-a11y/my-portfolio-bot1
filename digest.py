@@ -289,17 +289,27 @@ async def publish_next(bot: Bot, only: str = None, lead: str = None,
             if last in ROTATION else ROTATION
 
     for section in order:
-        # Сперва новое; когда нового нет — самое давнее, но уже напоминанием.
-        item_id, repeat = await database.next_for_digest(section), False
-        if not item_id:
-            item_id = await database.oldest_published(section, REPEAT_MIN_DAYS)
-            repeat = bool(item_id)
-        if not item_id:
-            continue
+        # Идём по кандидатам, пока не найдётся годный к публикации.
+        # Непрошедшие остаются в очереди и ждут вас в буфере.
+        item_id, built, repeat = None, None, False
+        for candidate in await database.next_candidates(section):
+            made = await _build(section, candidate)
+            if not made:
+                await database.mark_published(section, candidate)  # битую запись пропускаем
+                continue
+            if readiness(section, made):
+                continue
+            item_id, built, repeat = candidate, made, False
+            break
 
-        built = await _build(section, item_id)
-        if not built:
-            await database.mark_published(section, item_id)   # битую запись пропускаем
+        # Нового годного нет — берём давнее напоминанием
+        if not item_id:
+            candidate = await database.oldest_published(section, REPEAT_MIN_DAYS)
+            made = await _build(section, candidate) if candidate else None
+            if made and not readiness(section, made):
+                item_id, built, repeat = candidate, made, True
+
+        if not item_id:
             continue
 
         title, text, photo, video, link = built
@@ -448,6 +458,57 @@ def _sport_fact(index: int) -> str:
     return facts[index % len(facts)]["text"] if facts else ""
 
 
+# =====================================================================
+# ГОТОВНОСТЬ К ПУБЛИКАЦИИ
+#
+# Буфер — не отдельное хранилище, а состояние материала. Вещь, которая
+# не проходит проверку, не публикуется и показывается владельцу с
+# причиной; исправил — публикуется сама, ничего не нажимая. Отдельный
+# список черновиков пришлось бы поддерживать вручную, и он разошёлся бы
+# с действительностью в первую же неделю.
+# =====================================================================
+
+# Разделы, где пост без фотографии бессмыслен. Место без снимка — это
+# заметка, а не публикация; глава по генетике без картинки — нормально.
+NEEDS_PHOTO = {"travel"}
+
+
+def _plural(n: int, one: str, few: str, many: str) -> str:
+    """«1 знак», «904 знака», «905 знаков». Русские числительные требуют
+    согласования, и «на 904 знаков» выдаёт машину так же верно, как
+    опечатка."""
+    n = abs(n) % 100
+    if 11 <= n <= 14:
+        return many
+    n %= 10
+    if n == 1:
+        return one
+    if 2 <= n <= 4:
+        return few
+    return many
+
+
+def readiness(section: str, built) -> str:
+    """Пусто, если публиковать можно. Иначе — причина, понятная человеку."""
+    title, text, photo, video, link = built
+    body = (text or title or "").strip()
+
+    if not body:
+        return "текст пустой"
+
+    limit = MAX_CAPTION if (photo or video) else MAX_MESSAGE
+    if len(body) > limit:
+        over = len(body) - limit
+        what = "подписи под фотографией" if (photo or video) else "сообщения"
+        word = _plural(over, "знак", "знака", "знаков")
+        return f"текст длиннее {what} на {over} {word} — нужно сократить"
+
+    if section in NEEDS_PHOTO and not (photo or video):
+        return "нет фотографии"
+
+    return ""
+
+
 SLOT_SECTION = {"genetics": "genetics", "travel": "travel",
                 "dinner": "recipes", "books": "books"}
 
@@ -571,6 +632,53 @@ def _with_vote(markup, section: str, item_id: int, text: str):
             if b.callback_data == f"vote_{section}_{item_id}" else b
             for b in row])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.message(F.text.startswith("/buffer"))
+async def buffer_command(message: Message):
+    """Что сейчас нельзя опубликовать и почему.
+
+    Не хранимый список, а ответ на вопрос в момент вопроса: причина
+    вычисляется по самому материалу, поэтому буфер не может разойтись
+    с действительностью.
+    """
+    if not config.is_admin(message.from_user.id):
+        return
+
+    parts = message.text.split(maxsplit=1)
+    only = parts[1].strip().lower() if len(parts) > 1 else ""
+    only = SECTION_ALIASES.get(only, only)
+
+    sections = [only] if only in SECTION_TITLES else list(SECTION_TITLES)
+    lines, total = [], 0
+
+    for section in sections:
+        stuck = []
+        for candidate in await database.next_candidates(section, limit=60):
+            built = await _build(section, candidate)
+            if not built:
+                continue
+            why = readiness(section, built)
+            if why:
+                stuck.append((candidate, (built[0] or "")[:44], why))
+        total += len(stuck)
+        if not stuck:
+            continue
+        lines.append(f"\n<b>{SECTION_TITLES.get(section, section)}</b> — {len(stuck)}")
+        for _, title, why in stuck[:12]:
+            lines.append(f"• {html.escape(title)}\n  <i>{html.escape(why)}</i>")
+        if len(stuck) > 12:
+            lines.append(f"  …и ещё {len(stuck) - 12}")
+
+    if not total:
+        await message.answer("🗂 <b>Буфер пуст</b>\n\nВсё готово к публикации.")
+        return
+
+    await message.answer(
+        f"🗂 <b>Буфер</b> — ждёт правки: {total}\n" + "\n".join(lines)
+        + "\n\n<i>Исправьте причину — материал опубликуется сам, "
+          "ничего нажимать не нужно.</i>\n\n"
+          "<code>/buffer путешествия</code> — только один раздел")
 
 
 @router.message(F.text == "/id")

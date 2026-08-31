@@ -1475,6 +1475,31 @@ async def mark_repeated(section: str, item_id: int, message_id: int = None) -> b
         return False
 
 
+async def next_candidates(section: str, limit: int = 12):
+    """Несколько ближайших неопубликованных, а не один.
+
+    Публикатору нужен выбор: если первый не проходит проверку — длинный
+    текст, нет фотографии, — он не публикуется, а очередь идёт дальше.
+    С одним кандидатом раздел вставал бы на нём насмерть.
+    """
+    source = DIGEST_SOURCES.get(section)
+    if not source:
+        return []
+    table, condition = source
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"""SELECT id FROM {SCHEMA}.{table}
+                    WHERE {condition} AND id NOT IN (
+                        SELECT item_id FROM {SCHEMA}.digest_log WHERE section = $1)
+                    ORDER BY id LIMIT $2""", section, limit)
+        return [r["id"] for r in rows]
+    except Exception as e:
+        logging.error(f"Кандидаты для дайджеста недоступны: {e}")
+        return []
+
+
 async def mark_published(section: str, item_id: int, message_id: int = None) -> bool:
     try:
         pool = await get_pool()
