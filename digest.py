@@ -60,6 +60,33 @@ REF_CHANNELS = {
     "genetics": ("ref_genetics", "🧬 Вся генетика"),
 }
 
+# Предложение под постом. Раздел уже собрал внимание — глупо не сказать,
+# что по этой теме у вас можно заказать. Ведёт глубокой ссылкой сразу на
+# нужный экран бота, а не в главное меню.
+#
+# Не у каждого раздела оно есть, и это правильно: кнопка «купить» под
+# постом, где покупать нечего, обесценивает все остальные.
+OFFERS = {
+    "genetics": ("🧬 Заказать расшифровку", "genetics"),
+    "travel": None,
+    "recipes": None,
+    "books": None,
+    "sport": ("🎾 Теннисный магазин", "shop"),
+    "tennis": ("🎾 Теннисная подписка", "tennis"),
+}
+BOT_KEY = "bot_username"          # для сборки ссылки t.me/<бот>?start=…
+
+
+async def _offer_row(section: str):
+    offer = OFFERS.get(section)
+    username = await database.get_setting(BOT_KEY)
+    if not offer or not username:
+        return None
+    label, payload = offer
+    return [InlineKeyboardButton(
+        text=label, url=f"https://t.me/{username.lstrip('@')}?start={payload}")]
+
+
 TZ_KEY = "digest_tz"             # смещение от UTC в часах
 TZ_DEFAULT = 3                   # Москва
 NEWS_COUNTRY_KEY = "digest_news_country"
@@ -347,6 +374,10 @@ async def publish_next(bot: Bot, only: str = None, lead: str = None,
             url = await database.get_setting(ref[0])
             if url:
                 rows.append([InlineKeyboardButton(text=ref[1], url=url)])
+
+        offer = await _offer_row(section)
+        if offer:
+            rows.append(offer)
 
         # Отклик читателя. Счётчик показывается прямо на кнопке — пустая
         # кнопка «нравится» не говорит ничего, а «Были здесь · 14» говорит.
@@ -772,6 +803,13 @@ async def digest_command(message: Message, bot: Bot):
         await message.answer(f"✅ {key[1]} → {html.escape(bits[1])}")
         return
 
+    if command == "bot" and len(parts) > 2:
+        await database.set_setting(BOT_KEY, parts[2].strip().lstrip("@"))
+        await message.answer(
+            f"✅ Бот для ссылок: @{html.escape(parts[2].strip().lstrip('@'))}\n\n"
+            "Теперь под постами появятся кнопки заказа.")
+        return
+
     if command == "country" and len(parts) > 2:
         await database.set_setting(NEWS_COUNTRY_KEY, parts[2].strip())
         await message.answer(f"✅ Новости берём для: {html.escape(parts[2].strip())}")
@@ -874,6 +912,7 @@ async def digest_command(message: Message, bot: Bot):
                  "<code>/digest tz 3</code> — часовой пояс читателя\n"
                  "<code>/digest country Россия</code> — чьи новости утром\n"
                  "<code>/digest ref travel https://t.me/…</code> — справочник раздела\n"
+                 "<code>/digest bot имя_бота</code> — куда ведут кнопки заказа\n"
                  "<code>/digest now</code> — опубликовать вне сетки\n"
                  "<code>/digest chat -100…</code> — задать канал\n"
                  "<code>/digest mirror -100… тема раздел</code> — дубль в группу\n"

@@ -1,5 +1,6 @@
 from aiogram import Router, F, Bot
-from aiogram.types import Message, CallbackQuery, InputMediaPhoto
+from aiogram.types import (Message, CallbackQuery, InputMediaPhoto,
+                           InlineKeyboardMarkup, InlineKeyboardButton)
 from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramBadRequest
 
@@ -26,9 +27,37 @@ async def check_channel_subscriptions(bot: Bot, user_id: int) -> bool:
             continue
     return True
 
-@router.message(F.text == "/start")
+# Куда ведёт глубокая ссылка. Кнопка под постом в канале должна открывать
+# нужный экран, а не главное меню: человек, пришедший заказывать разбор
+# генов, не обязан искать его сам.
+#
+# Ключ короткий и осмысленный — он виден в адресе, а адрес показывается
+# читателю при переходе.
+DEEP_LINKS = {
+    "genetics": "genetics_order",
+    "shop": "tennis_shop_referral",
+    "tennis": "sport_tennis",
+    "books": "intellect_books",
+    "travel": "sport_travel",
+    "ai": "menu_claude",
+}
+
+
+@router.message(F.text.startswith("/start"))
 async def cmd_start(message: Message, state: FSMContext, bot: Bot):
     await state.clear()
+
+    # «/start genetics» — переход из канала. Запоминаем, откуда пришли:
+    # без этого не узнать, какие посты приводят людей, а какие нет.
+    payload = message.text.split(maxsplit=1)
+    source = payload[1].strip()[:32] if len(payload) > 1 else ""
+    if source:
+        try:
+            await database.log_action(message.from_user.id, f"from_{source}",
+                                      await database.get_user_language(message.from_user.id))
+        except Exception:
+            pass
+        await state.update_data(deep_link=source)
     
     # 1. Проверяем обязательную подписку
     is_subscribed = await check_channel_subscriptions(bot, message.from_user.id)
@@ -52,6 +81,25 @@ async def cmd_start(message: Message, state: FSMContext, bot: Bot):
         ),
         reply_markup=inline_kb.language_menu
     )
+
+    # Пришедшему по ссылке сразу даём дорогу туда, зачем он шёл. Отдельным
+    # сообщением, а не заменой языкового экрана: язык всё равно нужно
+    # выбрать, а искать свой раздел человек не обязан.
+    target = DEEP_LINKS.get(source)
+    if target:
+        labels = {
+            "genetics_order": "🧬 Заказать расшифровку",
+            "tennis_shop_referral": "🎾 Теннисный магазин",
+            "sport_tennis": "🎾 Большой теннис",
+            "intellect_books": "📚 Книжная полка",
+            "sport_travel": "🌍 Путешествия",
+            "menu_claude": "🤖 Чат AI",
+        }
+        await message.answer(
+            "Вы пришли по ссылке — вот она:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text=labels.get(target, "Открыть"),
+                                     callback_data=target)]]))
 
 @router.callback_query(F.data.startswith("lang_"))
 async def set_language(call: CallbackQuery, bot: Bot):
