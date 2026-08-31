@@ -66,6 +66,19 @@ SECTION_TITLES = {
 # Вопрос читателю под каждым постом. Формулировка своя для раздела: «были
 # там?» под рецептом бессмысленно. Это не украшение — вещание превращается
 # в разговор, и по счётчику видно, что вообще читают.
+# Рамка повтора. Материал, вышедший месяц назад, публикуется не как
+# новость, а как приглашение: «приготовим лазанью? напоминаю рецепт».
+# Тот же текст в другой рамке — это другой пост, а не задвоение.
+# Название стоит первым и в именительном падеже. «Приготовим лазанья
+# болоньезе?» — то, что выходит при подстановке в середину фразы: склонять
+# русские названия автоматически нельзя, а так грамматика верна всегда.
+REPEAT_LEAD = {
+    "recipes": "🍳 {title} — приготовим?\n\nНапоминаю рецепт.",
+    "travel": "🌍 {title} — помните это место?\n\nНапоминаю, чем оно хорошо.",
+    "genetics": "🧬 {title} — напоминаю коротко.",
+}
+REPEAT_MIN_DAYS = 30      # раньше повтор читается как сбой, а не как «а помните»
+
 VOTE_LABELS = {
     "genetics": "💡 Знали это",
     "recipes": "🍳 Готовили",
@@ -222,7 +235,11 @@ async def publish_next(bot: Bot) -> str:
         if last in ROTATION else ROTATION
 
     for section in order:
-        item_id = await database.next_for_digest(section)
+        # Сперва новое; когда нового нет — самое давнее, но уже напоминанием.
+        item_id, repeat = await database.next_for_digest(section), False
+        if not item_id:
+            item_id = await database.oldest_published(section, REPEAT_MIN_DAYS)
+            repeat = bool(item_id)
         if not item_id:
             continue
 
@@ -233,6 +250,13 @@ async def publish_next(bot: Bot) -> str:
 
         title, text, photo, video, link = built
         head = SECTION_TITLES.get(section, section)
+        if repeat:
+            # Название в вопросе обязательно: «приготовим лазанью?» зовёт,
+            # а безымянное «приготовим?» не значит ничего.
+            # Для путешествий заголовок собран как «Живерни · 🇫🇷 Франция»;
+            # в вопрос идёт только само место.
+            short = title.split(" · ")[0].strip()
+            head = REPEAT_LEAD.get(section, head).format(title=short)
         body = (text or title or "").strip()
         caption = f"{head}\n\n{body}" + await _ad_block()
 
@@ -287,13 +311,17 @@ async def publish_next(bot: Bot) -> str:
                 return f"материал пропущен после {fails} попыток: {e}"
             return f"ошибка публикации, попытка {fails} из {MAX_FAILS}: {e}"
 
-        await database.mark_published(section, item_id, sent.message_id)
+        if repeat:
+            await database.mark_repeated(section, item_id, sent.message_id)
+        else:
+            await database.mark_published(section, item_id, sent.message_id)
         await database.set_setting("digest_last_section", section)
         await database.set_setting(LAST_AT_KEY, datetime.now().isoformat())
         await _mirror(bot, chat, sent.message_id, section)
-        return f"опубликовано: {section}/{item_id} — {title[:50]}"
+        kind = "напоминание" if repeat else "опубликовано"
+        return f"{kind}: {section}/{item_id} — {title[:50]}"
 
-    return "публиковать нечего: все материалы уже вышли"
+    return "публиковать нечего: новых нет, а повторы ещё не отлежались"
 
 
 async def _seconds_until_due() -> float:

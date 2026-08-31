@@ -477,6 +477,12 @@ async def init_db():
             published_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (section, item_id)
         )""")
+        # Сколько раз материал выходил. Повтор — не сбой, а отдельный повод:
+        # «приготовим лазанью? напоминаю рецепт» читается иначе, чем та же
+        # публикация впервые. Счётчик нужен, чтобы отличать одно от другого.
+        await conn.execute(
+            f"ALTER TABLE {SCHEMA}.digest_log "
+            "ADD COLUMN IF NOT EXISTS times INTEGER NOT NULL DEFAULT 1")
 
         # 21. Рекорды браузерной гонки. Ключ — игрок, а не заезд: в таблице
         # хранится лучший результат, а не история попыток.
@@ -1422,6 +1428,45 @@ async def next_for_digest(section: str):
     except Exception as e:
         logging.error(f"БД недоступна при выборе материала для дайджеста: {e}")
         return None
+
+
+async def oldest_published(section: str, min_days: int = 30):
+    """id материала, вышедшего дольше всего назад — кандидат на напоминание.
+
+    Порог в днях обязателен: повтор через неделю читается как сбой, а через
+    месяц — как «а помните».
+    """
+    source = DIGEST_SOURCES.get(section)
+    if not source:
+        return None
+    table, condition = source
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            return await conn.fetchval(
+                f"""SELECT l.item_id FROM {SCHEMA}.digest_log l
+                    JOIN {SCHEMA}.{table} t ON t.id = l.item_id
+                    WHERE l.section = $1 AND {condition}
+                      AND l.published_at < NOW() - ($2 || ' days')::interval
+                    ORDER BY l.published_at LIMIT 1""", section, str(min_days))
+    except Exception as e:
+        logging.error(f"Кандидат на повтор не найден: {e}")
+        return None
+
+
+async def mark_repeated(section: str, item_id: int, message_id: int = None) -> bool:
+    """Отмечает повторный выход: материал уходит в конец очереди повторов"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"UPDATE {SCHEMA}.digest_log SET published_at = CURRENT_TIMESTAMP, "
+                "times = times + 1, message_id = COALESCE($3, message_id) "
+                "WHERE section = $1 AND item_id = $2", section, item_id, message_id)
+        return True
+    except Exception as e:
+        logging.error(f"Повтор не отмечен: {e}")
+        return False
 
 
 async def mark_published(section: str, item_id: int, message_id: int = None) -> bool:
