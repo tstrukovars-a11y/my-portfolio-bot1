@@ -24,7 +24,9 @@ import flags
 router = Router()
 
 CHANNEL_KEY = "travel_channel"
-PAUSE = 1.2               # между постами: Telegram не любит очередь без пауз
+# Telegram пропускает в канал около двадцати сообщений в минуту. Пауза
+# в 1,2 секунды давала пятьдесят — часть постов отбивалась по частоте.
+PAUSE = 3.2
 MAX_CAPTION = 1024
 MAX_MESSAGE = 4096
 
@@ -85,11 +87,18 @@ async def publish_all(message: Message, bot: Bot):
 
 
 async def _run(bot: Bot, chat: int, places, note: Message):
-    """Выкладка идёт фоном: восемьдесят постов с паузами — это две минуты,
-    и держать всё это время сообщение «выкладываю» бессмысленно."""
-    new = edited = failed = 0
+    """Выкладка идёт фоном: восемьдесят постов с паузами — это несколько
+    минут, и держать всё это время сообщение «выкладываю» бессмысленно.
 
-    for place_id, country, place, text, photo, msg_id in places:
+    Очередь, а не простой обход: отбитое по частоте возвращается в конец
+    и выходит позже. Раньше такое место молча выпадало из справочника.
+    """
+    new = edited = failed = 0
+    queue = list(places)
+    tries = {}
+
+    while queue:
+        place_id, country, place, text, photo, msg_id = queue.pop(0)
         body = _post_text(country, place, text)
         try:
             if msg_id:
@@ -109,7 +118,7 @@ async def _run(bot: Bot, chat: int, places, note: Message):
                         continue
                     # Текстовый пост нельзя превратить в пост с картинкой
                     # правкой — Telegram такого не умеет. Значит фотографию
-                    # приложили уже после выкладки: снимаем и публикуем заново.
+                    # приложили после выкладки: снимаем и публикуем заново.
                     if not photo:
                         raise
                     logging.info(f"Канал путешествий: «{place}» переиздаю с фотографией")
@@ -129,14 +138,20 @@ async def _run(bot: Bot, chat: int, places, note: Message):
                     sent = await bot.send_message(chat, body[:MAX_MESSAGE], parse_mode=None)
                 await database.set_travel_msg(place_id, sent.message_id)
                 new += 1
+        except TelegramRetryAfter as e:
+            tries[place_id] = tries.get(place_id, 0) + 1
+            if tries[place_id] <= 3:
+                logging.info(f"Канал путешествий: пауза {e.retry_after} с, «{place}» в конец очереди")
+                queue.append((place_id, country, place, text, photo, msg_id))
+            else:
+                logging.error(f"Канал путешествий: «{place}» отбит по частоте трижды")
+                failed += 1
+            await asyncio.sleep(e.retry_after + 1)
+            continue
         except TelegramBadRequest as e:
-            # «message is not modified» — не ошибка: текст просто не менялся.
             if "not modified" in str(e).lower():
                 continue
             logging.error(f"Канал путешествий: {place} — {e}")
-            failed += 1
-        except TelegramRetryAfter as e:
-            await asyncio.sleep(e.retry_after + 1)
             failed += 1
         except Exception as e:
             logging.error(f"Канал путешествий: {place} — {type(e).__name__}: {e}")

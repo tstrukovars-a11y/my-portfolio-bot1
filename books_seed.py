@@ -137,7 +137,9 @@ async def check(message: Message):
 # =====================================================================
 
 CHANNEL_KEY = "books_channel"
-PAUSE = 1.2
+# Telegram пропускает в канал около двадцати сообщений в минуту. Пауза
+# в 1,2 секунды давала пятьдесят — часть постов отбивалась по частоте.
+PAUSE = 3.2
 MAX_CAPTION = 1024
 MAX_MESSAGE = 4096
 
@@ -188,8 +190,15 @@ async def publish_all(message: Message, bot):
 
 
 async def _run(bot, chat: int, books, note: Message):
+    """Очередь, а не простой обход: отбитое по частоте возвращается в
+    конец и выходит позже. Раньше такая книга молча выпадала из полки —
+    из тридцати в канал попадало двадцать девять."""
     new = edited = failed = 0
-    for book_id, category, text, cover, msg_id in books:
+    queue = list(books)
+    tries = {}
+
+    while queue:
+        book_id, category, text, cover, msg_id = queue.pop(0)
         body = f"{SHELVES.get(category, '📚')}\n\n{(text or '').strip()}"
         try:
             if msg_id:
@@ -227,8 +236,15 @@ async def _run(bot, chat: int, books, note: Message):
                 await database.set_book_msg(book_id, sent.message_id)
                 new += 1
         except TelegramRetryAfter as e:
+            tries[book_id] = tries.get(book_id, 0) + 1
+            if tries[book_id] <= 3:
+                logging.info(f"Канал книг: пауза {e.retry_after} с, книга {book_id} в конец очереди")
+                queue.append((book_id, category, text, cover, msg_id))
+            else:
+                logging.error(f"Канал книг: книга {book_id} отбита по частоте трижды")
+                failed += 1
             await asyncio.sleep(e.retry_after + 1)
-            failed += 1
+            continue
         except Exception as e:
             logging.error(f"Канал книг: {book_id} — {type(e).__name__}: {e}")
             failed += 1
