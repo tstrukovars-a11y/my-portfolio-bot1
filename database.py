@@ -536,6 +536,13 @@ async def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             UNIQUE (place_id, lower_name)
         )""")
+        # Адрес и сайт добавлены позже: пост без них — заметка, с ними —
+        # повод дойти. Часы работы намеренно не храним: они устаревают,
+        # а ссылка на сайт остаётся верной.
+        await conn.execute(
+            f"ALTER TABLE {SCHEMA}.travel_spots ADD COLUMN IF NOT EXISTS address TEXT")
+        await conn.execute(
+            f"ALTER TABLE {SCHEMA}.travel_spots ADD COLUMN IF NOT EXISTS url TEXT")
 
         # 25. Персонажи, нарисованные самими пользователями. Каждый видит и
         # использует только своих: чужой рисунок в своей истории — не то, что
@@ -559,7 +566,19 @@ async def init_db():
             UNIQUE (user_id, lower_name)
         )""")
 
-        # 26. Анкеты поиска партнёра для игры
+        # 26. Отклики читателей на посты канала. Один человек — один голос
+        # на пост, поэтому ключ составной: повторное нажатие не накручивает
+        # счётчик, а снимает голос.
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.post_votes (
+            section TEXT NOT NULL,
+            item_id INTEGER NOT NULL,
+            user_id BIGINT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (section, item_id, user_id)
+        )""")
+
+        # 27. Анкеты поиска партнёра для игры
         await conn.execute(f"""
         CREATE TABLE IF NOT EXISTS {SCHEMA}.game_partners (
             id SERIAL PRIMARY KEY,
@@ -936,14 +955,17 @@ async def add_travel_place(country_ru, country_en, place, text_content,
         return f"error:{type(e).__name__}: {e}"
 
 
-async def add_spot(place_id: int, name: str, text: str, ordering: int) -> str:
+async def add_spot(place_id: int, name: str, text: str, ordering: int,
+                   address: str = None, url: str = None) -> str:
     try:
         pool = await get_pool()
         async with pool.acquire() as conn:
             got = await conn.fetchval(
-                f"INSERT INTO {SCHEMA}.travel_spots (place_id, name, text_content, ordering) "
-                "VALUES ($1, $2, $3, $4) ON CONFLICT (place_id, lower_name) DO NOTHING "
-                "RETURNING id", place_id, name, text, ordering)
+                f"INSERT INTO {SCHEMA}.travel_spots "
+                "(place_id, name, text_content, ordering, address, url) "
+                "VALUES ($1, $2, $3, $4, $5, $6) "
+                "ON CONFLICT (place_id, lower_name) DO NOTHING "
+                "RETURNING id", place_id, name, text, ordering, address, url)
         return "added" if got else "duplicate"
     except Exception as e:
         logging.error(f"Достопримечательность не сохранена: {e}")
@@ -956,8 +978,9 @@ async def spots_of(place_id: int):
         pool = await get_pool()
         async with pool.acquire() as conn:
             rows = await conn.fetch(
-                f"SELECT id, name, text_content, photo_file_id, visited, channel_msg_id "
-                f"FROM {SCHEMA}.travel_spots WHERE place_id = $1 ORDER BY ordering, id",
+                f"SELECT id, name, text_content, photo_file_id, visited, channel_msg_id, "
+                f"address, url FROM {SCHEMA}.travel_spots WHERE place_id = $1 "
+                "ORDER BY ordering, id",
                 place_id)
         return [tuple(r) for r in rows]
     except Exception as e:
@@ -975,6 +998,76 @@ async def set_spot_visited(spot_id: int, visited: bool) -> bool:
         return True
     except Exception as e:
         logging.error(f"Отметка о посещении не сохранена: {e}")
+        return False
+
+
+async def toggle_vote(section: str, item_id: int, user_id: int):
+    """Ставит или снимает голос. Возвращает (поставлен ли, сколько всего).
+
+    Повторное нажатие снимает: кнопка-счётчик, которую нельзя отжать,
+    превращается в ловушку для случайного касания.
+    """
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            gone = await conn.execute(
+                f"DELETE FROM {SCHEMA}.post_votes "
+                "WHERE section = $1 AND item_id = $2 AND user_id = $3",
+                section, item_id, user_id)
+            added = not gone.endswith("1")
+            if added:
+                await conn.execute(
+                    f"INSERT INTO {SCHEMA}.post_votes (section, item_id, user_id) "
+                    "VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
+                    section, item_id, user_id)
+            total = await conn.fetchval(
+                f"SELECT COUNT(*) FROM {SCHEMA}.post_votes "
+                "WHERE section = $1 AND item_id = $2", section, item_id)
+        return added, total
+    except Exception as e:
+        logging.error(f"Голос не учтён: {e}")
+        return False, 0
+
+
+async def vote_count(section: str, item_id: int) -> int:
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            return await conn.fetchval(
+                f"SELECT COUNT(*) FROM {SCHEMA}.post_votes "
+                "WHERE section = $1 AND item_id = $2", section, item_id) or 0
+    except Exception as e:
+        logging.error(f"Счётчик голосов недоступен: {e}")
+        return 0
+
+
+async def spots_without_photo(limit: int = 40):
+    """(id, город, страна, название) мест без снимка — по маршруту"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT s.id, p.place, p.country_ru, s.name "
+                f"FROM {SCHEMA}.travel_spots s "
+                f"JOIN {SCHEMA}.travel_places p ON p.id = s.place_id "
+                "WHERE s.photo_file_id IS NULL OR s.photo_file_id = '' "
+                "ORDER BY p.country_ru, p.ordering, s.ordering LIMIT $1", limit)
+        return [tuple(r) for r in rows]
+    except Exception as e:
+        logging.error(f"Места без фото недоступны: {e}")
+        return []
+
+
+async def set_spot_photo(spot_id: int, file_id: str) -> bool:
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"UPDATE {SCHEMA}.travel_spots SET photo_file_id = $1 WHERE id = $2",
+                file_id, spot_id)
+        return True
+    except Exception as e:
+        logging.error(f"Фото места не сохранено: {e}")
         return False
 
 

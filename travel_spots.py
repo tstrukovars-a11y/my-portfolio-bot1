@@ -17,6 +17,7 @@ from aiogram import Router, F
 from aiogram.types import (Message, CallbackQuery, InlineKeyboardMarkup,
                            InlineKeyboardButton)
 from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import StatesGroup, State
 
 import config
 import database
@@ -30,25 +31,40 @@ PER_CITY = 5          # больше пяти за раз модель начи�
 MAX_NAME = 80
 MAX_TEXT = 700
 
-GUIDE = """Ты пишешь короткие рассказы о достопримечательностях для канала
-о путешествиях. Тебе называют город — ты перечисляешь до {limit} мест
-внутри него.
+GUIDE = """Ты пишешь заметки о достопримечательностях для канала о
+путешествиях. Тебе называют город — ты перечисляешь до {limit} мест внутри
+него.
 
 Верни ТОЛЬКО JSON, без пояснений и markdown:
-{{"spots": [{{"name": "Проспект Независимости",
-             "text": "3-5 предложений: что это, чем примечательно, что
-                      увидит человек, который туда придёт"}}]}}
+{{"spots": [{{"name": "Эйфелева башня",
+             "text": "А знаете ли вы, что Гюстав Эйфель устроил на верхушке
+                      башни собственный кабинет — и туда пускают посетителей.",
+             "address": "Champ de Mars, 5 Av. Anatole France, 75007 Paris",
+             "url": "https://www.toureiffel.paris"}}]}}
 
 Правила:
 - только реально существующие места в названном городе;
-- не выдумывайте подробностей, в которых не уверены: лучше короче;
-- пишите от третьего лица, без «я» и «мы» — автор сам решит, где был;
-- живо, а не справочно: одна конкретная деталь стоит трёх общих фраз;
-- никаких цен, часов работы и прочего, что устаревает."""
+- "text" начинается с «А знаете ли вы» и содержит ОДИН неожиданный факт,
+  который знают не все. Не пересказ путеводителя, а то, ради чего человек
+  дочитает: 2-4 предложения;
+- не выдумывайте фактов, в которых не уверены. Лучше признанно известное,
+  чем красивое и неправдивое;
+- "url" — только официальный сайт места. Если не знаете точно — оставьте
+  пустым. Выдуманный адрес сайта хуже его отсутствия;
+- "address" — почтовый адрес. Не знаете — пустая строка;
+- часы работы и цены НЕ пишите: они устаревают, а ссылка на сайт нет;
+- от третьего лица, без «я» и «мы» — автор сам решит, где был."""
 
 
 def _clean(v, limit):
     return re.sub(r"\s+", " ", str(v or "")).strip()[:limit]
+
+
+def _url(value: str):
+    """Адрес сайта либо ничего. Выдуманная ссылка ведёт читателя в никуда
+    и подрывает доверие сильнее, чем её отсутствие."""
+    v = _clean(value, 200)
+    return v if re.fullmatch(r"https?://[\w.-]+\.[a-z]{2,}(/[^\s]*)?", v, re.I) else None
 
 
 def parse(raw: dict) -> list:
@@ -58,7 +74,10 @@ def parse(raw: dict) -> list:
             continue
         name = _clean(s.get("name"), MAX_NAME)
         if name:
-            out.append({"name": name, "text": _clean(s.get("text"), MAX_TEXT)})
+            out.append({"name": name,
+                        "text": _clean(s.get("text"), MAX_TEXT),
+                        "address": _clean(s.get("address"), 200) or None,
+                        "url": _url(s.get("url"))})
     return out
 
 
@@ -135,7 +154,8 @@ async def spots_command(message: Message):
 
     added = 0
     for i, s in enumerate(spots, 1):
-        if await database.add_spot(place_id, s["name"], s["text"], i) == "added":
+        if await database.add_spot(place_id, s["name"], s["text"], i,
+                                   s["address"], s["url"]) == "added":
             added += 1
 
     saved = await database.spots_of(place_id)
@@ -151,8 +171,113 @@ def _visit_menu(spots):
     rows = [[InlineKeyboardButton(
         text=("✅ " if visited else "⬜️ ") + name[:40],
         callback_data=f"spotseen_{sid}")]
-        for sid, name, _t, _p, visited, _m in spots]
+        for sid, name, _t, _p, visited, _m, _a, _u in spots]
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def post_text(country: str, place: str, name: str, text: str,
+              address: str = None, url: str = None, visited: bool = False) -> str:
+    """Пост о достопримечательности.
+
+    Порядок: где это → чем удивит → как дойти. Крючок идёт вторым, а не
+    последним: до конца поста дочитывает меньшинство, а «а знаете ли вы»
+    задерживает на первой же строке.
+    """
+    head = f"{flags.with_flag(country)} · {place}\n📍 {name}"
+    parts = [head, (text or "").strip()]
+    if visited:
+        parts.append("✔️ Была здесь")
+    tail = []
+    if address:
+        tail.append(f"🏠 {address}")
+    if url:
+        tail.append(f"🔗 {url}")
+    if tail:
+        parts.append("\n".join(tail))
+    return "\n\n".join(p for p in parts if p)
+
+
+# =====================================================================
+# ФОТОГРАФИИ
+#
+# Снимки только свои. Сгенерированное изображение настоящей
+# достопримечательности — правдоподобная выдумка: пропорции чужие,
+# детали не тех эпох. В канале, который строит доверие к автору, такая
+# картинка стоит дороже, чем отсутствие картинки вообще.
+# =====================================================================
+
+class Shooting(StatesGroup):
+    waiting_photo = State()
+
+
+async def _next_spot(state: FSMContext):
+    data = await state.get_data()
+    skipped = set(data.get("skipped", []))
+    for sid, place, country, name in await database.spots_without_photo():
+        if sid not in skipped:
+            return sid, place, country, name
+    return None
+
+
+def _shoot_menu(spot_id: int):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⏭ Пропустить", callback_data="spotskip"),
+         InlineKeyboardButton(text="⏹ Закончить", callback_data="spotstop")]])
+
+
+async def _ask_spot(target, state: FSMContext, prefix: str = ""):
+    nxt = await _next_spot(state)
+    if not nxt:
+        await state.clear()
+        await target.answer(prefix + "✅ Мест без фотографии не осталось.")
+        return
+    sid, place, country, name = nxt
+    left = len(await database.spots_without_photo())
+    await state.set_state(Shooting.waiting_photo)
+    await state.update_data(spot_id=sid, name=name)
+    await target.answer(
+        f"{prefix}📷 <b>{name}</b>\n{place} · {flags.with_flag(country)}\n\n"
+        f"Пришлите свой снимок. Осталось: {left}",
+        reply_markup=_shoot_menu(sid))
+
+
+@router.message(F.text == "/spot_photos")
+async def spot_photos(message: Message, state: FSMContext):
+    if not config.is_admin(message.from_user.id):
+        return
+    await state.update_data(skipped=[])
+    await _ask_spot(message, state)
+
+
+@router.callback_query(F.data == "spotskip")
+async def skip_spot(call: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    skipped = list(data.get("skipped", []))
+    if data.get("spot_id"):
+        skipped.append(data["spot_id"])
+    await state.update_data(skipped=skipped)
+    await _ask_spot(call.message, state)
+    await call.answer("Пропущено")
+
+
+@router.callback_query(F.data == "spotstop")
+async def stop_spots(call: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await call.message.answer("Готово. Вернуться: <code>/spot_photos</code>")
+    await call.answer()
+
+
+@router.message(Shooting.waiting_photo, F.photo)
+async def take_spot_photo(message: Message, state: FSMContext):
+    data = await state.get_data()
+    spot_id = data.get("spot_id")
+    if not spot_id:
+        await state.clear()
+        return
+    if not await database.set_spot_photo(spot_id, message.photo[-1].file_id):
+        await message.answer("⚠️ Не сохранилось. Пришлите ещё раз.")
+        return
+    await _ask_spot(message, state, prefix=f"✅ {data.get('name', '')}\n\n")
 
 
 @router.callback_query(F.data.startswith("spotseen_"))

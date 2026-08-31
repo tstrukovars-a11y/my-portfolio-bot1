@@ -14,7 +14,8 @@ from datetime import datetime, timezone
 from urllib.parse import quote
 
 from aiogram import Router, F, Bot
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import (Message, CallbackQuery, InlineKeyboardMarkup,
+                           InlineKeyboardButton)
 from aiogram.exceptions import (TelegramForbiddenError, TelegramNetworkError,
                                 TelegramRetryAfter)
 
@@ -60,6 +61,15 @@ SECTION_TITLES = {
     "genetics": "🧬 Генетика",
     "recipes": "🍳 Кулинария",
     "travel": "🌍 Путешествия",
+}
+
+# Вопрос читателю под каждым постом. Формулировка своя для раздела: «были
+# там?» под рецептом бессмысленно. Это не украшение — вещание превращается
+# в разговор, и по счётчику видно, что вообще читают.
+VOTE_LABELS = {
+    "genetics": "💡 Знали это",
+    "recipes": "🍳 Готовили",
+    "travel": "📍 Были здесь",
 }
 
 
@@ -236,6 +246,13 @@ async def publish_next(bot: Bot) -> str:
             rows.append([InlineKeyboardButton(text="🔗 Подробнее", url=safe_link)])
         # Делимся каналом, а не отдельным постом: ссылка на пост приводит
         # читателя к одной записи, ссылка на канал — к подписке.
+        # Отклик читателя. Счётчик показывается прямо на кнопке — пустая
+        # кнопка «нравится» не говорит ничего, а «Были здесь · 14» говорит.
+        label = VOTE_LABELS.get(section)
+        if label:
+            rows.append([InlineKeyboardButton(
+                text=label, callback_data=f"vote_{section}_{item_id}")])
+
         channel_url = await database.get_setting("channel_url")
         if channel_url:
             rows.append([InlineKeyboardButton(
@@ -310,6 +327,38 @@ async def scheduler(bot: Bot):
 # =====================================================================
 # УПРАВЛЕНИЕ (только владелец)
 # =====================================================================
+
+@router.callback_query(F.data.startswith("vote_"))
+async def take_vote(call: CallbackQuery):
+    """Отклик читателя прямо под постом канала"""
+    try:
+        _, section, raw = call.data.split("_", 2)
+        item_id = int(raw)
+    except (ValueError, IndexError):
+        await call.answer()
+        return
+
+    added, total = await database.toggle_vote(section, item_id, call.from_user.id)
+    label = VOTE_LABELS.get(section, "Отклик")
+    try:
+        await call.message.edit_reply_markup(
+            reply_markup=_with_vote(call.message.reply_markup, section, item_id,
+                                    f"{label} · {total}" if total else label))
+    except Exception:
+        pass          # разметка могла не измениться — это не ошибка
+    await call.answer("Отмечено" if added else "Отметка снята")
+
+
+def _with_vote(markup, section: str, item_id: int, text: str):
+    """Перерисовывает только кнопку отклика, не трогая остальные"""
+    rows = []
+    for row in (markup.inline_keyboard if markup else []):
+        rows.append([
+            InlineKeyboardButton(text=text, callback_data=b.callback_data)
+            if b.callback_data == f"vote_{section}_{item_id}" else b
+            for b in row])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
 
 @router.message(F.text == "/id")
 async def show_chat_id(message: Message):
