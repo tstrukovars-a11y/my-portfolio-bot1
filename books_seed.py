@@ -189,6 +189,15 @@ async def publish_all(message: Message, bot):
     asyncio.create_task(_run(bot, chat, books, note))
 
 
+async def _buy_markup(text: str):
+    """Кнопка покупки под книгой в справочнике. Шаблон общий с «Акцентом»:
+    менять партнёра в двух местах — верный способ забыть одно из них."""
+    import digest
+    title = (text or "").split("\n")[0]
+    row = await digest._buy_row("books", title)
+    return InlineKeyboardMarkup(inline_keyboard=[row]) if row else None
+
+
 async def _run(bot, chat: int, books, note: Message):
     """Очередь, а не простой обход: отбитое по частоте возвращается в
     конец и выходит позже. Раньше такая книга молча выпадала из полки —
@@ -200,17 +209,20 @@ async def _run(bot, chat: int, books, note: Message):
     while queue:
         book_id, category, text, cover, msg_id = queue.pop(0)
         body = f"{SHELVES.get(category, '📚')}\n\n{(text or '').strip()}"
+        buy = await _buy_markup(text)
         try:
             if msg_id:
                 try:
                     if cover:
                         await bot.edit_message_caption(
                             chat_id=chat, message_id=msg_id,
-                            caption=body[:MAX_CAPTION], parse_mode=None)
+                            caption=body[:MAX_CAPTION], parse_mode=None,
+                            reply_markup=buy)
                     else:
                         await bot.edit_message_text(
                             chat_id=chat, message_id=msg_id,
-                            text=body[:MAX_MESSAGE], parse_mode=None)
+                            text=body[:MAX_MESSAGE], parse_mode=None,
+                            reply_markup=buy)
                     edited += 1
                 except TelegramBadRequest as e:
                     if "not modified" in str(e).lower():
@@ -224,15 +236,18 @@ async def _run(bot, chat: int, books, note: Message):
                     except Exception as drop:
                         logging.warning(f"Старый пост книги не снялся: {drop}")
                     sent = await bot.send_photo(chat, cover,
-                                                caption=body[:MAX_CAPTION], parse_mode=None)
+                                                caption=body[:MAX_CAPTION], parse_mode=None,
+                                                reply_markup=buy)
                     await database.set_book_msg(book_id, sent.message_id)
                     edited += 1
             else:
                 if cover:
                     sent = await bot.send_photo(chat, cover,
-                                                caption=body[:MAX_CAPTION], parse_mode=None)
+                                                caption=body[:MAX_CAPTION], parse_mode=None,
+                                                reply_markup=buy)
                 else:
-                    sent = await bot.send_message(chat, body[:MAX_MESSAGE], parse_mode=None)
+                    sent = await bot.send_message(chat, body[:MAX_MESSAGE], parse_mode=None,
+                                                  reply_markup=buy)
                 await database.set_book_msg(book_id, sent.message_id)
                 new += 1
         except TelegramRetryAfter as e:

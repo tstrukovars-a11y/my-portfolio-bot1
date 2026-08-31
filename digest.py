@@ -76,6 +76,29 @@ OFFERS = {
 }
 BOT_KEY = "bot_username"          # для сборки ссылки t.me/<бот>?start=…
 
+# Партнёрская ссылка на книгу. Хранится шаблоном с {q} вместо запроса:
+# ведёт на поиск по автору и названию, а не на карточку товара. Карточки
+# пришлось бы искать для каждой из тридцати книг и переискивать, когда
+# магазин их перевыложит; поиск по названию не ломается никогда.
+SHOP_KEY = "book_shop_url"
+DISCLOSURE_KEY = "book_shop_note"     # пометка о партнёрской ссылке
+
+
+def _search_query(title: str) -> str:
+    """Автор и название как поисковый запрос. Тире убираем: в поиске
+    магазина оно только мешает."""
+    return quote(title.replace(" — ", " ").replace("—", " ").strip(), safe="")
+
+
+async def _buy_row(section: str, title: str):
+    if section != "books":
+        return None
+    template = await database.get_setting(SHOP_KEY)
+    if not template or "{q}" not in template:
+        return None
+    return [InlineKeyboardButton(text="🛒 Купить",
+                                 url=template.replace("{q}", _search_query(title)))]
+
 
 async def _offer_row(section: str):
     offer = OFFERS.get(section)
@@ -353,6 +376,10 @@ async def publish_next(bot: Bot, only: str = None, lead: str = None,
             head = lead
         body = (text or title or "").strip()
         caption = f"{head}\n\n{body}"
+        if buy:
+            note = await database.get_setting(DISCLOSURE_KEY)
+            if note:
+                caption += f"\n\n{note}"
         if farewell:
             caption += f"\n\n{farewell}"
         caption += await _ad_block()
@@ -374,6 +401,10 @@ async def publish_next(bot: Bot, only: str = None, lead: str = None,
             url = await database.get_setting(ref[0])
             if url:
                 rows.append([InlineKeyboardButton(text=ref[1], url=url)])
+
+        buy = await _buy_row(section, title)
+        if buy:
+            rows.append(buy)
 
         offer = await _offer_row(section)
         if offer:
@@ -803,6 +834,27 @@ async def digest_command(message: Message, bot: Bot):
         await message.answer(f"✅ {key[1]} → {html.escape(bits[1])}")
         return
 
+    if command == "shop" and len(parts) > 2:
+        value = parts[2].strip()
+        if "{q}" not in value:
+            await message.answer(
+                "В шаблоне должно быть <code>{q}</code> — место для запроса.\n\n"
+                "Пример:\n"
+                "<code>/digest shop https://www.ozon.ru/search/?text={q}&partner=ВАША_МЕТКА</code>")
+            return
+        await database.set_setting(SHOP_KEY, value)
+        sample = value.replace("{q}", _search_query("Энди Гроув — Высокоэффективный менеджмент"))
+        await message.answer(
+            f"✅ Партнёрская ссылка задана.\n\nПроверьте, что она открывается:\n"
+            f"{html.escape(sample)}")
+        return
+
+    if command == "note" and len(parts) > 2:
+        value = "" if parts[2].strip().lower() in ("нет", "off") else parts[2].strip()
+        await database.set_setting(DISCLOSURE_KEY, value)
+        await message.answer(f"✅ Пометка: {html.escape(value) or 'снята'}")
+        return
+
     if command == "bot" and len(parts) > 2:
         await database.set_setting(BOT_KEY, parts[2].strip().lstrip("@"))
         await message.answer(
@@ -913,6 +965,8 @@ async def digest_command(message: Message, bot: Bot):
                  "<code>/digest country Россия</code> — чьи новости утром\n"
                  "<code>/digest ref travel https://t.me/…</code> — справочник раздела\n"
                  "<code>/digest bot имя_бота</code> — куда ведут кнопки заказа\n"
+                 "<code>/digest shop https://…{q}…</code> — партнёрская ссылка на книги\n"
+                 "<code>/digest note текст</code> — пометка о партнёрской ссылке\n"
                  "<code>/digest now</code> — опубликовать вне сетки\n"
                  "<code>/digest chat -100…</code> — задать канал\n"
                  "<code>/digest mirror -100… тема раздел</code> — дубль в группу\n"
