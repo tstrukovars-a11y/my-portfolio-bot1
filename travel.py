@@ -21,6 +21,7 @@ from aiogram.exceptions import TelegramBadRequest
 
 import config
 import database
+import flags
 import translator
 from translator import claude_client
 
@@ -107,7 +108,8 @@ async def show_countries(call: CallbackQuery):
     rows = []
     for country_ru, country_en, count in countries:
         # Страна подписана на языке читателя: англоязычному «Франция» ни о чём
-        label = country_ru if lang == "ru" else (country_en or country_ru)
+        name = country_ru if lang == "ru" else (country_en or country_ru)
+        label = flags.with_flag(country_ru, country_en, name)
         rows.append([InlineKeyboardButton(
             text=f"{label} ({count})", callback_data=f"trcountry_{_token(country_ru)}")])
     rows.append([InlineKeyboardButton(text=_t(BACK, lang), callback_data="sport_travel")])

@@ -940,6 +940,34 @@ async def set_travel_msg(place_id: int, msg_id: int) -> bool:
         return False
 
 
+async def travel_country_places(country_ru: str):
+    """(id, место, номер поста) всех мест страны — для удаления целиком"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT id, place, channel_msg_id FROM {SCHEMA}.travel_places "
+                "WHERE lower(country_ru) = lower($1) ORDER BY ordering, id", country_ru)
+        return [(r["id"], r["place"], r["channel_msg_id"]) for r in rows]
+    except Exception as e:
+        logging.error(f"Места страны недоступны: {e}")
+        return []
+
+
+async def delete_travel_country(country_ru: str) -> int:
+    """Удаляет все места страны. Возвращает, сколько удалено."""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            done = await conn.execute(
+                f"DELETE FROM {SCHEMA}.travel_places WHERE lower(country_ru) = lower($1)",
+                country_ru)
+        return int(done.rsplit(" ", 1)[-1]) if done else 0
+    except Exception as e:
+        logging.error(f"Страна не удалена: {e}")
+        return 0
+
+
 async def travel_by_msg(msg_id: int):
     """(id, место) по номеру поста — чтобы правку в канале отнести к месту"""
     try:

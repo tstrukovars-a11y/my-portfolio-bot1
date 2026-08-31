@@ -19,6 +19,7 @@ from aiogram.exceptions import TelegramRetryAfter, TelegramBadRequest
 
 import config
 import database
+import flags
 
 router = Router()
 
@@ -40,7 +41,7 @@ def _post_text(country: str, place: str, text: str) -> str:
     """Один и тот же вид у нового поста и у правки — иначе правка меняет
     не только текст, но и оформление, и это видно как мигание."""
     body = (text or "").strip()
-    return f"📍 {place} · {country}\n\n{body}".strip()
+    return f"📍 {place} · {flags.with_flag(country)}\n\n{body}".strip()
 
 
 @router.message(F.text.startswith("/travel_channel"))
@@ -131,6 +132,47 @@ async def _run(bot: Bot, chat: int, places, note: Message):
         await note.edit_text(f"🌍 <b>Готово</b>\n\n{tail}")
     except Exception:
         pass
+
+
+@router.message(F.text.startswith("/travel_drop"))
+async def drop_country(message: Message, bot: Bot):
+    """Убирает страну и из канала, и из базы.
+
+    Только из канала мало: следующая выкладка вернула бы её обратно.
+    Только из базы мало: посты остались бы висеть. Поэтому оба разом.
+    """
+    if not config.is_admin(message.from_user.id):
+        return
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        await message.answer("Укажите страну: <code>/travel_drop Крым</code>")
+        return
+
+    country = parts[1].strip()
+    places = await database.travel_country_places(country)
+    if not places:
+        await message.answer(f"Мест страны «{html.escape(country)}» не найдено.")
+        return
+
+    chat = await _channel()
+    removed = 0
+    for _, place, msg_id in places:
+        if not (chat and msg_id):
+            continue
+        try:
+            await bot.delete_message(chat_id=chat, message_id=msg_id)
+            removed += 1
+        except Exception as e:
+            # Телеграм не даёт удалять посты старше двух суток — это не
+            # повод оставлять запись в базе, но сказать об этом надо.
+            logging.warning(f"Канал путешествий: пост «{place}» не удалён: {e}")
+        await asyncio.sleep(0.4)
+
+    gone = await database.delete_travel_country(country)
+    tail = f"Удалено мест: {gone}"
+    if chat:
+        tail += f", постов в канале: {removed} из {sum(1 for p in places if p[2])}"
+    await message.answer(f"🗑 <b>{html.escape(country)}</b>\n\n{tail}")
 
 
 # =====================================================================

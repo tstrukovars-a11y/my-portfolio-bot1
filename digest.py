@@ -20,6 +20,7 @@ from aiogram.exceptions import (TelegramForbiddenError, TelegramNetworkError,
 
 import config
 import database
+import flags
 
 router = Router()
 
@@ -96,7 +97,7 @@ async def _build(section: str, item_id: int):
         if not row:
             return None
         country, place, text, photo, video, link = row
-        return f"{place} · {country}", text, photo, video, link
+        return f"{place} · {flags.with_flag(country)}", text, photo, video, link
 
     return None
 
