@@ -756,3 +756,51 @@ async def recipes_import_hint(message: Message):
         "В этом посте нет ни текста, ни подписи — сохранять нечего. "
         "Перешлите пост с текстом или отправьте /recipes_done, чтобы выйти."
     )
+
+
+# =====================================================================
+# МУЗЫКА
+#
+# Переехала сюда из спортивного блока: игра на инструменте — творчество,
+# а не спорт, и в разделе о теннисе и гольфе она стояла не на месте.
+# Обработчики перенесены вместе с кнопкой, иначе код остался бы жить
+# там, откуда раздел уже ушёл.
+# =====================================================================
+
+@router.callback_query(F.data == "creative_music")
+async def open_music(call: CallbackQuery):
+    await call.answer()
+    try:
+        user_lang = await database.get_user_language(call.from_user.id)
+        caption_text = menu_texts.MUSIC_MAIN_TEXTS.get(user_lang, menu_texts.MUSIC_MAIN_TEXTS["en"])
+        await call.message.edit_media(media=InputMediaPhoto(media=config.MUSIC_BANNER, caption=caption_text, parse_mode="Markdown"), reply_markup=inline_kb.get_music_main_menu(user_lang))
+    except TelegramBadRequest as e: logging.error(f"ОШИБКА МУЗЫКИ: {e}")
+
+@router.callback_query(F.data == "music_my_perf")
+async def open_music_my_performance(call: CallbackQuery):
+    await call.answer()
+    try:
+        user_lang = await database.get_user_language(call.from_user.id)
+        caption_text = menu_texts.MUSIC_MY_PERFORMANCE.get(user_lang, menu_texts.MUSIC_MY_PERFORMANCE["en"])
+        await call.message.edit_media(media=InputMediaPhoto(media=config.MUSIC_BANNER, caption=caption_text, parse_mode="Markdown"), reply_markup=inline_kb.get_music_back_button(user_lang, "creative_music"))
+    except TelegramBadRequest as e: logging.error(f"ОШИБКА МУЗЫКИ: {e}")
+
+@router.callback_query(F.data == "music_composers_hub")
+async def open_music_composers_hub(call: CallbackQuery):
+    await call.answer()
+    try:
+        user_lang = await database.get_user_language(call.from_user.id)
+        caption_text = menu_texts.MUSIC_COMPOSERS_LIST.get(user_lang, menu_texts.MUSIC_COMPOSERS_LIST["en"])
+        await call.message.edit_media(media=InputMediaPhoto(media=config.MUSIC_BANNER, caption=caption_text, parse_mode="Markdown"), reply_markup=inline_kb.get_composers_grid_menu(user_lang))
+    except TelegramBadRequest as e: logging.error(f"ОШИБКА МУЗЫКИ: {e}")
+
+@router.callback_query(F.data.startswith("comp_detail_"))
+async def open_composer_biography(call: CallbackQuery):
+    await call.answer()
+    try:
+        user_lang = await database.get_user_language(call.from_user.id)
+        composer_key = call.data.split("_")[-1]
+        data_dict = menu_texts.COMPOSER_DETAILS.get(composer_key, {})
+        caption_text = data_dict.get(user_lang, data_dict.get("en", "Biography error..."))
+        await call.message.edit_media(media=InputMediaPhoto(media=config.MUSIC_BANNER, caption=caption_text, parse_mode="Markdown"), reply_markup=inline_kb.get_music_back_button(user_lang, "music_composers_hub"))
+    except TelegramBadRequest as e: logging.error(f"ОШИБКА МУЗЫКИ: {e}")

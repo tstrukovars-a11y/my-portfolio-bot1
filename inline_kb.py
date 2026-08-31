@@ -83,22 +83,21 @@ def get_main_menu(lang, is_admin=False):
 
 def get_sport_menu(lang):
     titles = {
-        "ru": ["🎵 Музыка", "🌍 Путешествия", "🎾 Большой теннис", "🏇 Конный спорт", "🏌 Гольф", "🥎 Падел", "🏓 Настольный теннис", "📰 Новости", "⇦ В главное меню"],
-        "en": ["🎵 Music", "🌍 Travel", "🎾 Tennis", "🏇 Equestrian", "🏌 Golf", "🥎 Padel", "🏓 Table Tennis", "📰 News", "⇦ Main Menu"],
-        "fr": ["🎵 Musique", "🌍 Voyage", "🎾 Tennis", "🏇 Équitation", "🏌 Golf", "🥎 Padel", "🏓 Tennis de Table", "📰 Actualités", "⇦ Menu Principal"],
-        "he": ["מוזיקה 🎵", "נסיעות 🌍", "טניס 🎾", "רכיבה על סוסים 🏇", "גולף 🏌", "פאדל 🥎", "טניס שולחן 🏓", "חדשות 📰", "⇦ לתפריט הראשי"]
+        "ru": ["🌍 Путешествия", "🎾 Большой теннис", "🏇 Конный спорт", "🏌 Гольф", "🥎 Падел", "🏓 Настольный теннис", "📰 Новости", "⇦ В главное меню"],
+        "en": ["🌍 Travel", "🎾 Tennis", "🏇 Equestrian", "🏌 Golf", "🥎 Padel", "🏓 Table Tennis", "📰 News", "⇦ Main Menu"],
+        "fr": ["🌍 Voyage", "🎾 Tennis", "🏇 Équitation", "🏌 Golf", "🥎 Padel", "🏓 Tennis de Table", "📰 Actualités", "⇦ Menu Principal"],
+        "he": ["נסיעות 🌍", "טניס 🎾", "רכיבה על סוסים 🏇", "גולף 🏌", "פאדל 🥎", "טניס שולחן 🏓", "חדשות 📰", "⇦ לתפריט הראשי"]
     }
     m = titles.get(lang, titles["en"])
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=m[0], callback_data="sport_music")],
-        [InlineKeyboardButton(text=m[1], callback_data="sport_travel")],
-        [InlineKeyboardButton(text=m[2], callback_data="sport_tennis")],
-        [InlineKeyboardButton(text=m[3], callback_data="sport_horse")],
-        [InlineKeyboardButton(text=m[4], callback_data="sport_golf")],
-        [InlineKeyboardButton(text=m[5], callback_data="sport_padel")],
-        [InlineKeyboardButton(text=m[6], callback_data="sport_table_tennis")],
-        [InlineKeyboardButton(text=m[7], callback_data="sport_news")],
-        [InlineKeyboardButton(text=m[8], callback_data="go_home")]
+        [InlineKeyboardButton(text=m[0], callback_data="sport_travel")],
+        [InlineKeyboardButton(text=m[1], callback_data="sport_tennis")],
+        [InlineKeyboardButton(text=m[2], callback_data="sport_horse")],
+        [InlineKeyboardButton(text=m[3], callback_data="sport_golf")],
+        [InlineKeyboardButton(text=m[4], callback_data="sport_padel")],
+        [InlineKeyboardButton(text=m[5], callback_data="sport_table_tennis")],
+        [InlineKeyboardButton(text=m[6], callback_data="sport_news")],
+        [InlineKeyboardButton(text=m[7], callback_data="go_home")]
     ])
 
 def get_music_main_menu(lang):
@@ -112,10 +111,10 @@ def get_music_main_menu(lang):
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=t["perf"], callback_data="music_my_perf")],
         [InlineKeyboardButton(text=t["comp"], callback_data="music_composers_hub")],
-        [InlineKeyboardButton(text=t["back"], callback_data="menu_sport")]
+        [InlineKeyboardButton(text=t["back"], callback_data="menu_creative")]
     ])
 
-def get_music_back_button(lang, target_callback="sport_music"):
+def get_music_back_button(lang, target_callback="creative_music"):
     back_texts = {"ru": "⇦ Назад", "en": "⇦ Back", "fr": "⇦ Retour", "he": "⇦ חזרה"}
     text = back_texts.get(lang, back_texts["en"])
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=text, callback_data=target_callback)]])
@@ -264,7 +263,7 @@ def get_composers_grid_menu(lang):
         [InlineKeyboardButton(text="🌊 К. Дебюсси" if lang=="ru" else "🌊 C. Debussy", callback_data="comp_detail_debussy")],
         [InlineKeyboardButton(text="🎯 И. Брамс" if lang=="ru" else "🎯 J. Brahms", callback_data="comp_detail_brahms")],
         [InlineKeyboardButton(text="👑 Г.Ф. Гендель" if lang=="ru" else "👑 G.F. Handel", callback_data="comp_detail_handel")],
-        [InlineKeyboardButton(text=label(BACK_ARROW, lang), callback_data="sport_music")]
+        [InlineKeyboardButton(text=label(BACK_ARROW, lang), callback_data="creative_music")]
     ])
 
 def get_travel_back_button(lang, target):
@@ -331,7 +330,9 @@ def get_creative_menu(lang):
     p = "🎨 Картины и Арт-Хаб" if lang == "ru" else "🎨 Paintings & Art Hub"
     a = "👗 Ателье и Fashion" if lang == "ru" else "👗 Atelier & Fashion"
     c = "🍳 Кулинария" if lang == "ru" else "🍳 Haute Cuisine"
+    mu = {"ru": "🎵 Музыка", "en": "🎵 Music", "fr": "🎵 Musique", "he": "מוזיקה 🎵"}
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=mu.get(lang, mu["en"]), callback_data="creative_music")],
         [InlineKeyboardButton(text=p, callback_data="creative_paintings")],
         [InlineKeyboardButton(text=a, callback_data="creative_atelier")],
         [InlineKeyboardButton(text=c, callback_data="creative_culinary")],
