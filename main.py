@@ -473,6 +473,17 @@ async def main():
     asyncio.create_task(digest.scheduler(bot))
     asyncio.create_task(tennis_alerts.alerts_scheduler(bot))
 
+    # Своё имя бот спрашивает у Telegram, а не ждёт, пока его впишут руками:
+    # на нём держатся глубокие ссылки из канала, и опечатка в нём означала бы
+    # кнопки, ведущие в никуда.
+    try:
+        me = await bot.get_me()
+        if me.username:
+            await database.set_setting("bot_username", me.username)
+            logging.info(f"Глубокие ссылки ведут на @{me.username}")
+    except Exception as e:
+        logging.warning(f"Имя бота не определилось: {e}")
+
     # Меню собирается синхронно и в базу сходить не может, поэтому ссылку на
     # канал подкладываем один раз при старте.
     try:
