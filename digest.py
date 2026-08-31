@@ -41,6 +41,7 @@ router = Router()
 
 SCHEDULE = [
     ("08:00", "morning",  "Доброе утро. Вот что случилось вчера — коротко и по делу."),
+    ("09:30", "tennis",   None),
     ("11:00", "books",    None),
     ("13:00", "genetics", None),
     ("16:00", "travel",   None),
@@ -552,6 +553,13 @@ async def publish_slot(bot: Bot) -> str:
             return f"ошибка: {e}"
         await _mark_slot(slot)
         return "утренние новости"
+
+    if slot == "tennis":
+        import tennis_alerts
+        result = await tennis_alerts.publish_schedule(bot, chat, thread)
+        if "нет" not in result:
+            await _mark_slot(slot)
+        return result
 
     if slot == "sport":
         try:

@@ -25,6 +25,7 @@ import travel_import
 import travel_channel
 import travel_spots
 import books_seed
+import tennis_alerts
 import inline_kb
 
 
@@ -450,6 +451,7 @@ async def main():
     dp.include_router(travel_channel.router)
     dp.include_router(travel_spots.router)
     dp.include_router(books_seed.router)
+    dp.include_router(tennis_alerts.router)
 
     dp.include_router(tennis_live.router)
     dp.include_router(travel.router)
@@ -469,6 +471,7 @@ async def main():
 
     # Публикация в канал: запускаем после создания бота — раньше объекта ещё нет
     asyncio.create_task(digest.scheduler(bot))
+    asyncio.create_task(tennis_alerts.alerts_scheduler(bot))
 
     # Меню собирается синхронно и в базу сходить не может, поэтому ссылку на
     # канал подкладываем один раз при старте.

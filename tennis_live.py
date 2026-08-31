@@ -121,6 +121,10 @@ def _singles(data, tour: str):
                 if len(sides) < 2:
                     continue
                 result.append({
+                    # Номер матча у источника — по нему кнопка «напомнить»
+                    # связывается с матчем; без него напоминание не к чему
+                    # привязать.
+                    "id": str(match.get("id") or ""),
                     "tournament": tournament,
                     "round": (match.get("grouping") or {}).get("displayName") or name,
                     "sides": sides,

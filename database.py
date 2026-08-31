@@ -178,6 +178,20 @@ async def init_db():
             expires_at TEXT
         )""")
 
+        # Напоминания о матчах. Отметка в общем канале — личная: кто на что
+        # подписался, видит только бот, а ссылка уходит в личку к началу.
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.match_alerts (
+            user_id BIGINT NOT NULL,
+            match_id TEXT NOT NULL,
+            tour TEXT NOT NULL,
+            title TEXT,
+            starts_at TIMESTAMP,
+            sent BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, match_id)
+        )""")
+
         # 3. Таблицы для контента (рецепты и книги)
         await conn.execute(f"""
         CREATE TABLE IF NOT EXISTS {SCHEMA}.recipes (
@@ -648,6 +662,65 @@ async def get_user_language(user_id: int) -> str:
 
 
 # --- ФУНКЦИИ ДЛЯ РАБОТЫ С ПОДПИСКАМИ ---
+
+async def toggle_alert(user_id: int, match_id: str, tour: str,
+                       title: str, starts_at):
+    """Ставит или снимает напоминание. Возвращает (поставлено ли, всего у матча).
+
+    Повторное нажатие снимает: кнопка, которую нельзя отжать, ловит
+    случайное касание и потом присылает то, чего не просили.
+    """
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            gone = await conn.execute(
+                f"DELETE FROM {SCHEMA}.match_alerts WHERE user_id = $1 AND match_id = $2",
+                user_id, match_id)
+            added = not gone.endswith("1")
+            if added:
+                await conn.execute(
+                    f"INSERT INTO {SCHEMA}.match_alerts "
+                    "(user_id, match_id, tour, title, starts_at) "
+                    "VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING",
+                    user_id, match_id, tour, title, starts_at)
+            total = await conn.fetchval(
+                f"SELECT COUNT(*) FROM {SCHEMA}.match_alerts WHERE match_id = $1",
+                match_id)
+        return added, total
+    except Exception as e:
+        logging.error(f"Напоминание не сохранено: {e}")
+        return False, 0
+
+
+async def due_alerts(within_minutes: int = 10):
+    """Напоминания, которым пора уйти: матч вот-вот начнётся"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"""SELECT user_id, match_id, tour, title FROM {SCHEMA}.match_alerts
+                    WHERE NOT sent AND starts_at IS NOT NULL
+                      AND starts_at <= NOW() + ($1 || ' minutes')::interval
+                      AND starts_at > NOW() - interval '3 hours'""",
+                str(within_minutes))
+        return [tuple(r) for r in rows]
+    except Exception as e:
+        logging.error(f"Напоминания недоступны: {e}")
+        return []
+
+
+async def mark_alert_sent(user_id: int, match_id: str) -> bool:
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"UPDATE {SCHEMA}.match_alerts SET sent = TRUE "
+                "WHERE user_id = $1 AND match_id = $2", user_id, match_id)
+        return True
+    except Exception as e:
+        logging.error(f"Отметка о доставке не сохранена: {e}")
+        return False
+
 
 async def check_subscription(user_id: int) -> bool:
     """Проверяет, активна ли платная подписка. При недоступной БД считаем, что подписки нет."""
