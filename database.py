@@ -377,6 +377,11 @@ async def init_db():
         await conn.execute(
             f"ALTER TABLE {SCHEMA}.travel_places "
             "ADD COLUMN IF NOT EXISTS ordering INTEGER NOT NULL DEFAULT 0")
+        # Номер поста в канале путешествий. Без него повторная выкладка
+        # плодит копии вместо того, чтобы поправить уже вышедшее.
+        await conn.execute(
+            f"ALTER TABLE {SCHEMA}.travel_places "
+            "ADD COLUMN IF NOT EXISTS channel_msg_id BIGINT")
         await conn.execute(
             f"CREATE UNIQUE INDEX IF NOT EXISTS travel_source_uniq "
             f"ON {SCHEMA}.travel_places (source_key)"
@@ -905,6 +910,48 @@ async def add_travel_place(country_ru, country_en, place, text_content,
     except Exception as e:
         logging.error(f"Не удалось сохранить локацию: {type(e).__name__}: {e}")
         return f"error:{type(e).__name__}: {e}"
+
+
+async def travel_all_ordered():
+    """Все места маршрутом: (id, страна, место, текст, фото, номер поста)"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT id, country_ru, place, text_content, photo_file_id, "
+                f"channel_msg_id FROM {SCHEMA}.travel_places "
+                "ORDER BY country_ru, ordering, id")
+        return [tuple(r) for r in rows]
+    except Exception as e:
+        logging.error(f"Список мест недоступен: {e}")
+        return []
+
+
+async def set_travel_msg(place_id: int, msg_id: int) -> bool:
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"UPDATE {SCHEMA}.travel_places SET channel_msg_id = $1 WHERE id = $2",
+                msg_id, place_id)
+        return True
+    except Exception as e:
+        logging.error(f"Номер поста не сохранён: {e}")
+        return False
+
+
+async def travel_by_msg(msg_id: int):
+    """(id, место) по номеру поста — чтобы правку в канале отнести к месту"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                f"SELECT id, place FROM {SCHEMA}.travel_places WHERE channel_msg_id = $1",
+                msg_id)
+        return (row["id"], row["place"]) if row else None
+    except Exception as e:
+        logging.error(f"Место по номеру поста не найдено: {e}")
+        return None
 
 
 async def set_travel_order(source_key: str, ordering: int) -> bool:
