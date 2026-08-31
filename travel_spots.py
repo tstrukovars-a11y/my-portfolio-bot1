@@ -9,6 +9,7 @@
 # путеводитель — разные жанры, и смешивать их нельзя: «я поднималась на
 # крышу Дуомо» и «на крышу Дуомо поднимаются» читаются по-разному, и
 # только автор знает, какое из двух правда.
+import asyncio
 import json
 import logging
 import re
@@ -132,11 +133,14 @@ async def spots_command(message: Message):
     places = await database.travel_all_ordered()
 
     if target.lower() in ("все", "всё", "all"):
-        await message.answer(
-            f"Городов {len(places)}. Это {len(places)} обращений к модели — "
-            "около доллара и минут двадцать.\n\n"
-            "Пока делаем по одному: <code>/spots Париж</code>. "
-            "Скажете — запущу все разом.")
+        todo = [p for p in places if not await database.spots_of(p[0])]
+        if not todo:
+            await message.answer("У всех городов места уже собраны.")
+            return
+        note = await message.answer(
+            f"📍 Беру {len(todo)} городов. Это примерно {len(todo) * 25 // 60} минут "
+            f"и около ${len(todo) * 0.008:.2f}. Доложу по ходу.")
+        asyncio.create_task(_sweep(todo, note))
         return
 
     found = [p for p in places if p[2].lower() == target.lower()]
@@ -165,6 +169,47 @@ async def spots_command(message: Message):
         + f"\n\nДобавлено: {added}\n\n"
         "<i>Отметьте, где вы действительно были — это меняет тон рассказа.</i>",
         reply_markup=_visit_menu(saved))
+
+
+async def _sweep(places, note: Message):
+    """Проходит все города подряд, докладывая каждые десять.
+
+    Идём по одному и с паузой: параллельные запросы к модели упираются
+    в лимит, а спешить некуда — это разовая работа на один вечер.
+    """
+    done = added = failed = 0
+    for place_id, country, place, *_ in places:
+        spots, error = await generate(country, place)
+        if error:
+            failed += 1
+            logging.warning(f"Места города {place}: {error}")
+            if "средства" in error:      # деньги кончились — дальше бессмысленно
+                break
+        else:
+            for i, s in enumerate(spots, 1):
+                if await database.add_spot(place_id, s["name"], s["text"], i,
+                                           s["address"], s["url"]) == "added":
+                    added += 1
+        done += 1
+        if done % 10 == 0:
+            try:
+                await note.edit_text(
+                    f"📍 Пройдено {done} из {len(places)}, мест собрано {added}"
+                    + (f", городов не вышло: {failed}" if failed else ""))
+            except Exception:
+                pass
+        await asyncio.sleep(1.5)
+
+    total, seen, shot = await database.spot_counts()
+    try:
+        await note.edit_text(
+            f"📍 <b>Готово</b>\n\nГородов пройдено: {done}\n"
+            f"Мест собрано: {added}" + (f"\nНе вышло городов: {failed}" if failed else "")
+            + f"\n\nВсего в базе: {total}\n\n"
+            "Отметьте, где были: <code>/spots Париж</code> по каждому городу.\n"
+            "Фотографии: <code>/spot_photos</code>")
+    except Exception:
+        pass
 
 
 def _visit_menu(spots):
