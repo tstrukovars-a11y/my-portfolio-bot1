@@ -9,8 +9,10 @@
 # и это не повод трогать код. Пока она пуста, публикация просто не идёт.
 import asyncio
 import html
+import json
 import logging
-from datetime import datetime, timezone
+import os
+from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 
 from aiogram import Router, F, Bot
@@ -25,9 +27,33 @@ import flags
 
 router = Router()
 
+# =====================================================================
+# СЕТКА ВЕЩАНИЯ
+#
+# День канала расписан по часам, а не отдан ротации: читатель привыкает
+# к тому, что утром новости, а вечером рецепт, и приходит сам. Ротация
+# «что-нибудь раз в двенадцать часов» такой привычки не создаёт.
+#
+# Время местное для читателя, а не для сервера: канал русскоязычный,
+# поэтому по умолчанию Москва. Смена часового пояса — настройка, потому
+# что каналов будет четыре и у каждого своё утро.
+# =====================================================================
+
+SCHEDULE = [
+    ("08:00", "morning",  "Доброе утро. Вот что случилось вчера — коротко и по делу."),
+    ("13:00", "genetics", None),
+    ("16:00", "travel",   None),
+    ("19:00", "sport",    None),
+    ("20:30", "dinner",   "Приятного вечера."),
+]
+
+TZ_KEY = "digest_tz"             # смещение от UTC в часах
+TZ_DEFAULT = 3                   # Москва
+NEWS_COUNTRY_KEY = "digest_news_country"
+NEWS_COUNTRY_DEFAULT = "Россия"
+
 TARGET_KEY = "digest_chat"       # id канала
 THREAD_KEY = "digest_thread"     # тема, если целью выбрана группа с разделами
-INTERVAL_HOURS = 12              # два поста в сутки: канал живой, но не назойливый
 
 # Дубль в группу. Нужен потому, что Telegram не даёт привязать группу с темами
 # как обсуждение канала, а ломать её разделы ради привязки — плохой размен.
@@ -44,9 +70,9 @@ SECTION_ALIASES = {
     "путешествия": "travel", "вокруг света": "travel", "travel": "travel",
 }
 
-# Время последней публикации. Хранится в базе, а не в памяти процесса:
-# сервис перезапускается при каждом деплое, и интервал, отсчитанный от
-# старта, превратил бы пять деплоев за вечер в пять постов подряд.
+# Время последней публикации. Расписание держится не на нём — слот
+# помечается датой, — но отметка полезна: по ней видно, когда канал
+# в последний раз что-то сказал.
 LAST_AT_KEY = "digest_last_at"
 
 MAX_CAPTION = 1024
@@ -222,17 +248,22 @@ async def _ad_block() -> str:
     return f"\n\n———\n{text}"
 
 
-async def publish_next(bot: Bot) -> str:
-    """Публикует следующий материал по ротации. Возвращает строку для лога."""
+async def publish_next(bot: Bot, only: str = None, lead: str = None,
+                       farewell: str = None) -> str:
+    """Публикует материал. С only — строго из этого раздела, по сетке;
+    без него — по кругу, как было до появления расписания."""
     chat, thread = await _target()
     if not chat:
         return "канал не задан — публикация пропущена"
 
-    # Идём по кругу, начиная с раздела, следующего за прошлым: так разделы
-    # чередуются, а исчерпанные не блокируют остальные.
-    last = await database.get_setting("digest_last_section")
-    order = ROTATION[ROTATION.index(last) + 1:] + ROTATION[:ROTATION.index(last) + 1] \
-        if last in ROTATION else ROTATION
+    if only:
+        order = [only]
+    else:
+        # Идём по кругу, начиная с раздела, следующего за прошлым: так разделы
+        # чередуются, а исчерпанные не блокируют остальные.
+        last = await database.get_setting("digest_last_section")
+        order = ROTATION[ROTATION.index(last) + 1:] + ROTATION[:ROTATION.index(last) + 1] \
+            if last in ROTATION else ROTATION
 
     for section in order:
         # Сперва новое; когда нового нет — самое давнее, но уже напоминанием.
@@ -257,8 +288,13 @@ async def publish_next(bot: Bot) -> str:
             # в вопрос идёт только само место.
             short = title.split(" · ")[0].strip()
             head = REPEAT_LEAD.get(section, head).format(title=short)
+        if lead:
+            head = lead
         body = (text or title or "").strip()
-        caption = f"{head}\n\n{body}" + await _ad_block()
+        caption = f"{head}\n\n{body}"
+        if farewell:
+            caption += f"\n\n{farewell}"
+        caption += await _ad_block()
 
         rows = []
         # Ссылку чиним перед тем, как ставить в кнопку: материалы, ввезённые
@@ -324,32 +360,141 @@ async def publish_next(bot: Bot) -> str:
     return "публиковать нечего: новых нет, а повторы ещё не отлежались"
 
 
-async def _seconds_until_due() -> float:
-    """Сколько ещё ждать — считая от прошлой публикации, а не от запуска"""
-    raw = await database.get_setting(LAST_AT_KEY)
-    if not raw:
-        return 0.0
+# =====================================================================
+# СЛОТЫ ДНЯ
+# =====================================================================
+
+async def _local_now():
+    """Время у читателя, а не на сервере: Render живёт по UTC, а канал —
+    по часам своей аудитории."""
     try:
-        last = datetime.fromisoformat(raw)
-    except ValueError:
-        return 0.0
-    return max(0.0, INTERVAL_HOURS * 3600 - (datetime.now() - last).total_seconds())
+        offset = int(await database.get_setting(TZ_KEY) or TZ_DEFAULT)
+    except (TypeError, ValueError):
+        offset = TZ_DEFAULT
+    return datetime.now(timezone.utc) + timedelta(hours=offset)
+
+
+async def _due_slot():
+    """Слот, которому пора выйти сегодня, либо None.
+
+    Берём самый поздний из наступивших и ещё не вышедших: если сервис спал
+    полдня, выходит один свежий пост, а не залп из трёх пропущенных.
+    """
+    now = await _local_now()
+    today = now.strftime("%Y-%m-%d")
+    ready = None
+    for at, slot, greeting in SCHEDULE:
+        hh, mm = (int(x) for x in at.split(":"))
+        if (now.hour, now.minute) < (hh, mm):
+            continue
+        if await database.get_setting(f"digest_slot_{slot}") == today:
+            continue
+        ready = (slot, greeting)
+    return ready
+
+
+async def _mark_slot(slot: str):
+    now = await _local_now()
+    await database.set_setting(f"digest_slot_{slot}", now.strftime("%Y-%m-%d"))
+
+
+async def _news_post() -> str:
+    """Утренние заголовки со ссылками. Пусто — значит выпуск не состоится:
+    «новостей нет» в новостном слоте хуже, чем его отсутствие."""
+    country = await database.get_setting(NEWS_COUNTRY_KEY) or NEWS_COUNTRY_DEFAULT
+    content = await database.get_daily_news(country)
+    return (content or "").strip()
+
+
+def _sport_fact(index: int) -> str:
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "data", "sport_facts.json"), encoding="utf-8") as f:
+            facts = json.load(f).get("facts") or []
+    except Exception as e:
+        logging.error(f"Спортивные факты не читаются: {e}")
+        return ""
+    return facts[index % len(facts)]["text"] if facts else ""
+
+
+SLOT_SECTION = {"genetics": "genetics", "travel": "travel", "dinner": "recipes"}
+
+DINNER_LEAD = "🍳 Что приготовить на ужин"
+SPORT_LEAD = "🏅 Спортивный факт дня"
+
+
+async def publish_slot(bot: Bot) -> str:
+    """Публикует то, что положено по времени. Строка — для лога."""
+    due = await _due_slot()
+    if not due:
+        return "не время"
+    slot, greeting = due
+
+    chat, thread = await _target()
+    if not chat:
+        return "канал не задан"
+
+    # Новости и спорт живут вне разделов дайджеста, поэтому идут отдельно.
+    if slot == "morning":
+        news = await _news_post()
+        if not news:
+            logging.warning("Дайджест: утренних новостей нет — выпуск пропущен")
+            return "новостей нет"
+        text = f"☀️ {greeting}\n\n{news}"
+        try:
+            await bot.send_message(chat, text[:MAX_MESSAGE],
+                                   message_thread_id=thread,
+                                   parse_mode="Markdown",
+                                   disable_web_page_preview=True)
+        except Exception as e:
+            logging.error(f"Дайджест: утренний выпуск не вышел: {e}")
+            return f"ошибка: {e}"
+        await _mark_slot(slot)
+        return "утренние новости"
+
+    if slot == "sport":
+        try:
+            n = int(await database.get_setting("digest_sport_n") or 0)
+        except (TypeError, ValueError):
+            n = 0
+        fact = _sport_fact(n)
+        if not fact:
+            return "фактов нет"
+        try:
+            sent = await bot.send_message(chat, f"{SPORT_LEAD}\n\n{fact}",
+                                          message_thread_id=thread, parse_mode=None)
+        except Exception as e:
+            logging.error(f"Дайджест: спортивный факт не вышел: {e}")
+            return f"ошибка: {e}"
+        await database.set_setting("digest_sport_n", str(n + 1))
+        await _mark_slot(slot)
+        await _mirror(bot, chat, sent.message_id, "sport")
+        return f"спортивный факт №{n + 1}"
+
+    section = SLOT_SECTION.get(slot)
+    if not section:
+        return "слот без источника"
+
+    lead = DINNER_LEAD if slot == "dinner" else None
+    result = await publish_next(bot, only=section, lead=lead, farewell=greeting)
+    if not result.startswith(("ошибка", "канал", "публиковать")):
+        await _mark_slot(slot)
+    return result
 
 
 async def scheduler(bot: Bot):
-    """Фоновая публикация. Минута задержки на старте — чтобы бот успел
-    подняться; дальше срок берётся из базы и перезапуск его не сбивает."""
+    """Ведёт день по сетке. Просыпается часто и коротко: слот в 08:00
+    должен выйти в восемь, а не когда придёт черёд двенадцатичасового
+    круга."""
     await asyncio.sleep(60)
     while True:
-        wait = await _seconds_until_due()
-        if wait > 0:
-            await asyncio.sleep(min(wait, 3600))   # просыпаемся сверить время
-            continue
         try:
-            logging.info(f"Дайджест: {await publish_next(bot)}")
+            result = await publish_slot(bot)
+            if result != "не время":
+                logging.info(f"Дайджест: {result}")
         except Exception as e:
             logging.error(f"Ошибка планировщика дайджеста: {e}")
-        await asyncio.sleep(INTERVAL_HOURS * 3600)
+        await asyncio.sleep(300)
 
 
 # =====================================================================
@@ -421,6 +566,23 @@ async def digest_command(message: Message, bot: Bot):
         await message.answer(f"📤 {await publish_next(bot)}")
         return
 
+    if command == "slot":
+        # Принудительный запуск сетки: удобно проверять, не дожидаясь часа.
+        await message.answer(f"📤 {await publish_slot(bot)}")
+        return
+
+    if command == "tz" and len(parts) > 2:
+        await database.set_setting(TZ_KEY, parts[2].strip())
+        now = await _local_now()
+        await message.answer(f"✅ Часовой пояс UTC{parts[2].strip():+}\n"
+                             f"Сейчас у читателя: {now:%H:%M}")
+        return
+
+    if command == "country" and len(parts) > 2:
+        await database.set_setting(NEWS_COUNTRY_KEY, parts[2].strip())
+        await message.answer(f"✅ Новости берём для: {html.escape(parts[2].strip())}")
+        return
+
     if command == "chat" and len(parts) > 2:
         await database.set_setting(TARGET_KEY, parts[2].strip())
         await message.answer(f"✅ Канал публикации: <code>{html.escape(parts[2].strip())}</code>")
@@ -478,15 +640,22 @@ async def digest_command(message: Message, bot: Bot):
 
     chat, thread = await _target()
     stats = await database.digest_stats()
+    now = await _local_now()
+    country = await database.get_setting(NEWS_COUNTRY_KEY) or NEWS_COUNTRY_DEFAULT
     lines = [
         "📤 <b>Дайджест-канал</b>",
         f"Цель: <code>{chat or 'не задана'}</code>"
         + (f" · тема {thread}" if thread else ""),
-        f"Публикация раз в {INTERVAL_HOURS} ч",
+        f"Время у читателя: {now:%H:%M}, новости для: {html.escape(country)}",
+        "",
+        "<b>Сетка дня</b>",
     ]
-    left = await _seconds_until_due()
-    lines.append("Следующая: " + ("в ближайшую минуту" if left <= 0
-                                  else f"через {int(left // 3600)} ч {int(left % 3600 // 60)} мин"))
+    today = now.strftime("%Y-%m-%d")
+    for at, slot, _ in SCHEDULE:
+        done = await database.get_setting(f"digest_slot_{slot}") == today
+        titles = {"morning": "новости", "genetics": "наука", "travel": "путешествия",
+                  "sport": "спортивный факт", "dinner": "рецепт на ужин"}
+        lines.append(f"{'✅' if done else '⬜️'} {at} — {titles.get(slot, slot)}")
     lines.append("")
     for section, data in stats.items():
         left = data["total"] - data["published"]
@@ -507,7 +676,10 @@ async def digest_command(message: Message, bot: Bot):
     error = await database.get_setting("digest_last_error")
     if error:
         lines.append(f"\n⚠️ Последний сбой: <code>{html.escape(error)}</code>")
-    lines.append("\n<code>/digest now</code> — опубликовать сейчас\n"
+    lines.append("\n<code>/digest slot</code> — выпустить то, что по времени\n"
+                 "<code>/digest tz 3</code> — часовой пояс читателя\n"
+                 "<code>/digest country Россия</code> — чьи новости утром\n"
+                 "<code>/digest now</code> — опубликовать вне сетки\n"
                  "<code>/digest chat -100…</code> — задать канал\n"
                  "<code>/digest mirror -100… тема раздел</code> — дубль в группу\n"
                  "<code>/digest nomirror</code> — не дублировать\n"
