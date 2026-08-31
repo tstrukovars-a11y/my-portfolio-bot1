@@ -2231,6 +2231,20 @@ async def add_book_unique(category: str, text: str) -> str:
         return "error"
 
 
+async def book_titles(category: str):
+    """(id, автор и название) книг полки — для списка, по которому кликают"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT id, text_content FROM {SCHEMA}.books "
+                "WHERE category = $1 ORDER BY id", category)
+        return [(r["id"], (r["text_content"] or "").split("\n")[0][:60]) for r in rows]
+    except Exception as e:
+        logging.error(f"Названия книг недоступны: {e}")
+        return []
+
+
 async def books_all():
     """(id, категория, текст, обложка, номер поста) — для выкладки в канал"""
     try:

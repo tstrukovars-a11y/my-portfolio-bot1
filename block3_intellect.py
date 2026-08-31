@@ -166,99 +166,74 @@ async def open_menu_intellect_books(call: CallbackQuery):
         pass
 
 # Умный движок выгрузки книг с защитой от повторных кликов и летучим переводом Claude
-async def fetch_and_send_books(call: CallbackQuery, category_key: str):
-    user_id = call.from_user.id
-    user_lang = await database.get_user_language(user_id)
-    
-    # ЗАЩИТА: Если пользователь уже нажал кнопку и Claude переводит — игнорируем повторный клик
-    if user_id in processing_users:
+SHELF_TITLES = {"business": "📈 Бизнес и лидерство",
+                "horizon": "🔭 Кругозор и наука",
+                "tools": "🛠 Инструменты"}
+
+
+async def show_shelf(call: CallbackQuery, category: str):
+    """Список названий вместо трёх книг подряд.
+
+    Раньше полка отдавала первые три книги отдельными сообщениями — из
+    двенадцати. Остальные девять существовали только в базе, и добавлять
+    книги не имело смысла: их всё равно никто не видел.
+    """
+    lang = await database.get_user_language(call.from_user.id)
+    books = await database.book_titles(category)
+    if not books:
+        await call.message.answer("📚 На этой полке пока пусто.")
+        await call.answer()
         return
-        
-    rows = await database.get_books(category_key, limit=3)
-            
-    if not rows:
-        empty_texts = {
-            "ru": "📚 На этой полке пока пусто. Скоро я опубликую новый обзор в канале!",
-            "en": "📚 This shelf is empty for now. I will post a new review in the channel soon!",
-            "fr": "📚 Cette étagère est vide. Un nouvel examen sera publié bientôt !",
-            "he": "📚 המדף הזה ריק בינתיים. בקרוב אפרסם סקירה חדשה בערוץ!"
-        }
-        await call.message.answer(empty_texts.get(user_lang, empty_texts["en"]))
-        return
 
-    # Включаем лок пользователя
-    processing_users.add(user_id)
-    need_translation = user_lang != "ru"
+    rows = [[InlineKeyboardButton(text=title, callback_data=f"bookopen_{bid}")]
+            for bid, title in books]
+    rows.append([InlineKeyboardButton(text=inline_kb.label(inline_kb.BACK_TEXTS, lang),
+                                      callback_data="intellect_books")])
+    await call.message.edit_caption(
+        caption=f"{SHELF_TITLES.get(category, '📚')}\n\nКниг: {len(books)}. Выберите:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+    await call.answer()
 
-    # Выводим красивый статус загрузки перевода
-    if need_translation:
-        load_msgs = {
-            "en": "⏳ Translating review via Claude AI...",
-            "fr": "⏳ Traduction de l'examen via Claude AI...",
-            "he": "⏳ מתרגם סקירה באמצעות Claude AI..."
-        }
-        await call.message.answer(load_msgs.get(user_lang, load_msgs["en"]))
 
-    from handlers.block2_creative import claude_client
-
+@router.callback_query(F.data.startswith("bookopen_"))
+async def open_book(call: CallbackQuery):
     try:
-        for row in rows:
-            text, cover_id = row
-            final_text = text
-            
-            if need_translation:
-                try:
-                    lang_names = {"en": "English", "fr": "French", "he": "Hebrew"}
-                    response = await claude_client.messages.create(
-                        model="claude-haiku-4-5-20251001",
-                        max_tokens=1000,
-                        system=f"You are an expert executive editor. Translate this book review precisely into {lang_names.get(user_lang, 'English')}. Keep all headers, book structure, emojis, and specific business terminology. Do not add any intros, output only the translation.",
-                        messages=[{"role": "user", "content": text}]
-                    )
-                    final_text = response.content[0].text
-                except Exception as e:
-                    print(f"⚠️ Ошибка Claude: {e}")
+        book_id = int(call.data.rsplit("_", 1)[1])
+    except ValueError:
+        await call.answer()
+        return
+    row = await database.get_book_by_id(book_id)
+    if not row:
+        await call.answer("Книга не найдена", show_alert=True)
+        return
+    text, cover = row
+    lang = await database.get_user_language(call.from_user.id)
+    markup = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text=inline_kb.label(inline_kb.BACK_TEXTS, lang),
+                             callback_data="intellect_books")]])
+    # parse_mode=None: текст пришёл из канала и разметкой не является
+    if cover:
+        await call.message.answer_photo(cover, caption=(text or "")[:1024],
+                                        parse_mode=None, reply_markup=markup)
+    else:
+        await call.message.answer((text or "")[:4096], parse_mode=None,
+                                  reply_markup=markup)
+    await call.answer()
 
-            if cover_id:
-                await call.message.answer_photo(photo=cover_id, caption=final_text, parse_mode="Markdown")
-            else:
-                await call.message.answer(final_text, parse_mode="Markdown")
-    finally:
-        # ОБЯЗАТЕЛЬНО СНИМАЕМ БЛОКИРОВКУ ПОСЛЕ ЗАВЕРШЕНИЯ ЦИКЛА
-        processing_users.discard(user_id)
 
 @router.callback_query(F.data == "books_view_business")
 async def view_business_books(call: CallbackQuery):
-    await call.answer()
-    await fetch_and_send_books(call, "business")
+    await show_shelf(call, "business")
+
 
 @router.callback_query(F.data == "books_view_horizon")
 async def view_horizon_books(call: CallbackQuery):
-    await call.answer()
-    await fetch_and_send_books(call, "horizon")
+    await show_shelf(call, "horizon")
+
 
 @router.callback_query(F.data == "books_view_tools")
 async def view_tools_books(call: CallbackQuery):
-    await call.answer()
-    await fetch_and_send_books(call, "tools")
-
-
-# =====================================================================
-# 🤖 СЛУШАТЕЛЬ КАНАЛА ОБЗОРОВ КНИГ (АВТОМАТИЧЕСКАЯ СБОРКА)
-# =====================================================================
-# ВАЖНО: #полезное здесь быть не должно — он закреплён за кулинарией. Хэштеги
-# книг и рецептов обязаны не пересекаться: сборщик рецептов отрабатывает раньше
-# и забрал бы такой пост себе, а до библиотеки он бы просто не дошёл.
-BOOK_HASHTAGS = {"#бизнес": "business", "#кругозор": "horizon", "#инструменты": "tools"}
-
-
-def _is_book_post(message: Message) -> bool:
-    """Без этого фильтра хендлер матчил любой пост канала — и сам никогда не
-    срабатывал, потому что сборщик рецептов в block2 перехватывал всё раньше."""
-    if not config.channel_allowed(config.BOOKS_CHANNEL, message.chat.id):
-        return False
-    text = (message.text or message.caption or "").lower()
-    return any(tag in text for tag in BOOK_HASHTAGS)
+    await show_shelf(call, "tools")
 
 
 @router.channel_post(_is_book_post)
