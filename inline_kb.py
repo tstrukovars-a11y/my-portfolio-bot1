@@ -430,14 +430,18 @@ def get_genetics_hub_menu(lang):
         [InlineKeyboardButton(text=label(BACK_TEXTS, lang), callback_data="menu_intellect")]
     ])
 
-def get_books_shelf_menu(lang):
+def get_books_shelf_menu(lang, counts=None):
+    """Полки со счётчиками. Число на кнопке отвечает на вопрос «а есть ли
+    там что-нибудь» до нажатия — раньше это выяснялось только внутри."""
+    counts = counts or {}
     b = "📈 Бизнес и Лидерство" if lang == "ru" else "📈 Business & Leadership"
     h = "🔭 Кругозор и Наука" if lang == "ru" else "🔭 Horizon & Science"
     t = "🛠 Полезный инструментарий" if lang == "ru" else "🛠 Strategy & Tools"
+    mark = lambda text, key: f"{text} · {counts[key]}" if counts.get(key) else text
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=b, callback_data="books_view_business")],
-        [InlineKeyboardButton(text=h, callback_data="books_view_horizon")],
-        [InlineKeyboardButton(text=t, callback_data="books_view_tools")],
+        [InlineKeyboardButton(text=mark(b, "business"), callback_data="books_view_business")],
+        [InlineKeyboardButton(text=mark(h, "horizon"), callback_data="books_view_horizon")],
+        [InlineKeyboardButton(text=mark(t, "tools"), callback_data="books_view_tools")],
         [InlineKeyboardButton(text=label(BACK_TEXTS, lang), callback_data="menu_intellect")]
     ])
 

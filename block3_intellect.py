@@ -157,10 +157,14 @@ async def open_menu_intellect_books(call: CallbackQuery):
     try:
         user_lang = await database.get_user_language(call.from_user.id)
         caption_text = menu_texts.BOOKS_MENU_TEXTS.get(user_lang, menu_texts.BOOKS_MENU_TEXTS["en"])
-        
+        counts = await database.book_counts()
+        total = sum(counts.values())
+        if total:
+            caption_text += f"\n\nВсего книг: {total}"
+
         await call.message.edit_media(
             media=InputMediaPhoto(media=config.BOOKS_BANNER, caption=caption_text, parse_mode="Markdown"),
-            reply_markup=inline_kb.get_books_shelf_menu(user_lang)
+            reply_markup=inline_kb.get_books_shelf_menu(user_lang, counts)
         )
     except TelegramBadRequest:
         pass

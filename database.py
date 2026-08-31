@@ -2231,6 +2231,19 @@ async def add_book_unique(category: str, text: str) -> str:
         return "error"
 
 
+async def book_counts() -> dict:
+    """Сколько книг на каждой полке"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT category, COUNT(*) AS n FROM {SCHEMA}.books GROUP BY category")
+        return {r["category"]: r["n"] for r in rows}
+    except Exception as e:
+        logging.error(f"Счётчики книг недоступны: {e}")
+        return {}
+
+
 async def book_titles(category: str):
     """(id, автор и название) книг полки — для списка, по которому кликают"""
     try:
