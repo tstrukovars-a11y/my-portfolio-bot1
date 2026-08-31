@@ -513,7 +513,31 @@ async def init_db():
             PRIMARY KEY (cartoon_id, scene_index)
         )""")
 
-        # 24. Персонажи, нарисованные самими пользователями. Каждый видит и
+        # 24. Достопримечательности внутри города. Отдельный уровень нужен
+        # затем, что город — это не один рассказ: в Минске проспект,
+        # Троицкое предместье и ратуша это три разных повода для поста.
+        #
+        # visited отделяет то, где владелец действительно был, от того, что
+        # в городе просто есть: канал от первого лица и справочник — разные
+        # вещи, и путать их нельзя.
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.travel_spots (
+            id SERIAL PRIMARY KEY,
+            place_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            lower_name TEXT GENERATED ALWAYS AS (lower(name)) STORED,
+            text_content TEXT,
+            photo_file_id TEXT,
+            art BYTEA,
+            art_mime TEXT,
+            visited BOOLEAN NOT NULL DEFAULT FALSE,
+            ordering INTEGER NOT NULL DEFAULT 0,
+            channel_msg_id BIGINT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (place_id, lower_name)
+        )""")
+
+        # 25. Персонажи, нарисованные самими пользователями. Каждый видит и
         # использует только своих: чужой рисунок в своей истории — не то, что
         # человек ожидает увидеть, и не то, на что он давал согласие.
         # lower_name — вычисляемый столбец: он и держит уникальность имени,
@@ -535,7 +559,7 @@ async def init_db():
             UNIQUE (user_id, lower_name)
         )""")
 
-        # 25. Анкеты поиска партнёра для игры
+        # 26. Анкеты поиска партнёра для игры
         await conn.execute(f"""
         CREATE TABLE IF NOT EXISTS {SCHEMA}.game_partners (
             id SERIAL PRIMARY KEY,
@@ -910,6 +934,76 @@ async def add_travel_place(country_ru, country_en, place, text_content,
     except Exception as e:
         logging.error(f"Не удалось сохранить локацию: {type(e).__name__}: {e}")
         return f"error:{type(e).__name__}: {e}"
+
+
+async def add_spot(place_id: int, name: str, text: str, ordering: int) -> str:
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            got = await conn.fetchval(
+                f"INSERT INTO {SCHEMA}.travel_spots (place_id, name, text_content, ordering) "
+                "VALUES ($1, $2, $3, $4) ON CONFLICT (place_id, lower_name) DO NOTHING "
+                "RETURNING id", place_id, name, text, ordering)
+        return "added" if got else "duplicate"
+    except Exception as e:
+        logging.error(f"Достопримечательность не сохранена: {e}")
+        return "error"
+
+
+async def spots_of(place_id: int):
+    """(id, название, текст, фото, был ли, номер поста) по порядку"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT id, name, text_content, photo_file_id, visited, channel_msg_id "
+                f"FROM {SCHEMA}.travel_spots WHERE place_id = $1 ORDER BY ordering, id",
+                place_id)
+        return [tuple(r) for r in rows]
+    except Exception as e:
+        logging.error(f"Достопримечательности недоступны: {e}")
+        return []
+
+
+async def set_spot_visited(spot_id: int, visited: bool) -> bool:
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"UPDATE {SCHEMA}.travel_spots SET visited = $1 WHERE id = $2",
+                visited, spot_id)
+        return True
+    except Exception as e:
+        logging.error(f"Отметка о посещении не сохранена: {e}")
+        return False
+
+
+async def spot_place(spot_id: int):
+    """Город, которому принадлежит достопримечательность"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            return await conn.fetchval(
+                f"SELECT place_id FROM {SCHEMA}.travel_spots WHERE id = $1", spot_id)
+    except Exception as e:
+        logging.error(f"Город достопримечательности не найден: {e}")
+        return None
+
+
+async def spot_counts():
+    """(всего, отмечено посещёнными, с фотографией)"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                f"SELECT COUNT(*) AS total, "
+                f"COUNT(*) FILTER (WHERE visited) AS seen, "
+                f"COUNT(*) FILTER (WHERE photo_file_id IS NOT NULL AND photo_file_id <> '') "
+                f"AS shot FROM {SCHEMA}.travel_spots")
+        return row["total"], row["seen"], row["shot"]
+    except Exception as e:
+        logging.error(f"Счётчики достопримечательностей недоступны: {e}")
+        return 0, 0, 0
 
 
 async def travel_all_ordered():

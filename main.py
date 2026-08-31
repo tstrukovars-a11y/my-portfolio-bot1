@@ -23,6 +23,7 @@ import cartoon
 import characters
 import travel_import
 import travel_channel
+import travel_spots
 import inline_kb
 
 
@@ -446,6 +447,7 @@ async def main():
     dp.include_router(characters.router)
     dp.include_router(travel_import.router)
     dp.include_router(travel_channel.router)
+    dp.include_router(travel_spots.router)
 
     dp.include_router(tennis_live.router)
     dp.include_router(travel.router)
