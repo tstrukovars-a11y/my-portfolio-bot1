@@ -2203,6 +2203,57 @@ async def get_books(category: str, limit: int = 3):
         logging.error(f"БД недоступна при чтении книг: {e}")
         return []
 
+async def add_book_unique(category: str, text: str) -> str:
+    """Добавляет книгу, не задваивая: ключ — первая строка с автором
+    и названием. Повторный запуск списка обновляет, а не плодит."""
+    head = (text or "").strip().split("\n")[0][:200]
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            exists = await conn.fetchval(
+                f"SELECT id FROM {SCHEMA}.books WHERE text_content LIKE $1", head + "%")
+            if exists:
+                await conn.execute(
+                    f"UPDATE {SCHEMA}.books SET text_content = $1, category = $2 "
+                    "WHERE id = $3", text, category, exists)
+                return "updated"
+            await conn.execute(
+                f"INSERT INTO {SCHEMA}.books (category, text_content) VALUES ($1, $2)",
+                category, text)
+        return "added"
+    except Exception as e:
+        logging.error(f"Книга не сохранена: {e}")
+        return "error"
+
+
+async def books_without_cover(limit: int = 40):
+    """(id, первая строка) книг без обложки"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT id, text_content FROM {SCHEMA}.books "
+                "WHERE cover_file_id IS NULL OR cover_file_id = '' ORDER BY id LIMIT $1",
+                limit)
+        return [(r["id"], (r["text_content"] or "").split("\n")[0][:60]) for r in rows]
+    except Exception as e:
+        logging.error(f"Книги без обложки недоступны: {e}")
+        return []
+
+
+async def set_book_cover(book_id: int, file_id: str) -> bool:
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"UPDATE {SCHEMA}.books SET cover_file_id = $1 WHERE id = $2",
+                file_id, book_id)
+        return True
+    except Exception as e:
+        logging.error(f"Обложка не сохранена: {e}")
+        return False
+
+
 async def get_book_by_id(book_id: int):
     """(текст, обложка) книги — для публикации в канал"""
     try:
