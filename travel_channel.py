@@ -94,15 +94,33 @@ async def _run(bot: Bot, chat: int, places, note: Message):
         try:
             if msg_id:
                 # Пост уже был — правим его, а не публикуем второй раз.
-                if photo:
-                    await bot.edit_message_caption(
-                        chat_id=chat, message_id=msg_id,
-                        caption=body[:MAX_CAPTION], parse_mode=None)
-                else:
-                    await bot.edit_message_text(
-                        chat_id=chat, message_id=msg_id,
-                        text=body[:MAX_MESSAGE], parse_mode=None)
-                edited += 1
+                try:
+                    if photo:
+                        await bot.edit_message_caption(
+                            chat_id=chat, message_id=msg_id,
+                            caption=body[:MAX_CAPTION], parse_mode=None)
+                    else:
+                        await bot.edit_message_text(
+                            chat_id=chat, message_id=msg_id,
+                            text=body[:MAX_MESSAGE], parse_mode=None)
+                    edited += 1
+                except TelegramBadRequest as e:
+                    if "not modified" in str(e).lower():
+                        continue
+                    # Текстовый пост нельзя превратить в пост с картинкой
+                    # правкой — Telegram такого не умеет. Значит фотографию
+                    # приложили уже после выкладки: снимаем и публикуем заново.
+                    if not photo:
+                        raise
+                    logging.info(f"Канал путешествий: «{place}» переиздаю с фотографией")
+                    try:
+                        await bot.delete_message(chat_id=chat, message_id=msg_id)
+                    except Exception as drop:
+                        logging.warning(f"Старый пост «{place}» не снялся: {drop}")
+                    sent = await bot.send_photo(chat, photo,
+                                                caption=body[:MAX_CAPTION], parse_mode=None)
+                    await database.set_travel_msg(place_id, sent.message_id)
+                    edited += 1
             else:
                 if photo:
                     sent = await bot.send_photo(chat, photo,
