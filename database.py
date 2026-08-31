@@ -219,6 +219,11 @@ async def init_db():
             cover_file_id TEXT
         )""")
 
+        # Номер поста книги в её канале — чтобы правка не плодила копии,
+        # как это уже устроено у путешествий.
+        await conn.execute(
+            f"ALTER TABLE {SCHEMA}.books ADD COLUMN IF NOT EXISTS channel_msg_id BIGINT")
+
         # 4. Таблица для логов платежей
         await conn.execute(f"""
         CREATE TABLE IF NOT EXISTS {SCHEMA}.payments (
@@ -2224,6 +2229,33 @@ async def add_book_unique(category: str, text: str) -> str:
     except Exception as e:
         logging.error(f"Книга не сохранена: {e}")
         return "error"
+
+
+async def books_all():
+    """(id, категория, текст, обложка, номер поста) — для выкладки в канал"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT id, category, text_content, cover_file_id, channel_msg_id "
+                f"FROM {SCHEMA}.books ORDER BY category, id")
+        return [tuple(r) for r in rows]
+    except Exception as e:
+        logging.error(f"Книги недоступны: {e}")
+        return []
+
+
+async def set_book_msg(book_id: int, msg_id: int) -> bool:
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"UPDATE {SCHEMA}.books SET channel_msg_id = $1 WHERE id = $2",
+                msg_id, book_id)
+        return True
+    except Exception as e:
+        logging.error(f"Номер поста книги не сохранён: {e}")
+        return False
 
 
 async def books_without_cover(limit: int = 40):

@@ -7,6 +7,7 @@
 # Обложки — только настоящие, их подгружает владелец. Сгенерированная
 # обложка существующей книги вводит в заблуждение так же, как выдуманная
 # фотография настоящего места.
+import asyncio
 import html
 import json
 import logging
@@ -17,6 +18,7 @@ from aiogram.types import (Message, CallbackQuery, InlineKeyboardMarkup,
                            InlineKeyboardButton)
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
+from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
 
 import config
 import database
@@ -87,6 +89,121 @@ async def seed(message: Message):
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🖼 Загрузить обложки",
                                   callback_data="bookcovers")]]))
+
+
+# =====================================================================
+# КАНАЛ-СПРАВОЧНИК
+#
+# Полка живёт отдельным каналом, а «Акцент» на неё ссылается. Выкладка
+# помнит номер каждого поста, поэтому повторный запуск правит вышедшее,
+# а не выкладывает второй раз — как это уже сделано у путешествий.
+# =====================================================================
+
+CHANNEL_KEY = "books_channel"
+PAUSE = 1.2
+MAX_CAPTION = 1024
+MAX_MESSAGE = 4096
+
+
+async def _channel():
+    raw = await database.get_setting(CHANNEL_KEY)
+    try:
+        return int(raw) if raw else None
+    except (TypeError, ValueError):
+        return None
+
+
+@router.message(F.text.startswith("/books_channel"))
+async def set_channel(message: Message):
+    if not config.is_admin(message.from_user.id):
+        return
+    parts = message.text.split(maxsplit=1)
+    if len(parts) > 1 and parts[1].strip():
+        await database.set_setting(CHANNEL_KEY, parts[1].strip())
+        await message.answer(
+            f"✅ Канал книг: <code>{html.escape(parts[1].strip())}</code>\n\n"
+            "Выложить полку: <code>/books_publish</code>")
+        return
+    chat = await _channel()
+    books = await database.books_all()
+    posted = sum(1 for b in books if b[4])
+    await message.answer(
+        f"📚 <b>Канал книг</b>\n\nКанал: <code>{chat or 'не задан'}</code>\n"
+        f"Книг: {len(books)}, выложено: {posted}\n\n"
+        "<code>/books_channel -100…</code> — задать канал\n"
+        "<code>/books_publish</code> — выложить или обновить")
+
+
+@router.message(F.text == "/books_publish")
+async def publish_all(message: Message, bot):
+    if not config.is_admin(message.from_user.id):
+        return
+    chat = await _channel()
+    if not chat:
+        await message.answer("❌ Сначала задайте канал: <code>/books_channel -100…</code>")
+        return
+    books = await database.books_all()
+    if not books:
+        await message.answer("Книг нет. Загрузите: <code>/books_seed</code>")
+        return
+    note = await message.answer(f"📚 Выкладываю {len(books)} книг…")
+    asyncio.create_task(_run(bot, chat, books, note))
+
+
+async def _run(bot, chat: int, books, note: Message):
+    new = edited = failed = 0
+    for book_id, category, text, cover, msg_id in books:
+        body = f"{SHELVES.get(category, '📚')}\n\n{(text or '').strip()}"
+        try:
+            if msg_id:
+                try:
+                    if cover:
+                        await bot.edit_message_caption(
+                            chat_id=chat, message_id=msg_id,
+                            caption=body[:MAX_CAPTION], parse_mode=None)
+                    else:
+                        await bot.edit_message_text(
+                            chat_id=chat, message_id=msg_id,
+                            text=body[:MAX_MESSAGE], parse_mode=None)
+                    edited += 1
+                except TelegramBadRequest as e:
+                    if "not modified" in str(e).lower():
+                        continue
+                    # Обложку приложили после выкладки: текстовый пост
+                    # картинкой не станет, его надо переиздать.
+                    if not cover:
+                        raise
+                    try:
+                        await bot.delete_message(chat_id=chat, message_id=msg_id)
+                    except Exception as drop:
+                        logging.warning(f"Старый пост книги не снялся: {drop}")
+                    sent = await bot.send_photo(chat, cover,
+                                                caption=body[:MAX_CAPTION], parse_mode=None)
+                    await database.set_book_msg(book_id, sent.message_id)
+                    edited += 1
+            else:
+                if cover:
+                    sent = await bot.send_photo(chat, cover,
+                                                caption=body[:MAX_CAPTION], parse_mode=None)
+                else:
+                    sent = await bot.send_message(chat, body[:MAX_MESSAGE], parse_mode=None)
+                await database.set_book_msg(book_id, sent.message_id)
+                new += 1
+        except TelegramRetryAfter as e:
+            await asyncio.sleep(e.retry_after + 1)
+            failed += 1
+        except Exception as e:
+            logging.error(f"Канал книг: {book_id} — {type(e).__name__}: {e}")
+            failed += 1
+        await asyncio.sleep(PAUSE)
+
+    tail = f"Новых: {new}, обновлено: {edited}"
+    if failed:
+        tail += f", не прошло: {failed}"
+    try:
+        await note.edit_text(f"📚 <b>Готово</b>\n\n{tail}")
+    except Exception:
+        pass
 
 
 # =====================================================================
