@@ -18,6 +18,7 @@ from aiogram.exceptions import TelegramBadRequest
 
 import config
 import database
+import players_ru
 
 router = Router()
 
@@ -80,12 +81,18 @@ async def fetch_scoreboard(tour: str, force: bool = False):
 
 
 def _player(side) -> str:
+    """Имя игрока по-русски, если оно есть в словаре.
+
+    Источник англоязычный, а канал русский. Транслитерация правилом тут
+    не работает: Swiatek она даёт «Свиатек» вместо «Швёнтек». Незнакомое
+    имя остаётся латиницей — это видно и чинится строкой в словаре.
+    """
     athlete = side.get("athlete") or {}
     name = athlete.get("displayName")
     if not name:
         roster = side.get("roster") or []
         name = roster[0].get("displayName") if roster else None
-    return name or "—"
+    return players_ru.ru(name) if name else "—"
 
 
 def _sets(side) -> list:
