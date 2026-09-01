@@ -18,6 +18,7 @@ from aiogram.exceptions import TelegramBadRequest
 
 import config
 import database
+import flags
 import players_ru
 
 router = Router()
@@ -93,6 +94,22 @@ def _player(side) -> str:
         roster = side.get("roster") or []
         name = roster[0].get("displayName") if roster else None
     return players_ru.ru(name) if name else "—"
+
+
+def _flag(side) -> str:
+    """Флаг страны игрока. ESPN отдаёт страну только картинкой, код берём
+    из имени файла: .../countries/500/esp.png → esp."""
+    athlete = side.get("athlete") or {}
+    href = ((athlete.get("flag") or {}).get("href") or "")
+    code = href.rsplit("/", 1)[-1].split(".")[0] if href else ""
+    return flags.by_code(code)
+
+
+def _named(side) -> str:
+    """Флаг и имя вместе — так строка читается как в табло турнира"""
+    flag = _flag(side)
+    name = _player(side)
+    return f"{flag} {name}" if flag else name
 
 
 def _sets(side) -> list:
@@ -178,13 +195,13 @@ def _format(match, lang: str = "ru") -> str:
     """Матч одной строкой: состояние, участники, счёт или время начала"""
     sides = sorted(match["sides"], key=lambda s: not s.get("winner"))
     left, right = sides[0], sides[1]
-    names = f"{html.escape(_player(left))} — {html.escape(_player(right))}"
+    names = f"{html.escape(_named(left))} — {html.escape(_named(right))}"
 
     if match["completed"]:
         # Победителя выделяем: в списке из десятка строк глаз должен цепляться
         # за исход, а не вычитывать счёт.
-        winner = f"<b>{html.escape(_player(left))}</b>"
-        pair = f"{winner} — {html.escape(_player(right))}"
+        winner = f"<b>{html.escape(_named(left))}</b>"
+        pair = f"{winner} — {html.escape(_named(right))}"
         score = _score(left, right)
         tail = f"  <code>{html.escape(score)}</code>" if score else ""
         return f"🏆 {pair}{tail}"

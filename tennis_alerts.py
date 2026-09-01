@@ -38,6 +38,17 @@ def _title(match) -> str:
     return " — ".join(n for n in names if n) or "матч"
 
 
+def _with_flags(match) -> str:
+    """Кто с кем, с флагами — для строки поста и для напоминания.
+
+    На кнопке флагов нет: там дорог каждый символ, Telegram обрезает
+    подпись, и имена важнее.
+    """
+    sides = match.get("sides") or []
+    names = [tennis_live._named(s) for s in sides[:2]]
+    return " — ".join(n for n in names if n) or "матч"
+
+
 def _event(match) -> str:
     """Название турнира по-русски"""
     return players_ru.event(match.get("tournament") or "")
@@ -49,7 +60,7 @@ def _full_title(match) -> str:
     В канале турнир стоит заголовком над группой матчей, а в личное
     сообщение приходит один матч, и без турнира непонятно, о чём речь.
     """
-    short = _title(match)
+    short = _with_flags(match)
     event = _event(match)
     return f"{event} · {short}" if event else short
 
@@ -155,7 +166,7 @@ async def publish_schedule(bot: Bot, chat: int, thread=None) -> str:
             clock = (when + shift).strftime("%H:%M") if when else "—"
             title = _title(m)
             rnd = players_ru.rnd(m.get("round") or "")
-            lines.append(f"{clock} · {html.escape(title)}"
+            lines.append(f"{clock} · {html.escape(_with_flags(m))}"
                          + (f" · <i>{html.escape(rnd)}</i>" if rnd else ""))
             rows.append([InlineKeyboardButton(
                 text=f"🔔 {title[:38]}", callback_data=f"tmatch_{tour}_{m['id']}")])
