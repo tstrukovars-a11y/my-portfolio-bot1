@@ -533,13 +533,28 @@ async def _mark_slot(slot: str):
     await database.set_setting(f"digest_slot_{slot}", now.strftime("%Y-%m-%d"))
 
 
+async def _news_text(code: str) -> str:
+    """Заголовки строкой.
+
+    get_daily_news отдаёт пару «текст и дата», и пара непустая всегда —
+    даже когда новостей нет, она равна (None, None). Проверка на пустоту
+    поэтому не срабатывала, а strip падал на кортеже: утро молчало каждый
+    день, а причина оседала в логе.
+    """
+    got = await database.get_daily_news(code)
+    content = got[0] if isinstance(got, (tuple, list)) else got
+    return (content or "").strip()
+
+
+async def _news_country() -> str:
+    raw = (await database.get_setting(NEWS_COUNTRY_KEY) or NEWS_COUNTRY_DEFAULT)
+    return NEWS_ALIASES.get(raw.strip().lower(), raw.strip().lower())
+
+
 async def _news_post() -> str:
     """Утренние заголовки со ссылками. Пусто — значит выпуск не состоится:
     «новостей нет» в новостном слоте хуже, чем его отсутствие."""
-    raw = (await database.get_setting(NEWS_COUNTRY_KEY) or NEWS_COUNTRY_DEFAULT)
-    code = NEWS_ALIASES.get(raw.strip().lower(), raw.strip().lower())
-    content = await database.get_daily_news(code)
-    return (content or "").strip()
+    return await _news_text(await _news_country())
 
 
 def _sport_fact(index: int) -> str:
@@ -1025,7 +1040,7 @@ async def digest_command(message: Message, bot: Bot):
                                  + ", ".join(NEWS_COUNTRIES.values()))
             return
         await database.set_setting(NEWS_COUNTRY_KEY, code)
-        has = bool((await database.get_daily_news(code) or "").strip())
+        has = bool(await _news_text(code))
         await message.answer(
             f"✅ Новости берём для: {NEWS_COUNTRIES[code]}\n"
             + ("Лента загружена." if has
@@ -1100,7 +1115,7 @@ async def digest_command(message: Message, bot: Bot):
     raw_country = await database.get_setting(NEWS_COUNTRY_KEY) or NEWS_COUNTRY_DEFAULT
     code = NEWS_ALIASES.get(raw_country.strip().lower(), raw_country)
     country = NEWS_COUNTRIES.get(code, code)
-    if not (await database.get_daily_news(code) or "").strip():
+    if not await _news_text(code):
         country += " ⚠️ лента пуста"
     target_name = await _chat_name(bot, chat) if chat else ""
     lines = [
