@@ -115,8 +115,21 @@ async def _offer_row(section: str):
 
 TZ_KEY = "digest_tz"             # смещение от UTC в часах
 TZ_DEFAULT = 3                   # Москва
+# Новости лежат под кодами стран — ru, il, fr, us, — как их сохраняет
+# сборщик лент. Слово «Россия» ключом не является, и поиск по нему не
+# находил ничего: слот молчал каждое утро.
 NEWS_COUNTRY_KEY = "digest_news_country"
-NEWS_COUNTRY_DEFAULT = "Россия"
+NEWS_COUNTRY_DEFAULT = "ru"
+NEWS_COUNTRIES = {
+    "ru": "🇷🇺 Россия", "il": "🇮🇱 Израиль",
+    "fr": "🇫🇷 Франция", "us": "🇺🇸 США",
+}
+NEWS_ALIASES = {
+    "россия": "ru", "russia": "ru", "ru": "ru",
+    "израиль": "il", "israel": "il", "il": "il",
+    "франция": "fr", "france": "fr", "fr": "fr",
+    "сша": "us", "usa": "us", "us": "us",
+}
 
 TARGET_KEY = "digest_chat"       # id канала
 THREAD_KEY = "digest_thread"     # тема, если целью выбрана группа с разделами
@@ -523,8 +536,9 @@ async def _mark_slot(slot: str):
 async def _news_post() -> str:
     """Утренние заголовки со ссылками. Пусто — значит выпуск не состоится:
     «новостей нет» в новостном слоте хуже, чем его отсутствие."""
-    country = await database.get_setting(NEWS_COUNTRY_KEY) or NEWS_COUNTRY_DEFAULT
-    content = await database.get_daily_news(country)
+    raw = (await database.get_setting(NEWS_COUNTRY_KEY) or NEWS_COUNTRY_DEFAULT)
+    code = NEWS_ALIASES.get(raw.strip().lower(), raw.strip().lower())
+    content = await database.get_daily_news(code)
     return (content or "").strip()
 
 
@@ -597,9 +611,16 @@ DINNER_LEAD = "🍳 Что приготовить на ужин"
 SPORT_LEAD = "🏅 Спортивный факт дня"
 
 
-async def publish_slot(bot: Bot) -> str:
-    """Публикует то, что положено по времени. Строка — для лога."""
-    due = await _due_slot()
+async def publish_slot(bot: Bot, force: str = None) -> str:
+    """Публикует то, что положено по времени. Строка — для лога.
+
+    force выпускает названный слот немедленно: сетка ждёт своего часа,
+    а пропущенное утро иначе не вернуть до следующего дня.
+    """
+    if force:
+        due = next(((s, g) for _, s, g in SCHEDULE if s == force), None)
+    else:
+        due = await _due_slot()
     if not due:
         return "не время"
     slot, greeting = due
@@ -612,6 +633,12 @@ async def publish_slot(bot: Bot) -> str:
     if slot == "morning":
         news = await _news_post()
         if not news:
+            # Молчание без объяснения — то, из-за чего утро пропало
+            # незамеченным. Причина теперь видна в /digest.
+            await database.set_setting(
+                "digest_last_error",
+                "утро: лента новостей пуста — сборщик ещё не отработал "
+                "или страна задана неверно")
             logging.warning("Дайджест: утренних новостей нет — выпуск пропущен")
             return "новостей нет"
         parts = [f"☀️ {greeting}", news]
@@ -930,7 +957,16 @@ async def digest_command(message: Message, bot: Bot):
         return
 
     if command == "slot":
-        # Принудительный запуск сетки: удобно проверять, не дожидаясь часа.
+        # С именем — выпустить именно этот слот, не дожидаясь его часа.
+        # Без имени — то, чьё время уже пришло.
+        want = parts[2].strip().lower() if len(parts) > 2 else ""
+        if want:
+            known = {s for _, s, _ in SCHEDULE}
+            if want not in known:
+                await message.answer("Слоты: " + ", ".join(sorted(known)))
+                return
+            await message.answer(f"📤 {await publish_slot(bot, force=want)}")
+            return
         await message.answer(f"📤 {await publish_slot(bot)}")
         return
 
@@ -982,8 +1018,18 @@ async def digest_command(message: Message, bot: Bot):
         return
 
     if command == "country" and len(parts) > 2:
-        await database.set_setting(NEWS_COUNTRY_KEY, parts[2].strip())
-        await message.answer(f"✅ Новости берём для: {html.escape(parts[2].strip())}")
+        raw = parts[2].strip().lower()
+        code = NEWS_ALIASES.get(raw)
+        if not code:
+            await message.answer("Возможные страны: "
+                                 + ", ".join(NEWS_COUNTRIES.values()))
+            return
+        await database.set_setting(NEWS_COUNTRY_KEY, code)
+        has = bool((await database.get_daily_news(code) or "").strip())
+        await message.answer(
+            f"✅ Новости берём для: {NEWS_COUNTRIES[code]}\n"
+            + ("Лента загружена." if has
+               else "⚠️ Лента пока пуста — сборщик обновляет её раз в сутки."))
         return
 
     if command == "chat" and len(parts) > 2:
@@ -1051,7 +1097,11 @@ async def digest_command(message: Message, bot: Bot):
     chat, thread = await _target()
     stats = await database.digest_stats()
     now = await _local_now()
-    country = await database.get_setting(NEWS_COUNTRY_KEY) or NEWS_COUNTRY_DEFAULT
+    raw_country = await database.get_setting(NEWS_COUNTRY_KEY) or NEWS_COUNTRY_DEFAULT
+    code = NEWS_ALIASES.get(raw_country.strip().lower(), raw_country)
+    country = NEWS_COUNTRIES.get(code, code)
+    if not (await database.get_daily_news(code) or "").strip():
+        country += " ⚠️ лента пуста"
     target_name = await _chat_name(bot, chat) if chat else ""
     lines = [
         "📤 <b>Дайджест-канал</b>",
