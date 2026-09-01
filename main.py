@@ -26,6 +26,7 @@ import travel_channel
 import travel_spots
 import books_seed
 import tennis_alerts
+import banners
 import inline_kb
 
 
@@ -365,6 +366,9 @@ async def main():
             f"    Проверьте, жива ли база Postgres на Render и совпадает ли DATABASE_URL."
         )
 
+    # Свои картинки разделов — до первого показа меню.
+    await banners.load()
+
     logging.info(await translator.check_key())
 
     # Фоновая задача: подтягивает свежие заголовки при старте, затем каждые 24 часа
@@ -435,6 +439,7 @@ async def main():
         return True
 
     # Приоритеты регистрации роутеров
+    dp.include_router(banners.router)
     dp.include_router(puzzles.router)
     dp.include_router(shop.router)
     dp.include_router(orders.router)
