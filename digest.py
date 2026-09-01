@@ -624,14 +624,18 @@ async def publish_slot(bot: Bot) -> str:
             logging.warning(f"Дайджест: курсы к утру не подоспели: {e}")
         text = "\n\n".join(parts)
         try:
-            await bot.send_message(chat, text[:MAX_MESSAGE],
-                                   message_thread_id=thread,
-                                   parse_mode="Markdown",
-                                   disable_web_page_preview=True)
+            sent = await bot.send_message(chat, text[:MAX_MESSAGE],
+                                          message_thread_id=thread,
+                                          parse_mode="Markdown",
+                                          disable_web_page_preview=True)
         except Exception as e:
             logging.error(f"Дайджест: утренний выпуск не вышел: {e}")
             return f"ошибка: {e}"
         await _mark_slot(slot)
+        # Новости и курсы — самое полезное из всего, что выходит за день,
+        # и до группы они не доходили: дубль звали только из раздельных
+        # публикаций, а утренний выпуск идёт своим путём.
+        await _mirror(bot, chat, sent.message_id, "morning")
         return "утренние новости"
 
     if slot == "tennis":
@@ -846,10 +850,12 @@ async def show_chat_id(message: Message):
     chat_id, thread = message.chat.id, message.message_thread_id
     rows = [[InlineKeyboardButton(
         text=title, callback_data=f"setmirror_{section}_{chat_id}_{thread or 0}")]
-        for section, title in (("genetics", "🧬 Сюда — генетику"),
+        for section, title in (("morning", "📰 Сюда — новости и курсы"),
+                               ("genetics", "🧬 Сюда — генетику"),
                                ("recipes", "🍳 Сюда — кулинарию"),
                                ("travel", "🌍 Сюда — путешествия"),
-                               ("books", "📚 Сюда — книги"))]
+                               ("books", "📚 Сюда — книги"),
+                               ("sport", "🏅 Сюда — спортивные факты"))]
     rows.append([InlineKeyboardButton(
         text="📥 Сюда — вообще всё", callback_data=f"setmirror_all_{chat_id}_{thread or 0}")])
 
@@ -1075,7 +1081,8 @@ async def digest_command(message: Message, bot: Bot):
     lines.append(f"\nДубль в группу: {html.escape(mirror_name)} "
                  f"<code>{mirror or 'нет'}</code>")
     if mirror:
-        for section in list(SECTION_TITLES):
+        shown = list(SECTION_TITLES) + ["morning", "sport"]
+        for section in shown:
             thread = await _mirror_thread(section)
             if thread and not str(thread).isdigit():
                 where = f"⚠️ испорчен номер темы «{html.escape(str(thread))}»"
@@ -1083,7 +1090,9 @@ async def digest_command(message: Message, bot: Bot):
                 where = f"тема {thread}"
             else:
                 where = "общий поток"
-            lines.append(f"  {SECTION_TITLES.get(section, section)} → {where}")
+            names = dict(SECTION_TITLES, morning="📰 Новости и курсы",
+                         sport="🏅 Спортивные факты")
+            lines.append(f"  {names.get(section, section)} → {where}")
 
     ad = await database.get_setting("digest_ad")
     lines.append(f"Реклама: {'есть' if ad else 'нет'}")
