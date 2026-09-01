@@ -181,6 +181,21 @@ VOTE_LABELS = {
 }
 
 
+async def _chat_name(bot: Bot, chat_id) -> str:
+    """Название чата по номеру. Номер владельцу ни о чём не говорит —
+    найти по нему группу в Telegram нельзя, а бот её знает."""
+    try:
+        chat = await bot.get_chat(int(chat_id))
+    except Exception:
+        return ""
+    name = chat.title or chat.full_name or ""
+    if chat.username:
+        name += f" · @{chat.username}"
+    elif getattr(chat, "invite_link", None):
+        name += f" · {chat.invite_link}"
+    return name
+
+
 async def _target():
     """(чат, тема) либо (None, None), если канал ещё не задан"""
     chat = await database.get_setting(TARGET_KEY)
@@ -1031,9 +1046,11 @@ async def digest_command(message: Message, bot: Bot):
     stats = await database.digest_stats()
     now = await _local_now()
     country = await database.get_setting(NEWS_COUNTRY_KEY) or NEWS_COUNTRY_DEFAULT
+    target_name = await _chat_name(bot, chat) if chat else ""
     lines = [
         "📤 <b>Дайджест-канал</b>",
-        f"Цель: <code>{chat or 'не задана'}</code>"
+        f"Цель: {html.escape(target_name) if target_name else ''} "
+        f"<code>{chat or 'не задана'}</code>"
         + (f" · тема {thread}" if thread else ""),
         f"Время у читателя: {now:%H:%M}, новости для: {html.escape(country)}",
         "",
@@ -1054,7 +1071,9 @@ async def digest_command(message: Message, bot: Bot):
                      f"{data['published']} из {data['total']}, осталось {left}")
 
     mirror = await database.get_setting(MIRROR_KEY)
-    lines.append(f"\nДубль в группу: <code>{mirror or 'нет'}</code>")
+    mirror_name = await _chat_name(bot, mirror) if mirror else ""
+    lines.append(f"\nДубль в группу: {html.escape(mirror_name)} "
+                 f"<code>{mirror or 'нет'}</code>")
     if mirror:
         for section in list(SECTION_TITLES):
             thread = await _mirror_thread(section)
