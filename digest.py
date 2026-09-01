@@ -44,6 +44,7 @@ SCHEDULE = [
     ("09:30", "tennis",   None),
     ("11:00", "books",    None),
     ("13:00", "genetics", None),
+    ("14:30", "puzzle",   None),
     ("16:00", "travel",   None),
     ("19:00", "sport",    None),
     ("20:30", "dinner",   "Приятного вечера."),
@@ -690,6 +691,13 @@ async def publish_slot(bot: Bot, force: str = None) -> str:
             await _mark_slot(slot)
         return result
 
+    if slot == "puzzle":
+        import puzzle_daily
+        result = await puzzle_daily.publish(bot, chat, thread)
+        if not result.startswith(("ошибка", "банк", "у задачи")):
+            await _mark_slot(slot)
+        return result
+
     if slot == "sport":
         try:
             n = int(await database.get_setting("digest_sport_n") or 0)
@@ -810,6 +818,14 @@ async def plan_command(message: Message):
             if slot == "tennis":
                 lines.append(f"{at} — расписание матчей <i>(по факту дня)</i>")
                 continue
+            if slot == "puzzle":
+                bank = await database.count_puzzles()
+                used = len(await database.published_puzzle_ids())
+                left = max(0, bank - used)
+                lines.append(f"{at} — задача дня "
+                             f"<i>(в банке {bank}, не выходило {left})</i>")
+                continue
+
             if slot == "sport":
                 try:
                     n = int(await database.get_setting("digest_sport_n") or 0)

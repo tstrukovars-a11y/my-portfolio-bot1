@@ -314,6 +314,22 @@ async def init_db():
             answered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""")
 
+        # 11а. Какая задача когда выходила в канал: по ней считается
+        # статистика дня и отбираются ещё не публиковавшиеся.
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.puzzle_posts (
+            id SERIAL PRIMARY KEY,
+            puzzle_id INTEGER,
+            chat_id BIGINT,
+            message_id BIGINT,
+            published_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+        # Раньше хранили только «верно/неверно». Чтобы показать счётчик на
+        # кнопке, нужен сам выбор.
+        await conn.execute(
+            f"ALTER TABLE {SCHEMA}.puzzle_answers "
+            "ADD COLUMN IF NOT EXISTS choice INTEGER")
+
         # 12. Товары Pro-Shop: пол + тип вещи, карточка со ссылкой на пост-источник
         await conn.execute(f"""
         CREATE TABLE IF NOT EXISTS {SCHEMA}.shop_items (
@@ -2532,18 +2548,148 @@ async def count_puzzles() -> int:
         return 0
 
 
-async def save_puzzle_answer(user_id: int, puzzle_id: int, is_correct: bool):
+async def save_puzzle_answer(user_id: int, puzzle_id: int, is_correct: bool,
+                             choice: int = None):
     """Фиксирует один ответ пользователя"""
     try:
         pool = await get_pool()
         async with pool.acquire() as conn:
             await conn.execute(
-                f"INSERT INTO {SCHEMA}.puzzle_answers (user_id, puzzle_id, is_correct) "
-                "VALUES ($1, $2, $3)",
-                user_id, puzzle_id, is_correct
+                f"INSERT INTO {SCHEMA}.puzzle_answers "
+                "(user_id, puzzle_id, is_correct, choice) "
+                "VALUES ($1, $2, $3, $4)",
+                user_id, puzzle_id, is_correct, choice
             )
     except Exception as e:
         logging.error(f"БД недоступна при записи ответа на головоломку: {e}")
+
+
+# ---------------------------------------------------------------------
+# ЗАДАЧА ДНЯ В КАНАЛЕ
+# ---------------------------------------------------------------------
+
+async def mark_puzzle_published(puzzle_id: int, chat_id: int, message_id: int):
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"INSERT INTO {SCHEMA}.puzzle_posts (puzzle_id, chat_id, message_id) "
+                "VALUES ($1, $2, $3)", puzzle_id, chat_id, message_id)
+    except Exception as e:
+        logging.error(f"БД недоступна при отметке задачи дня: {e}")
+
+
+async def published_puzzle_ids() -> set:
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT DISTINCT puzzle_id FROM {SCHEMA}.puzzle_posts")
+        return {r["puzzle_id"] for r in rows}
+    except Exception as e:
+        logging.error(f"БД недоступна при чтении вышедших задач: {e}")
+        return set()
+
+
+async def oldest_published_puzzle():
+    """Задача, которая выходила давнее всех — её и повторяем"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            return await conn.fetchval(
+                f"SELECT puzzle_id FROM {SCHEMA}.puzzle_posts "
+                "GROUP BY puzzle_id ORDER BY MAX(published_at) LIMIT 1")
+    except Exception as e:
+        logging.error(f"БД недоступна при поиске давней задачи: {e}")
+        return None
+
+
+async def puzzle_answer_of(user_id: int, puzzle_id: int):
+    """1, если человек уже отвечал на эту задачу, иначе None"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            return await conn.fetchval(
+                f"SELECT 1 FROM {SCHEMA}.puzzle_answers "
+                "WHERE user_id = $1 AND puzzle_id = $2 LIMIT 1",
+                user_id, puzzle_id)
+    except Exception as e:
+        logging.error(f"БД недоступна при проверке ответа: {e}")
+        return None
+
+
+async def puzzle_choice_counts(puzzle_id: int) -> dict:
+    """Сколько человек выбрало каждый вариант — для счётчика на кнопке"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT choice, COUNT(*) AS n FROM {SCHEMA}.puzzle_answers "
+                "WHERE puzzle_id = $1 AND choice IS NOT NULL GROUP BY choice",
+                puzzle_id)
+        return {r["choice"]: r["n"] for r in rows}
+    except Exception as e:
+        logging.error(f"БД недоступна при счёте вариантов: {e}")
+        return {}
+
+
+async def last_puzzle_result():
+    """Итог последней вышедшей задачи: сколько ответов и сколько верных"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(f"""
+                SELECT p.puzzle_id,
+                       COUNT(a.id) AS answers,
+                       COUNT(a.id) FILTER (WHERE a.is_correct) AS correct
+                FROM {SCHEMA}.puzzle_posts p
+                LEFT JOIN {SCHEMA}.puzzle_answers a
+                       ON a.puzzle_id = p.puzzle_id
+                      AND a.answered_at >= p.published_at
+                GROUP BY p.id, p.puzzle_id
+                ORDER BY p.published_at DESC LIMIT 1""")
+        return dict(row) if row else None
+    except Exception as e:
+        logging.error(f"БД недоступна при чтении итога задачи: {e}")
+        return None
+
+
+async def puzzle_channel_stats(limit: int = 12):
+    """По каждой вышедшей задаче: вопрос, дата, ответы, верные"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(f"""
+                SELECT p.published_at, q.question,
+                       COUNT(a.id) AS answers,
+                       COUNT(a.id) FILTER (WHERE a.is_correct) AS correct
+                FROM {SCHEMA}.puzzle_posts p
+                JOIN {SCHEMA}.puzzles q ON q.id = p.puzzle_id
+                LEFT JOIN {SCHEMA}.puzzle_answers a
+                       ON a.puzzle_id = p.puzzle_id
+                      AND a.answered_at >= p.published_at
+                GROUP BY p.id, p.published_at, q.question
+                ORDER BY p.published_at DESC LIMIT $1""", limit)
+        return [dict(r) for r in rows]
+    except Exception as e:
+        logging.error(f"БД недоступна при статистике задач: {e}")
+        return []
+
+
+async def puzzle_people() -> dict:
+    """Сколько всего людей отвечало и сколько возвращалось не раз"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(f"""
+                SELECT COUNT(*) AS people,
+                       COUNT(*) FILTER (WHERE n > 1) AS repeat
+                FROM (SELECT user_id, COUNT(DISTINCT puzzle_id) AS n
+                      FROM {SCHEMA}.puzzle_answers GROUP BY user_id) t""")
+        return dict(row) if row else {"people": 0, "repeat": 0}
+    except Exception as e:
+        logging.error(f"БД недоступна при подсчёте участников: {e}")
+        return {"people": 0, "repeat": 0}
 
 
 async def save_puzzle_round(user_id: int, total: int, correct: int):
