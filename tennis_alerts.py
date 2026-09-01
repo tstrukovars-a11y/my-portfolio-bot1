@@ -66,15 +66,54 @@ def _starts(match):
 
 
 async def _today(tour: str):
-    """Матчи, которые ещё не начались или идут"""
+    """Матчи сегодняшнего дня, которые ещё не сыграны.
+
+    Источник отдаёт турнир целиком: на «Шлеме» это три недели и три сотни
+    матчей. Отбора по дате не было, и в расписание лезли матчи недельной
+    давности — «не completed» они потому, что так и не состоялись.
+
+    День считаем по часам канала, а не сервера: Render живёт по UTC.
+    """
+    shift = await _shift()
+    local_now = datetime.now(timezone.utc) + shift
+    today = local_now.date()
+
     data = await tennis_live.fetch_scoreboard(tour)
     out = []
     for match in tennis_live._singles(data, tour):
         if match.get("completed") or not match.get("id"):
             continue
+        when = _starts(match)
+        if not when:
+            continue
+        local = when + shift
+        # Начавшийся три часа назад и до сих пор не закрытый матч —
+        # это брошенная запись источника, а не то, что стоит анонсировать.
+        if local.date() != today or local < local_now - timedelta(hours=3):
+            continue
         out.append(match)
-    out.sort(key=lambda m: (m.get("tournament") or "", m.get("date") or ""))
-    return out[:MAX_MATCHES]
+    out.sort(key=lambda m: m.get("date") or "")
+    return out
+
+
+async def _shift():
+    """Разница между часами канала и UTC.
+
+    Округляем до минуты: разность двух «сейчас» тянет за собой микросекунды,
+    и матч в 18:00 превращался в 17:59.
+    """
+    import digest
+    raw = await digest._local_now() - datetime.now(timezone.utc)
+    return timedelta(minutes=round(raw.total_seconds() / 60))
+
+
+def _matches_word(n: int) -> str:
+    """матч / матча / матчей"""
+    if n % 10 == 1 and n % 100 != 11:
+        return "матч"
+    if n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14):
+        return "матча"
+    return "матчей"
 
 
 def _watch_link(tour: str) -> str:
@@ -87,11 +126,20 @@ def _watch_link(tour: str) -> str:
 
 async def publish_schedule(bot: Bot, chat: int, thread=None) -> str:
     """Один пост на тур со списком матчей и кнопками «напомнить»"""
+    # Часы канала: у источника время в UTC, а в посте оно должно совпадать
+    # с тем, что читатель видит на своих часах.
+    shift = await _shift()
+
     posted = 0
     for tour in ("wta", "atp"):
-        matches = await _today(tour)
-        if not matches:
+        day = await _today(tour)
+        if not day:
             continue
+        # Показываем ближайшие по времени, а выводим сгруппированно по
+        # турниру — иначе заголовки турниров пошли бы вперемешку.
+        matches = sorted(day[:MAX_MATCHES],
+                         key=lambda m: (_event(m), m.get("date") or ""))
+        rest = len(day) - len(matches)
 
         lines = [f"🎾 <b>{tennis_live.TOURS[tour]['title']} — сегодня</b>"]
         rows = []
@@ -104,7 +152,7 @@ async def publish_schedule(bot: Bot, chat: int, thread=None) -> str:
                 current = event
                 lines.append(f"\n<b>{html.escape(event)}</b>" if event else "")
             when = _starts(m)
-            clock = when.strftime("%H:%M") if when else "—"
+            clock = (when + shift).strftime("%H:%M") if when else "—"
             title = _title(m)
             rnd = players_ru.rnd(m.get("round") or "")
             lines.append(f"{clock} · {html.escape(title)}"
@@ -113,6 +161,8 @@ async def publish_schedule(bot: Bot, chat: int, thread=None) -> str:
                 text=f"🔔 {title[:38]}", callback_data=f"tmatch_{tour}_{m['id']}")])
 
         lines.append("")
+        if rest:
+            lines.append(f"И ещё {rest} {_matches_word(rest)} сегодня — в сетке.")
         lines.append("Нажмите на матч — пришлю ссылку на трансляцию к началу, "
                      "в личные сообщения.")
 

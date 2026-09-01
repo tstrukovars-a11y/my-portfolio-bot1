@@ -133,7 +133,11 @@ def _singles(data, tour: str):
                     # привязать.
                     "id": str(match.get("id") or ""),
                     "tournament": tournament,
-                    "round": (match.get("grouping") or {}).get("displayName") or name,
+                    # Стадия лежит в competition.round; раньше читали
+                    # несуществующее match["grouping"] и во всех постах
+                    # вместо круга стояло «Men's Singles».
+                    "round": ((match.get("round") or {}).get("displayName")
+                              or name),
                     "sides": sides,
                     "completed": bool(status.get("completed")),
                     "live": state == "in",
