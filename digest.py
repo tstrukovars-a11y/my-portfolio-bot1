@@ -405,6 +405,10 @@ async def publish_next(bot: Bot, only: str = None, lead: str = None,
             head = REPEAT_LEAD.get(section, head).format(title=short)
         if lead:
             head = lead
+        # Кнопку покупки считаем здесь, до текста: пометка о партнёрской
+        # ссылке идёт в сам пост, а не под ним, и знать о кнопке надо раньше.
+        buy = await _buy_row(section, title)
+
         body = (text or title or "").strip()
         caption = f"{head}\n\n{body}"
         if buy:
@@ -433,7 +437,6 @@ async def publish_next(bot: Bot, only: str = None, lead: str = None,
             if url:
                 rows.append([InlineKeyboardButton(text=ref[1], url=url)])
 
-        buy = await _buy_row(section, title)
         if buy:
             rows.append(buy)
 
@@ -728,7 +731,15 @@ async def scheduler(bot: Bot):
             if result != "не время":
                 logging.info(f"Дайджест: {result}")
         except Exception as e:
-            logging.error(f"Ошибка планировщика дайджеста: {e}")
+            # Ошибка планировщика оседала в логе Render, а туда владелец не
+            # смотрит: канал молчал, и причина молчания была не видна нигде.
+            logging.exception(f"Ошибка планировщика дайджеста: {e}")
+            try:
+                await database.set_setting(
+                    "digest_last_error",
+                    f"планировщик: {type(e).__name__}: {str(e)[:160]}")
+            except Exception:
+                pass
         await asyncio.sleep(300)
 
 
