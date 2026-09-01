@@ -100,6 +100,93 @@ for _en, _ru in _RU.items():
     _BY_SURNAME.setdefault(_en.split()[-1].lower(), _ru)
 
 
+# Турниры. Крупные переводим, остальные оставляем как есть: названия
+# небольших турниров по-русски пишут кто во что горазд, и выдумывать
+# ещё один вариант незачем.
+_EVENTS = {
+    "Australian Open": "Australian Open",
+    "Roland Garros": "Ролан Гаррос",
+    "French Open": "Ролан Гаррос",
+    "Wimbledon": "Уимблдон",
+    "US Open": "US Open",
+    "ATP Finals": "Итоговый турнир ATP",
+    "WTA Finals": "Итоговый турнир WTA",
+    "Davis Cup": "Кубок Дэвиса",
+    "Billie Jean King Cup": "Кубок Билли Джин Кинг",
+    "Indian Wells": "Индиан-Уэллс",
+    "Miami Open": "Майами",
+    "Monte Carlo": "Монте-Карло",
+    "Madrid Open": "Мадрид",
+    "Italian Open": "Рим",
+    "Canadian Open": "Канада",
+    "Cincinnati": "Цинциннати",
+    "Shanghai": "Шанхай",
+    "Paris Masters": "Париж",
+    "Dubai": "Дубай",
+    "Doha": "Доха",
+    "Stuttgart": "Штутгарт",
+    "Halle": "Галле",
+    "Queen\'s Club": "Куинс",
+    "Eastbourne": "Истборн",
+    "Washington": "Вашингтон",
+    "Tokyo": "Токио",
+    "Beijing": "Пекин",
+    "Vienna": "Вена",
+    "Basel": "Базель",
+}
+
+
+def event(name: str) -> str:
+    """Русское название турнира либо исходное"""
+    if not name:
+        return ""
+    clean = name.strip()
+    if clean in _EVENTS:
+        return _EVENTS[clean]
+    for en, ru_name in _EVENTS.items():
+        if en.lower() in clean.lower():
+            return ru_name
+    return clean
+
+
+# Стадии турнира. Источник пишет их по-английски и вперемешку
+# («Quarterfinals», «QF», «Round of 16»), приводим к одному виду.
+_ROUNDS = {
+    "final": "финал",
+    "f": "финал",
+    "semifinal": "1/2 финала",
+    "semifinals": "1/2 финала",
+    "sf": "1/2 финала",
+    "quarterfinal": "1/4 финала",
+    "quarterfinals": "1/4 финала",
+    "qf": "1/4 финала",
+    "round of 16": "1/8 финала",
+    "r16": "1/8 финала",
+    "round of 32": "1/16 финала",
+    "r32": "1/16 финала",
+    "round of 64": "1/32 финала",
+    "r64": "1/32 финала",
+    "round of 128": "1/64 финала",
+    "r128": "1/64 финала",
+    "1st round": "1-й круг",
+    "first round": "1-й круг",
+    "2nd round": "2-й круг",
+    "second round": "2-й круг",
+    "3rd round": "3-й круг",
+    "third round": "3-й круг",
+    "round robin": "групповой этап",
+    "qualifying": "квалификация",
+    "qualification": "квалификация",
+}
+
+
+def rnd(name: str) -> str:
+    """Русское название стадии либо исходное"""
+    if not name:
+        return ""
+    return _ROUNDS.get(name.strip().lower(), name.strip())
+
+
 def ru(name: str) -> str:
     """Русское имя игрока либо исходное, если такого в словаре нет"""
     if not name:

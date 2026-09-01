@@ -21,6 +21,7 @@ from aiogram.exceptions import TelegramForbiddenError
 
 import config
 import database
+import players_ru
 import tennis_live
 
 router = Router()
@@ -31,10 +32,26 @@ LEAD_MINUTES = 10        # за сколько до начала
 
 
 def _title(match) -> str:
-    """Кто с кем — коротко, для кнопки и для напоминания"""
+    """Кто с кем — коротко, для кнопки"""
     sides = match.get("sides") or []
     names = [tennis_live._player(s) for s in sides[:2]]
     return " — ".join(n for n in names if n) or "матч"
+
+
+def _event(match) -> str:
+    """Название турнира по-русски"""
+    return players_ru.event(match.get("tournament") or "")
+
+
+def _full_title(match) -> str:
+    """Матч с турниром — для напоминания в личку.
+
+    В канале турнир стоит заголовком над группой матчей, а в личное
+    сообщение приходит один матч, и без турнира непонятно, о чём речь.
+    """
+    short = _title(match)
+    event = _event(match)
+    return f"{event} · {short}" if event else short
 
 
 def _starts(match):
@@ -56,6 +73,7 @@ async def _today(tour: str):
         if match.get("completed") or not match.get("id"):
             continue
         out.append(match)
+    out.sort(key=lambda m: (m.get("tournament") or "", m.get("date") or ""))
     return out[:MAX_MATCHES]
 
 
@@ -75,19 +93,34 @@ async def publish_schedule(bot: Bot, chat: int, thread=None) -> str:
         if not matches:
             continue
 
-        lines = [f"🎾 <b>{tennis_live.TOURS[tour]['title']} — сегодня</b>", ""]
+        lines = [f"🎾 <b>{tennis_live.TOURS[tour]['title']} — сегодня</b>"]
         rows = []
+        # Матчи сгруппированы по турниру: без него список читается как
+        # набор фамилий, а турнир — половина того, ради чего смотрят.
+        current = None
         for m in matches:
+            event = _event(m)
+            if event != current:
+                current = event
+                lines.append(f"\n<b>{html.escape(event)}</b>" if event else "")
             when = _starts(m)
             clock = when.strftime("%H:%M") if when else "—"
             title = _title(m)
-            lines.append(f"{clock} · {html.escape(title)}")
+            rnd = players_ru.rnd(m.get("round") or "")
+            lines.append(f"{clock} · {html.escape(title)}"
+                         + (f" · <i>{html.escape(rnd)}</i>" if rnd else ""))
             rows.append([InlineKeyboardButton(
                 text=f"🔔 {title[:38]}", callback_data=f"tmatch_{tour}_{m['id']}")])
 
         lines.append("")
         lines.append("Нажмите на матч — пришлю ссылку на трансляцию к началу, "
                      "в личные сообщения.")
+
+        # Сетка — последней строкой кнопок: список матчей на сегодня
+        # отвечает «что смотреть», сетка — «кто с кем дальше».
+        rows.append([InlineKeyboardButton(
+            text=f"🗓 Сетка {tennis_live.TOURS[tour]['title']}",
+            url=tennis_live.TOURS[tour]["draws"])])
 
         try:
             await bot.send_message(chat, "\n".join(lines),
@@ -143,8 +176,10 @@ async def toggle_match(call: CallbackQuery):
     title = _title(match) if match else "матч"
     starts = _starts(match) if match else None
 
+    # В базу — с турниром (это уйдёт в личку), на кнопку — короткое имя.
     added, total = await database.toggle_alert(
-        call.from_user.id, match_id, tour, title, starts)
+        call.from_user.id, match_id, tour,
+        _full_title(match) if match else title, starts)
 
     try:
         await call.message.edit_reply_markup(
@@ -184,8 +219,13 @@ async def alerts_scheduler(bot: Bot):
             for user_id, match_id, tour, title in await database.due_alerts(LEAD_MINUTES):
                 text = (f"🎾 <b>{html.escape(title or 'Матч')}</b>\n\n"
                         f"Начинается. Трансляция и счёт:\n{_watch_link(tour)}")
+                draw = InlineKeyboardMarkup(inline_keyboard=[[
+                    InlineKeyboardButton(
+                        text=f"🗓 Сетка {tennis_live.TOURS[tour]['title']}",
+                        url=tennis_live.TOURS[tour]["draws"])]])
                 try:
                     await bot.send_message(user_id, text,
+                                           reply_markup=draw,
                                            disable_web_page_preview=False)
                 except TelegramForbiddenError:
                     logging.info(f"Напоминание: {user_id} заблокировал бота")
