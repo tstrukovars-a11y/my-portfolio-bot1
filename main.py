@@ -27,6 +27,7 @@ import travel_spots
 import books_seed
 import tennis_alerts
 import banners
+import avatars
 import inline_kb
 
 
@@ -440,6 +441,7 @@ async def main():
 
     # Приоритеты регистрации роутеров
     dp.include_router(banners.router)
+    dp.include_router(avatars.router)
     dp.include_router(puzzles.router)
     dp.include_router(shop.router)
     dp.include_router(orders.router)
