@@ -12,6 +12,7 @@ import html
 import json
 import logging
 import os
+import time
 
 from aiogram import Router, F
 from aiogram.types import (Message, CallbackQuery, InlineKeyboardMarkup,
@@ -19,6 +20,7 @@ from aiogram.types import (Message, CallbackQuery, InlineKeyboardMarkup,
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
+from aiogram.dispatcher.event.bases import SkipHandler
 
 import config
 import database
@@ -358,16 +360,17 @@ async def take_cover(message: Message, state: FSMContext):
 # ПАРТНЁРСКИЕ ССЫЛКИ
 # =====================================================================
 #
-# Магазины дают ссылку на страницу товара, а не шаблон с подстановкой:
-# в кабинете Читай-города вставляешь адрес книги и получаешь короткую
-# ссылку. Значит, у каждой книги ссылка своя, и её надо куда-то класть.
+# Магазин отдаёт ссылку на конкретную страницу товара, а не шаблон, —
+# значит, у каждой книги ссылка своя, и её надо ввести руками.
 #
-# Ввод сделан по одной книге: бот называет книгу, вы присылаете ссылку.
-# Список из тридцати позиций, по которому надо сверяться глазами, на
-# телефоне не заполняется.
+# Состояние ввода живёт в базе, а не в памяти процесса. Первая версия
+# держала «на какой книге остановились» в FSM, и деплой посреди работы
+# стирал его: следующая присланная ссылка не подходила ни одному
+# обработчику, и бот молчал.
 
-class Links(StatesGroup):
-    waiting = State()
+MODE_KEY = "book_links_user"      # кто сейчас вводит
+CURSOR_KEY = "book_links_cursor"  # какую книгу назвали последней
+MODE_MINUTES = 90                 # дольше сессия не живёт
 
 
 def _link_kb() -> InlineKeyboardMarkup:
@@ -376,102 +379,147 @@ def _link_kb() -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="✅ Закончить", callback_data="booklink_stop")]])
 
 
-async def _ask_next(message: Message, state: FSMContext):
-    """Показать следующую книгу без ссылки либо завершить"""
+async def _mode_on(user_id: int):
+    await database.set_setting(
+        MODE_KEY, f"{user_id}:{int(time.time()) + MODE_MINUTES * 60}")
+
+
+async def _mode_off():
+    await database.set_setting(MODE_KEY, "")
+    await database.set_setting(CURSOR_KEY, "")
+
+
+async def _mode_active(user_id: int) -> bool:
+    raw = await database.get_setting(MODE_KEY) or ""
+    try:
+        who, until = raw.split(":")
+        return int(who) == user_id and int(until) > time.time()
+    except ValueError:
+        return False
+
+
+async def _ask_next(message: Message, skip_id: int = None):
+    """Назвать следующую книгу без ссылки либо завершить"""
     left = await database.books_without_link()
-    if not left:
-        await state.clear()
-        stats = await database.books_link_stats()
-        await message.answer(
-            f"✅ Ссылки есть у всех книг: {stats['done']} из {stats['total']}.")
-        return
-
-    skipped = (await state.get_data()).get("skipped") or []
-    upcoming = [b for b in left if b[0] not in skipped]
-    if not upcoming:
-        await state.clear()
-        await message.answer("Готово. Пропущенные книги остались без ссылок — "
-                             "запустите <code>/book_links</code> ещё раз, когда будут.")
-        return
-
-    book_id, title = upcoming[0]
-    await state.update_data(book_id=book_id)
+    if skip_id:
+        left = [b for b in left if b[0] != skip_id]
     stats = await database.books_link_stats()
+
+    if not left:
+        await _mode_off()
+        await message.answer(
+            f"✅ Готово: ссылки есть у {stats['done']} книг из {stats['total']}.")
+        return
+
+    book_id, title = left[0]
+    await database.set_setting(CURSOR_KEY, str(book_id))
     await message.answer(
         f"📚 <b>{html.escape(title)}</b>\n\n"
         f"Пришлите партнёрскую ссылку на эту книгу.\n"
-        f"<i>Осталось {len(upcoming)}, готово {stats['done']} из {stats['total']}</i>",
+        f"<i>Осталось {len(left)}, готово {stats['done']} из {stats['total']}</i>",
         reply_markup=_link_kb())
 
 
 @router.message(F.text.startswith("/book_links"))
-async def book_links(message: Message, state: FSMContext):
+async def book_links(message: Message):
     if not config.is_admin(message.from_user.id):
         return
-    await state.set_state(Links.waiting)
-    await state.update_data(skipped=[])
+    await _mode_on(message.from_user.id)
     stats = await database.books_link_stats()
     await message.answer(
         "🔗 <b>Партнёрские ссылки на книги</b>\n\n"
         f"Сейчас со ссылками: {stats['done']} из {stats['total']}.\n\n"
         "Буду называть книгу — присылайте ссылку из кабинета магазина. "
-        "Можно прислать несколько строк сразу в виде "
-        "<code>номер ссылка</code>.")
-    await _ask_next(message, state)
+        "Можно и списком: строки вида <code>номер ссылка</code>.\n"
+        "Отдельная книга: <code>/book_link 12 https://…</code>")
+    await _ask_next(message)
 
 
-@router.callback_query(F.data == "booklink_skip", Links.waiting)
-async def link_skip(call: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    skipped = list(data.get("skipped") or [])
-    if data.get("book_id"):
-        skipped.append(data["book_id"])
-    await state.update_data(skipped=skipped)
+@router.message(F.text.regexp(r"^/book_link\s"))
+async def book_link_one(message: Message):
+    """Ссылка конкретной книге, без всякой сессии"""
+    if not config.is_admin(message.from_user.id):
+        return
+    parts = message.text.split()
+    if len(parts) < 3 or not parts[1].isdigit():
+        await message.answer("Нужно так: <code>/book_link 12 https://…</code>")
+        return
+    ok = await database.set_book_link(int(parts[1]), parts[2].strip())
+    await message.answer("✅ Сохранила" if ok else "❌ Книга с таким номером не найдена")
+
+
+@router.callback_query(F.data == "booklink_skip")
+async def link_skip(call: CallbackQuery):
+    if not config.is_admin(call.from_user.id):
+        await call.answer()
+        return
+    current = await database.get_setting(CURSOR_KEY)
     await call.answer("Пропустила")
-    await _ask_next(call.message, state)
+    await _ask_next(call.message,
+                    skip_id=int(current) if (current or "").isdigit() else None)
 
 
-@router.callback_query(F.data == "booklink_stop", Links.waiting)
-async def link_stop(call: CallbackQuery, state: FSMContext):
-    await state.clear()
+@router.callback_query(F.data == "booklink_stop")
+async def link_stop(call: CallbackQuery):
+    await _mode_off()
     stats = await database.books_link_stats()
     await call.answer()
     await call.message.answer(
-        f"Остановила. Со ссылками: {stats['done']} из {stats['total']}.")
+        f"Остановила. Со ссылками: {stats['done']} из {stats['total']}.\n"
+        "Продолжить: <code>/book_links</code>")
 
 
-@router.message(Links.waiting, F.text)
-async def link_got(message: Message, state: FSMContext):
-    text = (message.text or "").strip()
-    if text.startswith("/"):
-        await state.clear()
+@router.message(F.text.startswith("http"))
+async def link_got(message: Message):
+    """Голая ссылка от админа во время сессии ввода.
+
+    Фильтр без состояния: сессия хранится в базе и переживает деплой.
+    Вне сессии обработчик пропускает сообщение дальше, чтобы не мешать
+    остальным разделам.
+    """
+    if not config.is_admin(message.from_user.id):
+        raise SkipHandler
+    if not await _mode_active(message.from_user.id):
+        raise SkipHandler
+
+    current = await database.get_setting(CURSOR_KEY)
+    if not (current or "").isdigit():
+        await _ask_next(message)
         return
-
-    # Пачкой: «12 https://…» построчно. Так быстрее, когда ссылки уже
-    # собраны в заметках.
-    bulk = [line.split(maxsplit=1) for line in text.splitlines() if line.strip()]
-    if len(bulk) > 1 or (bulk and bulk[0][0].isdigit() and len(bulk[0]) == 2):
-        saved = 0
-        for parts in bulk:
-            if len(parts) != 2 or not parts[0].isdigit():
-                continue
-            if await database.set_book_link(int(parts[0]), parts[1].strip()):
-                saved += 1
-        await message.answer(f"Сохранила ссылок: {saved}")
-        await _ask_next(message, state)
-        return
-
-    if not text.startswith("http"):
-        await message.answer("Это не похоже на ссылку. Пришлите адрес целиком, "
-                             "начиная с https://")
-        return
-
-    book_id = (await state.get_data()).get("book_id")
-    if not book_id:
-        await _ask_next(message, state)
-        return
-    if await database.set_book_link(book_id, text):
+    if await database.set_book_link(int(current), message.text.strip()):
         await message.answer("✅ Сохранила")
     else:
         await message.answer("❌ Не сохранилась — книга не найдена")
-    await _ask_next(message, state)
+    await _ask_next(message)
+
+
+@router.message(F.text.regexp(r"^\s*\d+\s+https?://"))
+async def links_bulk(message: Message):
+    """Списком: «12 https://…» построчно"""
+    if not config.is_admin(message.from_user.id):
+        raise SkipHandler
+    saved = 0
+    for line in message.text.splitlines():
+        parts = line.split(maxsplit=1)
+        if len(parts) == 2 and parts[0].isdigit():
+            if await database.set_book_link(int(parts[0]), parts[1].strip()):
+                saved += 1
+    stats = await database.books_link_stats()
+    await message.answer(f"Сохранила ссылок: {saved}. "
+                         f"Всего со ссылками: {stats['done']} из {stats['total']}.")
+
+
+@router.message(F.text.startswith("/book_links_show"))
+async def links_show(message: Message):
+    """Что уже введено, а что нет — с номерами для /book_link"""
+    if not config.is_admin(message.from_user.id):
+        return
+    left = await database.books_without_link()
+    stats = await database.books_link_stats()
+    lines = [f"🔗 Со ссылками: {stats['done']} из {stats['total']}", ""]
+    if left:
+        lines.append("<b>Без ссылки:</b>")
+        lines += [f"<code>{i}</code> — {html.escape(t)}" for i, t in left[:40]]
+    else:
+        lines.append("Ссылки есть у всех книг.")
+    await message.answer("\n".join(lines))
