@@ -160,6 +160,22 @@ def _watch_link(tour: str) -> str:
     return tennis_live.TOURS[tour]["schedule"]
 
 
+def _watch_rows(tour: str):
+    """Куда идти смотреть. Порядок неслучайный: сначала свои площадки —
+    они на русском, без подписки и без региональных замков, — потом живой
+    счёт на случай, если трансляции для этого матча нет."""
+    return [
+        [InlineKeyboardButton(text="📺 Канал «Больше»",
+                              url=tennis_live.BOLSHE_URL)],
+        [InlineKeyboardButton(text="📡 Прайм спорт",
+                              url=tennis_live.PRIME_SPORT_URL)],
+        [InlineKeyboardButton(text=f"📊 Счёт вживую · {tennis_live.TOURS[tour]['title']}",
+                              url=_watch_link(tour))],
+        [InlineKeyboardButton(text=f"🗓 Сетка {tennis_live.TOURS[tour]['title']}",
+                              url=tennis_live.TOURS[tour]["draws"])],
+    ]
+
+
 # =====================================================================
 # РАСПИСАНИЕ В КАНАЛ
 # =====================================================================
@@ -392,11 +408,9 @@ async def test_command(message: Message, bot: Bot):
     try:
         await bot.send_message(
             message.from_user.id,
-            f"🎾 <b>{html.escape(title)}</b>\n\n"
-            f"{head}. Трансляция и счёт:\n{_watch_link('atp')}",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                InlineKeyboardButton(text="🗓 Сетка ATP",
-                                     url=tennis_live.TOURS["atp"]["draws"])]]))
+            f"🎾 <b>{html.escape(title)}</b>\n\n{head}. Где смотреть:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=_watch_rows("atp")),
+            disable_web_page_preview=True)
     except TelegramForbiddenError:
         await message.answer("❌ Бот не может вам писать. Нажмите «Старт» в личке.")
         return
@@ -618,15 +632,12 @@ async def alerts_scheduler(bot: Bot):
                 head = ("Начинается" if lead <= 0
                         else f"Начнётся через {lead} {_minutes_word(lead)}")
                 text = (f"🎾 <b>{html.escape(title or 'Матч')}</b>\n\n"
-                        f"{head}. Трансляция и счёт:\n{_watch_link(tour)}")
-                draw = InlineKeyboardMarkup(inline_keyboard=[[
-                    InlineKeyboardButton(
-                        text=f"🗓 Сетка {tennis_live.TOURS[tour]['title']}",
-                        url=tennis_live.TOURS[tour]["draws"])]])
+                        f"{head}. Где смотреть:")
+                markup = InlineKeyboardMarkup(inline_keyboard=_watch_rows(tour))
                 try:
                     await bot.send_message(user_id, text,
-                                           reply_markup=draw,
-                                           disable_web_page_preview=False)
+                                           reply_markup=markup,
+                                           disable_web_page_preview=True)
                 except TelegramForbiddenError:
                     logging.info(f"Напоминание: {user_id} заблокировал бота")
                 except Exception as e:
