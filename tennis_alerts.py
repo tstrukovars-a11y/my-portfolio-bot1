@@ -27,8 +27,13 @@ import tennis_live
 router = Router()
 
 MAX_MATCHES = 8          # больше кнопок под постом не читается
-CHECK_EVERY = 120        # как часто смотреть, кому пора слать
-LEAD_MINUTES = 10        # за сколько до начала
+CHECK_EVERY = 60         # раз в минуту: слать надо в момент начала,
+                         # а не «когда-нибудь в ближайшие две»
+# За сколько минут до начала слать. Ноль — в момент начала: теннисное
+# «начало» и так плавает (корт освобождается, когда доиграет предыдущая
+# пара), поэтому запас впрок только сбивает.
+LEAD_DEFAULT = 0
+LEAD_KEY = "tennis_lead"
 RESULTS_MAX = 12         # длиннее сводку с утра не читают
 
 
@@ -108,6 +113,21 @@ async def _today(tour: str):
     return out
 
 
+async def _lead() -> int:
+    """За сколько минут предупреждать. Меняется без передеплоя."""
+    try:
+        return max(0, min(60, int(await database.get_setting(LEAD_KEY)
+                                  or LEAD_DEFAULT)))
+    except (TypeError, ValueError):
+        return LEAD_DEFAULT
+
+
+def _lead_phrase(lead: int) -> str:
+    if lead <= 0:
+        return "Напишу, когда матч начнётся."
+    return f"Напишу за {lead} мин до начала."
+
+
 async def _shift():
     """Разница между часами канала и UTC.
 
@@ -175,8 +195,8 @@ async def publish_schedule(bot: Bot, chat: int, thread=None) -> str:
         lines.append("")
         if rest:
             lines.append(f"И ещё {rest} {_matches_word(rest)} сегодня — в сетке.")
-        lines.append("Нажмите на матч — пришлю ссылку на трансляцию к началу, "
-                     "в личные сообщения.")
+        lines.append("Нажмите на матч — пришлю ссылку на трансляцию, когда он "
+                     "начнётся, в личные сообщения.")
 
         # Сетка — последней строкой кнопок: список матчей на сегодня
         # отвечает «что смотреть», сетка — «кто с кем дальше».
@@ -279,6 +299,27 @@ async def publish_results(bot: Bot, chat: int, thread=None) -> str:
     return "итоги вчерашнего дня"
 
 
+@router.message(F.text.startswith("/tennis_lead"))
+async def lead_command(message: Message):
+    """За сколько минут предупреждать: 0 — ровно в момент начала"""
+    if not config.is_admin(message.from_user.id):
+        return
+    parts = message.text.split()
+    if len(parts) > 1:
+        try:
+            value = max(0, min(60, int(parts[1])))
+        except ValueError:
+            await message.answer("Нужно число минут: <code>/tennis_lead 0</code>")
+            return
+        await database.set_setting(LEAD_KEY, str(value))
+        await message.answer(f"✅ {_lead_phrase(value)}")
+        return
+    await message.answer(
+        f"Сейчас: {_lead_phrase(await _lead())}\n\n"
+        "Изменить: <code>/tennis_lead 0</code> — в момент начала, "
+        "<code>/tennis_lead 15</code> — за четверть часа.")
+
+
 @router.message(F.text == "/tennis_results")
 async def results_command(message: Message, bot: Bot):
     if not config.is_admin(message.from_user.id):
@@ -344,8 +385,10 @@ async def toggle_match(call: CallbackQuery):
     # показывает состояние.
     if added:
         sent = await _confirm(call.bot, call.from_user.id, tour, match_id, full, starts)
-        await call.answer("🔔 Напомню за 10 минут" if sent else NO_CHAT,
-                          show_alert=not sent)
+        lead = await _lead()
+        await call.answer(
+            ("🔔 " + _lead_phrase(lead)) if sent else NO_CHAT,
+            show_alert=not sent)
     else:
         await call.answer("🔕 Напоминание снято")
 
@@ -353,9 +396,11 @@ async def toggle_match(call: CallbackQuery):
 async def _confirm(bot: Bot, user_id: int, tour: str, match_id: str,
                    title: str, starts) -> bool:
     """Личное подтверждение с кнопкой «выключить». False — бот не пишет."""
-    when = starts.strftime("%H:%M UTC") if starts else "по расписанию"
+    shift = await _shift()
+    when = (starts + shift).strftime("%H:%M") if starts else "по расписанию"
+    lead = await _lead()
     text = (f"🔔 <b>Напоминание включено</b>\n\n{html.escape(title)}\n"
-            f"Начало: {when}. Напишу за {LEAD_MINUTES} минут.")
+            f"Начало в {when}. {_lead_phrase(lead)}")
     markup = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
         text="🔕 Выключить напоминание",
         callback_data=f"tmute_{tour}_{match_id}")]])
@@ -442,9 +487,11 @@ async def alerts_scheduler(bot: Bot):
     await asyncio.sleep(90)
     while True:
         try:
-            for user_id, match_id, tour, title in await database.due_alerts(LEAD_MINUTES):
+            lead = await _lead()
+            for user_id, match_id, tour, title in await database.due_alerts(lead):
+                head = "Начинается" if lead <= 0 else f"Начнётся через {lead} мин"
                 text = (f"🎾 <b>{html.escape(title or 'Матч')}</b>\n\n"
-                        f"Начинается. Трансляция и счёт:\n{_watch_link(tour)}")
+                        f"{head}. Трансляция и счёт:\n{_watch_link(tour)}")
                 draw = InlineKeyboardMarkup(inline_keyboard=[[
                     InlineKeyboardButton(
                         text=f"🗓 Сетка {tennis_live.TOURS[tour]['title']}",
