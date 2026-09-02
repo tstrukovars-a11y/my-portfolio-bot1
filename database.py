@@ -2,7 +2,7 @@ import json
 import os
 import logging
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import asyncpg
 
@@ -686,6 +686,13 @@ async def toggle_alert(user_id: int, match_id: str, tour: str,
     Повторное нажатие снимает: кнопка, которую нельзя отжать, ловит
     случайное касание и потом присылает то, чего не просили.
     """
+    # Колонка starts_at объявлена как TIMESTAMP без пояса, а сюда приходит
+    # время с поясом (UTC от источника). asyncpg на этом падает изнутри —
+    # ошибка глоталась, напоминание не записывалось, и кнопка отвечала
+    # «снято». Приводим к наивному UTC.
+    if starts_at is not None and starts_at.tzinfo is not None:
+        starts_at = starts_at.astimezone(timezone.utc).replace(tzinfo=None)
+
     try:
         pool = await get_pool()
         async with pool.acquire() as conn:
@@ -704,8 +711,24 @@ async def toggle_alert(user_id: int, match_id: str, tour: str,
                 match_id)
         return added, total
     except Exception as e:
+        # None, а не False: «не сохранилось» и «снято» — разные вещи, и
+        # читателю надо сказать правду.
         logging.error(f"Напоминание не сохранено: {e}")
-        return False, 0
+        return None, 0
+
+
+async def drop_alert(user_id: int, match_id: str) -> bool:
+    """Снять напоминание. True — оно было и снято."""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            gone = await conn.execute(
+                f"DELETE FROM {SCHEMA}.match_alerts "
+                "WHERE user_id = $1 AND match_id = $2", user_id, match_id)
+        return gone.endswith("1")
+    except Exception as e:
+        logging.error(f"Напоминание не снято: {e}")
+        return False
 
 
 async def due_alerts(within_minutes: int = 10):

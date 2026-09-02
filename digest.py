@@ -41,6 +41,7 @@ router = Router()
 
 SCHEDULE = [
     ("08:00", "morning",  "Доброе утро. Вот что случилось вчера — коротко и по делу."),
+    ("08:40", "results",  None),
     ("09:30", "tennis",   None),
     ("11:00", "books",    None),
     ("13:00", "genetics", None),
@@ -684,6 +685,13 @@ async def publish_slot(bot: Bot, force: str = None) -> str:
         await _mirror(bot, chat, sent.message_id, "morning")
         return "утренние новости"
 
+    if slot == "results":
+        import tennis_alerts
+        result = await tennis_alerts.publish_results(bot, chat, thread)
+        if not result.startswith("ошибка"):
+            await _mark_slot(slot)
+        return result
+
     if slot == "tennis":
         import tennis_alerts
         result = await tennis_alerts.publish_schedule(bot, chat, thread)
@@ -817,6 +825,9 @@ async def plan_command(message: Message):
                 continue
             if slot == "tennis":
                 lines.append(f"{at} — расписание матчей <i>(по факту дня)</i>")
+                continue
+            if slot == "results":
+                lines.append(f"{at} — итоги вчерашнего дня <i>(по факту)</i>")
                 continue
             if slot == "puzzle":
                 bank = await database.count_puzzles()

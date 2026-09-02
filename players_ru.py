@@ -126,6 +126,34 @@ _RU = {
     "Alex Michelsen": "Алекс Микельсен",
     "Tallon Griekspoor": "Таллон Грикспор",
     "Botic van de Zandschulp": "Ботик ван де Зандсхюлп",
+    "Michael Zheng": "Майкл Чжэн",
+    "Arthur Rinderknech": "Артюр Риндеркнеш",
+    "Jaume Munar": "Жауме Мунар",
+    "Daniel Altmaier": "Даниэль Альтмайер",
+    "Fabian Marozsan": "Фабиан Марожан",
+    "Coleman Wong": "Коулман Вонг",
+    "Marton Fucsovics": "Мартон Фучович",
+    "Yoshihito Nishioka": "Ёсихито Нисиока",
+    "Shintaro Mochizuki": "Синтаро Мотидзуки",
+    "Rinky Hijikata": "Ринки Хиджиката",
+    "Quentin Halys": "Кантен Али",
+
+    # женщины, которых не хватало на «Шлеме»
+    "Taylor Townsend": "Тейлор Таунсенд",
+    "Sorana Cirstea": "Сорана Кырстя",
+    "Diane Parry": "Диан Парри",
+    "Karolina Pliskova": "Каролина Плишкова",
+    "Clara Tauson": "Клара Таусон",
+    "Sloane Stephens": "Слоан Стивенс",
+    "Katerina Siniakova": "Катержина Синякова",
+    "Elisabetta Cocciaretto": "Элизабетта Коччаретто",
+    "Anastasia Zakharova": "Анастасия Захарова",
+    "Maya Joint": "Майя Джойнт",
+    "Ann Li": "Энн Ли",
+    "Antonia Ruzic": "Антония Ружич",
+    "Caty McNally": "Кэти Макналли",
+    "Lucrezia Stefanini": "Лукреция Стефанини",
+    "Xiyu Wang": "Ван Сиюй",
 }
 
 # По фамилии — на случай, когда источник отдаёт имя иначе («I. Swiatek»,
@@ -233,12 +261,94 @@ def rnd(name: str) -> str:
     return _ROUNDS.get(name.strip().lower(), name.strip())
 
 
+# Практическая транслитерация. Словарь покрывает первые сотни рейтинга, но
+# на «Шлеме» в сетке 128 человек, и половина имён оставалась латиницей —
+# в списке из восьми строк получалась каша из двух алфавитов.
+#
+# Правила приблизительные и местами промахиваются (Beaulieu станет
+# «Беаулиеу»). Это осознанный размен: связный русский список читается
+# лучше смеси, а любое имя правится строкой в _RU выше.
+_PAIRS = [
+    ("shch", "щ"), ("sch", "ш"), ("tsch", "ч"),
+    ("cie", "си"), ("ce", "се"), ("ci", "си"), ("cy", "си"),
+    ("sh", "ш"), ("ch", "ч"), ("zh", "ж"), ("kh", "х"), ("gh", "г"),
+    ("ph", "ф"), ("th", "т"), ("ck", "к"), ("qu", "кв"),
+    ("ee", "и"), ("oo", "у"), ("ou", "у"), ("ei", "ей"), ("ie", "ие"),
+    ("ya", "я"), ("ye", "е"), ("yu", "ю"), ("yo", "ё"),
+    ("ju", "ю"), ("ja", "я"), ("je", "е"),
+    ("zs", "ж"), ("cz", "ч"), ("cs", "ч"), ("sz", "с"), ("rz", "ж"),
+    ("a", "а"), ("b", "б"), ("c", "к"), ("d", "д"), ("e", "е"),
+    ("f", "ф"), ("g", "г"), ("h", "х"), ("i", "и"), ("j", "й"),
+    ("k", "к"), ("l", "л"), ("m", "м"), ("n", "н"), ("o", "о"),
+    ("p", "п"), ("q", "к"), ("r", "р"), ("s", "с"), ("t", "т"),
+    ("u", "у"), ("v", "в"), ("w", "в"), ("x", "кс"), ("y", "и"),
+    ("z", "з"),
+]
+_VOWELS = "aeiouy"
+
+
+def _translit_word(word: str) -> str:
+    low = word.lower()
+    out, i = [], 0
+    while i < len(low):
+        # «ts» в начале слова — «ц» (Tsitsipas), внутри — «тс» (Knutson)
+        if low.startswith("ts", i):
+            out.append("ц" if i == 0 else "тс")
+            i += 2
+            continue
+        # «ie» на конце — «и» (Sophie), внутри — «ие» (Gabriela)
+        if low.startswith("ie", i) and i + 2 == len(low):
+            out.append("и")
+            i += 2
+            continue
+        # начальное «e» звучит как «э»: Ella, Emma
+        if i == 0 and low[0] == "e" and not low.startswith("ei"):
+            out.append("э")
+            i += 1
+            continue
+        for src, dst in _PAIRS:
+            if low.startswith(src, i):
+                # «y» после гласной звучит как «й»: Sweeny → Суини,
+                # но Bautista-y → …й.
+                if src == "y" and i and low[i - 1] in _VOWELS:
+                    dst = "й"
+                out.append(dst)
+                i += len(src)
+                break
+        else:
+            out.append(low[i])
+            i += 1
+    word_ru = "".join(out)
+    return word_ru[:1].upper() + word_ru[1:]
+
+
+def translit(name: str) -> str:
+    """Латиница → кириллица по частям имени, с сохранением дефисов"""
+    parts = []
+    for chunk in name.split():
+        parts.append("-".join(_translit_word(w) for w in chunk.split("-")))
+    return " ".join(parts)
+
+
 def ru(name: str) -> str:
-    """Русское имя игрока либо исходное, если такого в словаре нет"""
+    """Русское имя игрока: из словаря, а иначе транслитерацией"""
     if not name:
         return name
     clean = name.strip()
     if clean in _RU:
         return _RU[clean]
-    surname = clean.replace(".", " ").split()[-1].lower() if clean else ""
-    return _BY_SURNAME.get(surname, clean)
+
+    # По фамилии подставляем только тогда, когда имени и нет: «I. Swiatek»
+    # или просто «Swiatek». С полным именем это подменяет человека —
+    # Michael Zheng становился Чжэн Циньвэнь.
+    words = clean.replace(".", ". ").split()
+    initials_only = len(words) < 2 or all(
+        len(w.rstrip(".")) <= 1 for w in words[:-1])
+    if initials_only:
+        surname = words[-1].lower().rstrip(".")
+        if surname in _BY_SURNAME:
+            return _BY_SURNAME[surname]
+    # Уже кириллица — не трогаем
+    if any("а" <= ch.lower() <= "я" or ch in "ёЁ" for ch in clean):
+        return clean
+    return translit(clean)

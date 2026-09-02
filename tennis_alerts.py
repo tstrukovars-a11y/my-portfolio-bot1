@@ -29,6 +29,7 @@ router = Router()
 MAX_MATCHES = 8          # больше кнопок под постом не читается
 CHECK_EVERY = 120        # как часто смотреть, кому пора слать
 LEAD_MINUTES = 10        # за сколько до начала
+RESULTS_MAX = 12         # длиннее сводку с утра не читают
 
 
 def _title(match) -> str:
@@ -91,7 +92,7 @@ async def _today(tour: str):
 
     data = await tennis_live.fetch_scoreboard(tour)
     out = []
-    for match in tennis_live._singles(data, tour):
+    for match in tennis_live._singles(data, tour, big_only=True):
         if match.get("completed") or not match.get("id"):
             continue
         when = _starts(match)
@@ -207,6 +208,89 @@ async def schedule_command(message: Message, bot: Bot):
     await message.answer(f"🎾 {await publish_schedule(bot, chat, thread)}")
 
 
+async def _finished(tour: str, day):
+    """Сыгранные матчи названного дня, по часам канала"""
+    shift = await _shift()
+    data = await tennis_live.fetch_scoreboard(tour)
+    out = []
+    for match in tennis_live._singles(data, tour, big_only=True):
+        if not match.get("completed"):
+            continue
+        when = _starts(match)
+        if not when or (when + shift).date() != day:
+            continue
+        out.append(match)
+    out.sort(key=lambda m: m.get("date") or "")
+    return out
+
+
+def _result_line(match) -> str:
+    """Победитель жирным, счёт в конце — как в газетной таблице"""
+    sides = sorted(match.get("sides") or [], key=lambda s: not s.get("winner"))
+    if len(sides) < 2:
+        return ""
+    win, lose = sides[0], sides[1]
+    score = tennis_live._score(win, lose)
+    pair = (f"<b>{html.escape(tennis_live._named(win))}</b> — "
+            f"{html.escape(tennis_live._named(lose))}")
+    return pair + (f"  <code>{html.escape(score)}</code>" if score else "")
+
+
+async def publish_results(bot: Bot, chat: int, thread=None) -> str:
+    """Итоги вчерашнего дня — утром, пока результаты ещё новость"""
+    shift = await _shift()
+    yesterday = (datetime.now(timezone.utc) + shift - timedelta(days=1)).date()
+
+    blocks = []
+    for tour in ("wta", "atp"):
+        played = await _finished(tour, yesterday)
+        if not played:
+            continue
+        lines = [f"<b>{tennis_live.TOURS[tour]['title']}</b>"]
+        current = None
+        for m in played[:RESULTS_MAX]:
+            event = _event(m)
+            if event != current:
+                current = event
+                lines.append(f"<i>{html.escape(event)}</i>")
+            line = _result_line(m)
+            if line:
+                lines.append(line)
+        rest = len(played) - min(len(played), RESULTS_MAX)
+        if rest:
+            lines.append(f"<i>…и ещё {rest} {_matches_word(rest)}</i>")
+        blocks.append("\n".join(lines))
+
+    if not blocks:
+        return "вчера крупных матчей не было"
+
+    head = f"🎾 <b>Вчера на кортах — {yesterday.strftime('%d.%m')}</b>"
+    text = head + "\n\n" + "\n\n".join(blocks)
+    rows = [[InlineKeyboardButton(
+        text=f"🗓 Сетка {tennis_live.TOURS[tour]['title']}",
+        url=tennis_live.TOURS[tour]["draws"])] for tour in ("wta", "atp")]
+    try:
+        await bot.send_message(chat, text[:4096],
+                               message_thread_id=thread,
+                               reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+    except Exception as e:
+        logging.error(f"Сводка результатов не вышла: {e}")
+        return f"ошибка: {e}"
+    return "итоги вчерашнего дня"
+
+
+@router.message(F.text == "/tennis_results")
+async def results_command(message: Message, bot: Bot):
+    if not config.is_admin(message.from_user.id):
+        return
+    import digest
+    chat, thread = await digest._target()
+    if not chat:
+        await message.answer("❌ Канал не задан: <code>/digest chat -100…</code>")
+        return
+    await message.answer(f"🎾 {await publish_results(bot, chat, thread)}")
+
+
 # =====================================================================
 # ЛИЧНАЯ ОТМЕТКА
 # =====================================================================
@@ -238,9 +322,14 @@ async def toggle_match(call: CallbackQuery):
     starts = _starts(match) if match else None
 
     # В базу — с турниром (это уйдёт в личку), на кнопку — короткое имя.
+    full = _full_title(match) if match else title
     added, total = await database.toggle_alert(
-        call.from_user.id, match_id, tour,
-        _full_title(match) if match else title, starts)
+        call.from_user.id, match_id, tour, full, starts)
+
+    if added is None:
+        await call.answer("Не получилось сохранить. Нажмите ещё раз.",
+                          show_alert=True)
+        return
 
     try:
         await call.message.edit_reply_markup(
@@ -248,7 +337,83 @@ async def toggle_match(call: CallbackQuery):
                                      f"tmatch_{tour}_{match_id}", title, total))
     except Exception:
         pass
-    await call.answer("Напомню к началу" if added else "Напоминание снято")
+
+    # Кнопка в канале одна на всех: Telegram не умеет показывать разным
+    # читателям разные подписи. Личный переключатель поэтому уезжает в
+    # личку — там клавиатура своя у каждого, и колокольчик честно
+    # показывает состояние.
+    if added:
+        sent = await _confirm(call.bot, call.from_user.id, tour, match_id, full, starts)
+        await call.answer("🔔 Напомню за 10 минут" if sent else NO_CHAT,
+                          show_alert=not sent)
+    else:
+        await call.answer("🔕 Напоминание снято")
+
+
+async def _confirm(bot: Bot, user_id: int, tour: str, match_id: str,
+                   title: str, starts) -> bool:
+    """Личное подтверждение с кнопкой «выключить». False — бот не пишет."""
+    when = starts.strftime("%H:%M UTC") if starts else "по расписанию"
+    text = (f"🔔 <b>Напоминание включено</b>\n\n{html.escape(title)}\n"
+            f"Начало: {when}. Напишу за {LEAD_MINUTES} минут.")
+    markup = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
+        text="🔕 Выключить напоминание",
+        callback_data=f"tmute_{tour}_{match_id}")]])
+    try:
+        await bot.send_message(user_id, text, reply_markup=markup)
+        return True
+    except TelegramForbiddenError:
+        return False
+    except Exception as e:
+        logging.warning(f"Подтверждение {user_id} не ушло: {e}")
+        return False
+
+
+@router.callback_query(F.data.startswith("tmute_"))
+async def mute_match(call: CallbackQuery):
+    """Выключение из личного сообщения — колокольчик меняется на месте"""
+    try:
+        _, tour, match_id = call.data.split("_", 2)
+    except ValueError:
+        await call.answer()
+        return
+    off = await database.drop_alert(call.from_user.id, match_id)
+    try:
+        await call.message.edit_reply_markup(
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(
+                    text="🔔 Включить обратно",
+                    callback_data=f"tback_{tour}_{match_id}")]]))
+    except Exception:
+        pass
+    await call.answer("🔕 Выключено" if off else "Уже было выключено")
+
+
+@router.callback_query(F.data.startswith("tback_"))
+async def unmute_match(call: CallbackQuery):
+    try:
+        _, tour, match_id = call.data.split("_", 2)
+    except ValueError:
+        await call.answer()
+        return
+    matches = await _today(tour)
+    match = next((m for m in matches if m["id"] == match_id), None)
+    added, _ = await database.toggle_alert(
+        call.from_user.id, match_id, tour,
+        _full_title(match) if match else "матч",
+        _starts(match) if match else None)
+    if added is None:
+        await call.answer("Не получилось. Нажмите ещё раз.", show_alert=True)
+        return
+    try:
+        await call.message.edit_reply_markup(
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(
+                    text="🔕 Выключить напоминание",
+                    callback_data=f"tmute_{tour}_{match_id}")]]))
+    except Exception:
+        pass
+    await call.answer("🔔 Включено")
 
 
 def _with_count(markup, data: str, title: str, total: int):

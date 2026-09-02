@@ -55,6 +55,28 @@ CACHE_TTL = 60           # секунд. Время старта у источн
                          # поэтому кэш короткий — иначе бот показывает вчерашний прогноз
 MAX_MATCHES = 12         # длиннее списка сообщение становится нечитаемым
 
+# Уровень турнира. ESPN помечает «Шлемы» полем major, а тысячники — ничем,
+# поэтому их приходится знать по названиям. Список короткий: их всего
+# девять у мужчин и десять у женщин, и меняется он раз в несколько лет.
+BIG_EVENTS = (
+    "indian wells", "bnp paribas", "miami", "monte-carlo", "monte carlo",
+    "madrid", "rome", "internazionali", "italian open",
+    "canadian", "national bank", "toronto", "montreal", "rogers cup",
+    "cincinnati", "western & southern", "shanghai", "paris masters",
+    "rolex paris", "atp finals", "wta finals", "nitto",
+    "doha", "qatar", "dubai", "beijing", "china open", "wuhan",
+    "guadalajara", "united cup", "davis cup", "billie jean king",
+)
+
+
+def is_big(event) -> bool:
+    """«Шлем», мастерс или тысячник — то, ради чего включают телевизор"""
+    if (event or {}).get("major"):
+        return True
+    name = ((event or {}).get("name") or "").lower()
+    return any(key in name for key in BIG_EVENTS)
+
+
 _cache = {tour: {"at": 0.0, "data": None} for tour in TOURS}
 
 
@@ -129,10 +151,17 @@ def _score(left, right) -> str:
     return " ".join(f"{x}-{y}" for x, y in zip(a, b))
 
 
-def _singles(data, tour: str):
-    """Матчи одиночного разряда нужного тура с турниром и раундом"""
+def _singles(data, tour: str, big_only: bool = False):
+    """Матчи одиночного разряда нужного тура с турниром и раундом.
+
+    big_only оставляет только «Шлемы» и тысячники: в календаре недели
+    обычно идут ещё два-три турнира поменьше, и без отбора лента канала
+    состоит из фамилий, которых никто не знает.
+    """
     result = []
     for event in (data or {}).get("events", []):
+        if big_only and not is_big(event):
+            continue
         tournament = event.get("name") or ""
         for grouping in event.get("groupings", []):
             name = ((grouping.get("grouping") or {}).get("displayName") or "")
