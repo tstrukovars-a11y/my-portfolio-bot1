@@ -1156,19 +1156,27 @@ async def digest_command(message: Message, bot: Bot):
     if not await _news_text(code):
         country += " ⚠️ лента пуста"
     target_name = await _chat_name(bot, chat) if chat else ""
+    bot_name = (await database.get_setting(BOT_KEY) or "").lstrip("@")
     lines = [
         "📤 <b>Дайджест-канал</b>",
         f"Цель: {html.escape(target_name) if target_name else ''} "
         f"<code>{chat or 'не задана'}</code>"
         + (f" · тема {thread}" if thread else ""),
         f"Время у читателя: {now:%H:%M}, новости для: {html.escape(country)}",
+        # Имя бота — основа всех ссылок из канала: по ним читатель, который
+        # бота никогда не открывал, попадает внутрь одним нажатием.
+        ("Ссылки из канала ведут на: @" + html.escape(bot_name)) if bot_name
+        else "⚠️ Имя бота неизвестно — кнопки «напомнить» и «заказать» "
+             "покажут текст вместо перехода в бота. Обычно чинится "
+             "перезапуском сервиса.",
         "",
         "<b>Сетка дня</b>",
     ]
     today = now.strftime("%Y-%m-%d")
     for at, slot, _ in SCHEDULE:
         done = await database.get_setting(f"digest_slot_{slot}") == today
-        titles = {"morning": "новости и курсы", "tennis": "расписание тенниса",
+        titles = {"morning": "новости и курсы", "results": "итоги вчерашних матчей",
+                  "puzzle": "задача дня", "tennis": "расписание тенниса",
                   "books": "деловая литература", "genetics": "наука",
                   "travel": "путешествия", "sport": "спортивный факт",
                   "dinner": "рецепт на ужин"}
