@@ -329,6 +329,53 @@ async def lead_command(message: Message):
         "<code>/tennis_lead 15</code> — за четверть часа.")
 
 
+@router.message(F.text.startswith("/tennis_test"))
+async def test_command(message: Message, bot: Bot):
+    """Проверка напоминаний целиком, а не на словах.
+
+    Сначала присылает образец сразу — видно, как выглядит. Затем кладёт в
+    базу настоящую запись на ближайшую минуту: её подберёт тот же
+    планировщик, что и боевые. Если сломается запись — команда скажет об
+    этом сразу, а не промолчит, как было.
+    """
+    if not config.is_admin(message.from_user.id):
+        return
+
+    lead = await _lead()
+    title = "Проверка · US Open — тестовый матч"
+
+    # 1. Образец прямо сейчас
+    head = "Начинается" if lead <= 0 else f"Начнётся через {lead} {_minutes_word(lead)}"
+    try:
+        await bot.send_message(
+            message.from_user.id,
+            f"🎾 <b>{html.escape(title)}</b>\n\n"
+            f"{head}. Трансляция и счёт:\n{_watch_link('atp')}",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="🗓 Сетка ATP",
+                                     url=tennis_live.TOURS["atp"]["draws"])]]))
+    except TelegramForbiddenError:
+        await message.answer("❌ Бот не может вам писать. Нажмите «Старт» в личке.")
+        return
+
+    # 2. Настоящая запись — через минуту её должен взять планировщик
+    match_id = f"test-{int(datetime.now(timezone.utc).timestamp())}"
+    starts = datetime.now(timezone.utc) + timedelta(minutes=lead + 1)
+    added, _ = await database.toggle_alert(
+        message.from_user.id, match_id, "atp", title, starts)
+
+    if added is None:
+        await message.answer(
+            "☝️ Образец пришёл, но <b>запись в базу не удалась</b> — "
+            "значит, боевые напоминания тоже не сохранятся. Причина в "
+            "логах Render по слову «Напоминание не сохранено».")
+        return
+    await message.answer(
+        "✅ Образец отправлен.\n"
+        f"И поставлено настоящее напоминание: планировщик должен прислать "
+        f"его в течение минуты. Придёт — значит, весь путь рабочий.")
+
+
 @router.message(F.text == "/tennis_results")
 async def results_command(message: Message, bot: Bot):
     if not config.is_admin(message.from_user.id):
