@@ -717,6 +717,32 @@ async def toggle_alert(user_id: int, match_id: str, tour: str,
         return None, 0
 
 
+async def ensure_alert(user_id: int, match_id: str, tour: str,
+                       title: str, starts_at):
+    """Включить напоминание, не выключая уже включённое.
+
+    toggle_alert здесь не годится: холодный читатель нажимает кнопку в
+    канале (запись создаётся), а потом открывает бота по ссылке — второй
+    вызов снял бы то, ради чего он пришёл.
+    """
+    if starts_at is not None and starts_at.tzinfo is not None:
+        starts_at = starts_at.astimezone(timezone.utc).replace(tzinfo=None)
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"INSERT INTO {SCHEMA}.match_alerts "
+                "(user_id, match_id, tour, title, starts_at) "
+                "VALUES ($1, $2, $3, $4, $5) "
+                "ON CONFLICT (user_id, match_id) DO UPDATE "
+                "SET starts_at = EXCLUDED.starts_at, sent = FALSE",
+                user_id, match_id, tour, title, starts_at)
+        return True
+    except Exception as e:
+        logging.error(f"Напоминание не включено: {e}")
+        return None
+
+
 async def drop_alert(user_id: int, match_id: str) -> bool:
     """Снять напоминание. True — оно было и снято."""
     try:

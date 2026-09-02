@@ -18,6 +18,7 @@ from aiogram import Router, F, Bot
 from aiogram.types import (Message, CallbackQuery, InlineKeyboardMarkup,
                            InlineKeyboardButton)
 from aiogram.exceptions import TelegramForbiddenError
+from aiogram.dispatcher.event.bases import SkipHandler
 
 import config
 import database
@@ -329,6 +330,48 @@ async def lead_command(message: Message):
         "<code>/tennis_lead 15</code> — за четверть часа.")
 
 
+@router.message(F.text.regexp(r"^/start\s+tm-"))
+async def start_with_match(message: Message, bot: Bot):
+    """Пришёл из канала по кнопке напоминания: дооформляем подписку на матч.
+
+    Этот роутер зарегистрирован раньше общего /start, поэтому в конце
+    обязательно передаём ход дальше — иначе новый человек не увидит ни
+    приветствия, ни выбора языка, а он тут первый раз.
+    """
+    await _handle_match_start(message, bot)
+    raise SkipHandler
+
+
+async def _handle_match_start(message: Message, bot: Bot):
+    payload = message.text.split(maxsplit=1)[1].strip()
+    try:
+        _, tour, match_id = payload.split("-", 2)
+    except ValueError:
+        return
+    if tour not in tennis_live.TOURS:
+        return
+
+    if not (config.is_admin(message.from_user.id)
+            or await database.check_subscription(message.from_user.id)):
+        await message.answer(NO_SUB)
+        return
+
+    matches = await _today(tour)
+    match = next((m for m in matches if m["id"] == match_id), None)
+    if not match:
+        await message.answer("Этот матч уже начался или завершился.")
+        return
+
+    ok = await database.ensure_alert(
+        message.from_user.id, match_id, tour, _full_title(match), _starts(match))
+    if ok is None:
+        await message.answer("Не получилось сохранить напоминание. "
+                             "Попробуйте ещё раз через минуту.")
+        return
+    await _confirm(bot, message.from_user.id, tour, match_id,
+                   _full_title(match), _starts(match))
+
+
 @router.message(F.text.startswith("/tennis_test"))
 async def test_command(message: Message, bot: Bot):
     """Проверка напоминаний целиком, а не на словах.
@@ -398,6 +441,29 @@ NO_CHAT = ("Чтобы получать напоминания, откройте
            "иначе я не смогу вам написать.")
 
 
+async def _deep_link(payload: str) -> str:
+    """Ссылка, открывающая бота с параметром. Пусто — имя бота не задано."""
+    username = await database.get_setting("bot_username")
+    if not username:
+        return ""
+    return f"https://t.me/{username.lstrip('@')}?start={payload}"
+
+
+async def _open_bot(call: CallbackQuery, payload: str, fallback: str) -> None:
+    """Открыть бота у нажавшего.
+
+    Читатель «Акцента» пришёл из репоста или поиска и о существовании бота
+    не знает — предложение «нажмите Старт» для него бессмысленно. Telegram
+    разрешает ответить на нажатие ссылкой на самого себя: человек одним
+    касанием попадает в бота, и /start приходит уже с параметром.
+    """
+    url = await _deep_link(payload)
+    if url:
+        await call.answer(url=url)
+    else:
+        await call.answer(fallback, show_alert=True)
+
+
 @router.callback_query(F.data.startswith("tmatch_"))
 async def toggle_match(call: CallbackQuery):
     try:
@@ -410,7 +476,8 @@ async def toggle_match(call: CallbackQuery):
     # платят только за напоминание. Так пост работает и как витрина.
     if not (config.is_admin(call.from_user.id)
             or await database.check_subscription(call.from_user.id)):
-        await call.answer(NO_SUB, show_alert=True)
+        # Не «у вас нет подписки», а сразу экран, где её оформляют.
+        await _open_bot(call, "sport_tennis", NO_SUB)
         return
 
     matches = await _today(tour)
@@ -441,10 +508,13 @@ async def toggle_match(call: CallbackQuery):
     # показывает состояние.
     if added:
         sent = await _confirm(call.bot, call.from_user.id, tour, match_id, full, starts)
-        lead = await _lead()
-        await call.answer(
-            ("🔔 " + _lead_phrase(lead)) if sent else NO_CHAT,
-            show_alert=not sent)
+        if sent:
+            lead = await _lead()
+            await call.answer("🔔 " + _lead_phrase(lead))
+        else:
+            # Бот не может написать первым: открываем его нажатием, а матч
+            # передаём параметром — подписка доедет сама.
+            await _open_bot(call, f"tm-{tour}-{match_id}", NO_CHAT)
     else:
         await call.answer("🔕 Напоминание снято")
 
@@ -499,7 +569,7 @@ async def unmute_match(call: CallbackQuery):
         return
     matches = await _today(tour)
     match = next((m for m in matches if m["id"] == match_id), None)
-    added, _ = await database.toggle_alert(
+    added = await database.ensure_alert(
         call.from_user.id, match_id, tour,
         _full_title(match) if match else "матч",
         _starts(match) if match else None)
