@@ -370,6 +370,7 @@ async def take_cover(message: Message, state: FSMContext):
 
 MODE_KEY = "book_links_user"      # кто сейчас вводит
 CURSOR_KEY = "book_links_cursor"  # какую книгу назвали последней
+SKIP_KEY = "book_links_skipped"   # что пропустили за эту сессию
 MODE_MINUTES = 90                 # дольше сессия не живёт
 
 
@@ -387,6 +388,24 @@ async def _mode_on(user_id: int):
 async def _mode_off():
     await database.set_setting(MODE_KEY, "")
     await database.set_setting(CURSOR_KEY, "")
+    await database.set_setting(SKIP_KEY, "")
+
+
+async def _skipped() -> set:
+    raw = await database.get_setting(SKIP_KEY) or ""
+    return {int(x) for x in raw.split(",") if x.strip().isdigit()}
+
+
+async def _skip_add(book_id: int):
+    """Пропуски копятся за сессию.
+
+    Раньше исключалась только текущая книга, и на двух оставшихся бот
+    ходил по кругу: пропустил первую — показал вторую, пропустил вторую —
+    снова первую.
+    """
+    ids = await _skipped()
+    ids.add(book_id)
+    await database.set_setting(SKIP_KEY, ",".join(str(i) for i in sorted(ids)))
 
 
 async def _mode_active(user_id: int) -> bool:
@@ -398,17 +417,22 @@ async def _mode_active(user_id: int) -> bool:
         return False
 
 
-async def _ask_next(message: Message, skip_id: int = None):
+async def _ask_next(message: Message):
     """Назвать следующую книгу без ссылки либо завершить"""
-    left = await database.books_without_link()
-    if skip_id:
-        left = [b for b in left if b[0] != skip_id]
+    all_left = await database.books_without_link()
+    skipped = await _skipped()
+    left = [b for b in all_left if b[0] not in skipped]
     stats = await database.books_link_stats()
 
     if not left:
         await _mode_off()
+        tail = ""
+        if all_left:
+            tail = (f"\n\nПропущено книг: {len(all_left)}. Вернуться к ним — "
+                    f"<code>/book_links</code>, посмотреть номера — "
+                    f"<code>/book_links_show</code>.")
         await message.answer(
-            f"✅ Готово: ссылки есть у {stats['done']} книг из {stats['total']}.")
+            f"✅ Готово: ссылки есть у {stats['done']} книг из {stats['total']}.{tail}")
         return
 
     book_id, title = left[0]
@@ -425,6 +449,7 @@ async def book_links(message: Message):
     if not config.is_admin(message.from_user.id):
         return
     await _mode_on(message.from_user.id)
+    await database.set_setting(SKIP_KEY, "")
     stats = await database.books_link_stats()
     await message.answer(
         "🔗 <b>Партнёрские ссылки на книги</b>\n\n"
@@ -453,14 +478,25 @@ async def link_skip(call: CallbackQuery):
     if not config.is_admin(call.from_user.id):
         await call.answer()
         return
+    # Кнопки под старыми сообщениями остаются нажимаемыми и после конца
+    # сессии — без этой проверки нажатие начинало новый круг.
+    if not await _mode_active(call.from_user.id):
+        await call.answer("Сессия закончена. Начать заново: /book_links",
+                          show_alert=True)
+        return
+
     current = await database.get_setting(CURSOR_KEY)
+    if (current or "").isdigit():
+        await _skip_add(int(current))
     await call.answer("Пропустила")
-    await _ask_next(call.message,
-                    skip_id=int(current) if (current or "").isdigit() else None)
+    await _ask_next(call.message)
 
 
 @router.callback_query(F.data == "booklink_stop")
 async def link_stop(call: CallbackQuery):
+    if not config.is_admin(call.from_user.id):
+        await call.answer()
+        return
     await _mode_off()
     stats = await database.books_link_stats()
     await call.answer()
