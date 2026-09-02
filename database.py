@@ -238,6 +238,11 @@ async def init_db():
         await conn.execute(
             f"ALTER TABLE {SCHEMA}.books ADD COLUMN IF NOT EXISTS channel_msg_id BIGINT")
 
+        # Партнёрская ссылка у каждой книги своя: магазины дают ссылку на
+        # страницу товара, а не шаблон с подстановкой названия.
+        await conn.execute(
+            f"ALTER TABLE {SCHEMA}.books ADD COLUMN IF NOT EXISTS buy_url TEXT")
+
         # 4. Таблица для логов платежей
         await conn.execute(f"""
         CREATE TABLE IF NOT EXISTS {SCHEMA}.payments (
@@ -2440,6 +2445,67 @@ async def book_counts() -> dict:
     except Exception as e:
         logging.error(f"Счётчики книг недоступны: {e}")
         return {}
+
+
+async def set_book_link(book_id: int, url: str) -> bool:
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            done = await conn.execute(
+                f"UPDATE {SCHEMA}.books SET buy_url = $1 WHERE id = $2",
+                url or None, book_id)
+        return done.endswith("1")
+    except Exception as e:
+        logging.error(f"Ссылка на книгу не сохранена: {e}")
+        return False
+
+
+async def get_book_link(title: str):
+    """Ссылка книги по её первой строке — так её знает публикатор"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            return await conn.fetchval(
+                f"SELECT buy_url FROM {SCHEMA}.books "
+                "WHERE buy_url IS NOT NULL AND text_content LIKE $1 LIMIT 1",
+                f"{title[:60]}%")
+    except Exception as e:
+        logging.error(f"Ссылка книги недоступна: {e}")
+        return None
+
+
+async def books_without_link(category: str = None):
+    """(id, название) книг, у которых ссылки ещё нет"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            if category:
+                rows = await conn.fetch(
+                    f"SELECT id, text_content FROM {SCHEMA}.books "
+                    "WHERE category = $1 AND (buy_url IS NULL OR buy_url = '') "
+                    "ORDER BY id", category)
+            else:
+                rows = await conn.fetch(
+                    f"SELECT id, text_content FROM {SCHEMA}.books "
+                    "WHERE buy_url IS NULL OR buy_url = '' ORDER BY id")
+        return [(r["id"], (r["text_content"] or "").split("\n")[0][:70]) for r in rows]
+    except Exception as e:
+        logging.error(f"Книги без ссылок недоступны: {e}")
+        return []
+
+
+async def books_link_stats() -> dict:
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                f"SELECT COUNT(*) AS total, "
+                f"COUNT(*) FILTER (WHERE buy_url IS NOT NULL AND buy_url <> '') AS done "
+                f"FROM {SCHEMA}.books")
+        return dict(row) if row else {"total": 0, "done": 0}
+    except Exception as e:
+        logging.error(f"Счёт ссылок недоступен: {e}")
+        return {"total": 0, "done": 0}
 
 
 async def book_titles(category: str):

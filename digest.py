@@ -98,6 +98,13 @@ def _search_query(title: str) -> str:
 async def _buy_row(section: str, title: str):
     if section != "books":
         return None
+
+    # Своя ссылка книги важнее шаблона: магазин отдаёт ссылку на страницу
+    # товара, и она ведёт точно туда, а поиск по названию — примерно.
+    own = await database.get_book_link(title)
+    if own:
+        return [InlineKeyboardButton(text="🛒 Купить", url=own)]
+
     template = await database.get_setting(SHOP_KEY)
     if not template or "{q}" not in template:
         return None

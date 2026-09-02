@@ -352,3 +352,126 @@ async def take_cover(message: Message, state: FSMContext):
         await message.answer("⚠️ Не сохранилось. Пришлите ещё раз.")
         return
     await _ask_cover(message, state, prefix=f"✅ {html.escape(data.get('title', ''))}\n\n")
+
+
+# =====================================================================
+# ПАРТНЁРСКИЕ ССЫЛКИ
+# =====================================================================
+#
+# Магазины дают ссылку на страницу товара, а не шаблон с подстановкой:
+# в кабинете Читай-города вставляешь адрес книги и получаешь короткую
+# ссылку. Значит, у каждой книги ссылка своя, и её надо куда-то класть.
+#
+# Ввод сделан по одной книге: бот называет книгу, вы присылаете ссылку.
+# Список из тридцати позиций, по которому надо сверяться глазами, на
+# телефоне не заполняется.
+
+class Links(StatesGroup):
+    waiting = State()
+
+
+def _link_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="⏭ Пропустить", callback_data="booklink_skip"),
+        InlineKeyboardButton(text="✅ Закончить", callback_data="booklink_stop")]])
+
+
+async def _ask_next(message: Message, state: FSMContext):
+    """Показать следующую книгу без ссылки либо завершить"""
+    left = await database.books_without_link()
+    if not left:
+        await state.clear()
+        stats = await database.books_link_stats()
+        await message.answer(
+            f"✅ Ссылки есть у всех книг: {stats['done']} из {stats['total']}.")
+        return
+
+    skipped = (await state.get_data()).get("skipped") or []
+    upcoming = [b for b in left if b[0] not in skipped]
+    if not upcoming:
+        await state.clear()
+        await message.answer("Готово. Пропущенные книги остались без ссылок — "
+                             "запустите <code>/book_links</code> ещё раз, когда будут.")
+        return
+
+    book_id, title = upcoming[0]
+    await state.update_data(book_id=book_id)
+    stats = await database.books_link_stats()
+    await message.answer(
+        f"📚 <b>{html.escape(title)}</b>\n\n"
+        f"Пришлите партнёрскую ссылку на эту книгу.\n"
+        f"<i>Осталось {len(upcoming)}, готово {stats['done']} из {stats['total']}</i>",
+        reply_markup=_link_kb())
+
+
+@router.message(F.text.startswith("/book_links"))
+async def book_links(message: Message, state: FSMContext):
+    if not config.is_admin(message.from_user.id):
+        return
+    await state.set_state(Links.waiting)
+    await state.update_data(skipped=[])
+    stats = await database.books_link_stats()
+    await message.answer(
+        "🔗 <b>Партнёрские ссылки на книги</b>\n\n"
+        f"Сейчас со ссылками: {stats['done']} из {stats['total']}.\n\n"
+        "Буду называть книгу — присылайте ссылку из кабинета магазина. "
+        "Можно прислать несколько строк сразу в виде "
+        "<code>номер ссылка</code>.")
+    await _ask_next(message, state)
+
+
+@router.callback_query(F.data == "booklink_skip", Links.waiting)
+async def link_skip(call: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    skipped = list(data.get("skipped") or [])
+    if data.get("book_id"):
+        skipped.append(data["book_id"])
+    await state.update_data(skipped=skipped)
+    await call.answer("Пропустила")
+    await _ask_next(call.message, state)
+
+
+@router.callback_query(F.data == "booklink_stop", Links.waiting)
+async def link_stop(call: CallbackQuery, state: FSMContext):
+    await state.clear()
+    stats = await database.books_link_stats()
+    await call.answer()
+    await call.message.answer(
+        f"Остановила. Со ссылками: {stats['done']} из {stats['total']}.")
+
+
+@router.message(Links.waiting, F.text)
+async def link_got(message: Message, state: FSMContext):
+    text = (message.text or "").strip()
+    if text.startswith("/"):
+        await state.clear()
+        return
+
+    # Пачкой: «12 https://…» построчно. Так быстрее, когда ссылки уже
+    # собраны в заметках.
+    bulk = [line.split(maxsplit=1) for line in text.splitlines() if line.strip()]
+    if len(bulk) > 1 or (bulk and bulk[0][0].isdigit() and len(bulk[0]) == 2):
+        saved = 0
+        for parts in bulk:
+            if len(parts) != 2 or not parts[0].isdigit():
+                continue
+            if await database.set_book_link(int(parts[0]), parts[1].strip()):
+                saved += 1
+        await message.answer(f"Сохранила ссылок: {saved}")
+        await _ask_next(message, state)
+        return
+
+    if not text.startswith("http"):
+        await message.answer("Это не похоже на ссылку. Пришлите адрес целиком, "
+                             "начиная с https://")
+        return
+
+    book_id = (await state.get_data()).get("book_id")
+    if not book_id:
+        await _ask_next(message, state)
+        return
+    if await database.set_book_link(book_id, text):
+        await message.answer("✅ Сохранила")
+    else:
+        await message.answer("❌ Не сохранилась — книга не найдена")
+    await _ask_next(message, state)
