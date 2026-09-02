@@ -400,8 +400,13 @@ async def test_command(message: Message, bot: Bot):
     if not config.is_admin(message.from_user.id):
         return
 
+    # /tennis_test wta — проверить женский вариант: подписи и ссылки
+    # у туров разные, и смотреть надо оба.
+    parts = message.text.split()
+    tour = parts[1].lower() if len(parts) > 1 and parts[1].lower() in tennis_live.TOURS else "atp"
+
     lead = await _lead()
-    title = "Проверка · US Open — тестовый матч"
+    title = f"Проверка · {tennis_live.TOURS[tour]['title']} — тестовый матч"
 
     # 1. Образец прямо сейчас
     head = "Начинается" if lead <= 0 else f"Начнётся через {lead} {_minutes_word(lead)}"
@@ -409,7 +414,7 @@ async def test_command(message: Message, bot: Bot):
         await bot.send_message(
             message.from_user.id,
             f"🎾 <b>{html.escape(title)}</b>\n\n{head}. Где смотреть:",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=_watch_rows("atp")),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=_watch_rows(tour)),
             disable_web_page_preview=True)
     except TelegramForbiddenError:
         await message.answer("❌ Бот не может вам писать. Нажмите «Старт» в личке.")
@@ -419,7 +424,7 @@ async def test_command(message: Message, bot: Bot):
     match_id = f"test-{int(datetime.now(timezone.utc).timestamp())}"
     starts = datetime.now(timezone.utc) + timedelta(minutes=lead + 1)
     added, _ = await database.toggle_alert(
-        message.from_user.id, match_id, "atp", title, starts)
+        message.from_user.id, match_id, tour, title, starts)
 
     if added is None:
         await message.answer(
