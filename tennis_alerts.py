@@ -29,10 +29,9 @@ router = Router()
 MAX_MATCHES = 8          # больше кнопок под постом не читается
 CHECK_EVERY = 60         # раз в минуту: слать надо в момент начала,
                          # а не «когда-нибудь в ближайшие две»
-# За сколько минут до начала слать. Ноль — в момент начала: теннисное
-# «начало» и так плавает (корт освобождается, когда доиграет предыдущая
-# пара), поэтому запас впрок только сбивает.
-LEAD_DEFAULT = 0
+# За сколько минут до начала слать. Десять — чтобы успеть включить
+# трансляцию. Ноль означал бы «в момент начала».
+LEAD_DEFAULT = 10
 LEAD_KEY = "tennis_lead"
 RESULTS_MAX = 12         # длиннее сводку с утра не читают
 
@@ -122,10 +121,18 @@ async def _lead() -> int:
         return LEAD_DEFAULT
 
 
+def _minutes_word(n: int) -> str:
+    if n % 10 == 1 and n % 100 != 11:
+        return "минуту"
+    if n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14):
+        return "минуты"
+    return "минут"
+
+
 def _lead_phrase(lead: int) -> str:
     if lead <= 0:
-        return "Напишу, когда матч начнётся."
-    return f"Напишу за {lead} мин до начала."
+        return "Напомню, когда матч начнётся."
+    return f"Напомню за {lead} {_minutes_word(lead)} до начала."
 
 
 async def _shift():
@@ -161,6 +168,7 @@ async def publish_schedule(bot: Bot, chat: int, thread=None) -> str:
     # Часы канала: у источника время в UTC, а в посте оно должно совпадать
     # с тем, что читатель видит на своих часах.
     shift = await _shift()
+    lead = await _lead()
 
     posted = 0
     for tour in ("wta", "atp"):
@@ -195,8 +203,9 @@ async def publish_schedule(bot: Bot, chat: int, thread=None) -> str:
         lines.append("")
         if rest:
             lines.append(f"И ещё {rest} {_matches_word(rest)} сегодня — в сетке.")
-        lines.append("Нажмите на матч — пришлю ссылку на трансляцию, когда он "
-                     "начнётся, в личные сообщения.")
+        lines.append(
+            f"Нажмите на матч — пришлю ссылку на трансляцию в личные "
+            f"сообщения, {('за ' + str(lead) + ' ' + _minutes_word(lead) + ' до начала') if lead else 'к началу'}.")
 
         # Сетка — последней строкой кнопок: список матчей на сегодня
         # отвечает «что смотреть», сетка — «кто с кем дальше».
@@ -489,7 +498,8 @@ async def alerts_scheduler(bot: Bot):
         try:
             lead = await _lead()
             for user_id, match_id, tour, title in await database.due_alerts(lead):
-                head = "Начинается" if lead <= 0 else f"Начнётся через {lead} мин"
+                head = ("Начинается" if lead <= 0
+                        else f"Начнётся через {lead} {_minutes_word(lead)}")
                 text = (f"🎾 <b>{html.escape(title or 'Матч')}</b>\n\n"
                         f"{head}. Трансляция и счёт:\n{_watch_link(tour)}")
                 draw = InlineKeyboardMarkup(inline_keyboard=[[
