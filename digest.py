@@ -13,7 +13,7 @@ import json
 import logging
 import os
 from datetime import datetime, timedelta, timezone
-from urllib.parse import quote
+from urllib.parse import quote, urlparse, parse_qs
 
 from aiogram import Router, F, Bot
 from aiogram.types import (Message, CallbackQuery, InlineKeyboardMarkup,
@@ -87,6 +87,21 @@ BOT_KEY = "bot_username"
 # магазин их перевыложит; поиск по названию не ломается никогда.
 SHOP_KEY = "book_shop_url"
 DISCLOSURE_KEY = "book_shop_note"     # пометка о партнёрской ссылке
+
+
+def _erid(url: str) -> str:
+    """Рекламный идентификатор из партнёрской ссылки.
+
+    Магазин выдаёт ссылку с параметром erid — это токен из реестра
+    рекламы. По российскому закону он должен стоять в самом объявлении, а
+    не прятаться внутри адреса: увидеть его, не нажав кнопку, читатель не
+    может. Поэтому достаём и печатаем.
+    """
+    if not url:
+        return ""
+    query = parse_qs(urlparse(url).query)
+    value = (query.get("erid") or [""])[0].strip()
+    return value[:64]
 
 
 def _search_query(title: str) -> str:
@@ -422,8 +437,10 @@ async def publish_next(bot: Bot, only: str = None, lead: str = None,
         caption = f"{head}\n\n{body}"
         if buy:
             note = await database.get_setting(DISCLOSURE_KEY)
-            if note:
-                caption += f"\n\n{note}"
+            erid = _erid(buy[0].url if buy else "")
+            if note or erid:
+                marks = [m for m in (note, f"erid: {erid}" if erid else "") if m]
+                caption += "\n\n" + " · ".join(marks)
         if farewell:
             caption += f"\n\n{farewell}"
         caption += await _ad_block()
