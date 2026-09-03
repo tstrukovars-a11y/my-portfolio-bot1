@@ -76,16 +76,10 @@ async def open_creative_paintings(call: CallbackQuery):
 
 @router.callback_query(F.data == "art_my_portfolio")
 async def open_art_portfolio(call: CallbackQuery):
+    """Живая галерея вместо статичного текста: работы, цены, заявка."""
     await call.answer()
-    try:
-        user_lang = await database.get_user_language(call.from_user.id)
-        caption_text = menu_texts.ART_MY_GALLERY_TEXTS.get(user_lang, menu_texts.ART_MY_GALLERY_TEXTS["en"])
-        await call.message.edit_media(
-            media=InputMediaPhoto(media=config.ART_BANNER, caption=caption_text, parse_mode="Markdown"),
-            reply_markup=inline_kb.get_music_back_button(user_lang, "creative_paintings")
-        )
-    except TelegramBadRequest:
-        pass
+    import art_shop
+    await art_shop.show_gallery(call)
 
 @router.callback_query(F.data == "art_subscriptions_prices")
 async def open_art_subs(call: CallbackQuery):

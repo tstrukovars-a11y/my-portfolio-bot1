@@ -356,6 +356,35 @@ async def init_db():
             added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""")
 
+        # 11в. Картины: собственная галерея-магазин.
+        # Цена хранится числом и может быть пустой — «по запросу» это
+        # нормальная позиция для живописи, а не отсутствие данных.
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.artworks (
+            id SERIAL PRIMARY KEY,
+            title TEXT NOT NULL,
+            year INTEGER,
+            technique TEXT,
+            size TEXT,
+            price BIGINT,
+            story TEXT,
+            photo_file_id TEXT,
+            status TEXT NOT NULL DEFAULT 'available',
+            ordering INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+
+        # Заявки на работы: кто, что, когда и ответили ли уже.
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.art_requests (
+            id SERIAL PRIMARY KEY,
+            artwork_id INTEGER,
+            user_id BIGINT,
+            username TEXT,
+            note TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+
         # 12. Товары Pro-Shop: пол + тип вещи, карточка со ссылкой на пост-источник
         await conn.execute(f"""
         CREATE TABLE IF NOT EXISTS {SCHEMA}.shop_items (
@@ -2709,6 +2738,114 @@ async def player_names():
     except Exception as e:
         logging.error(f"Свои имена недоступны: {e}")
         return {}
+
+
+# ---------------------------------------------------------------------
+# КАРТИНЫ
+# ---------------------------------------------------------------------
+
+async def art_add(title: str, photo_file_id: str = None) -> int:
+    """Новая работа. Возвращает её номер либо 0."""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            return await conn.fetchval(
+                f"INSERT INTO {SCHEMA}.artworks (title, photo_file_id) "
+                "VALUES ($1, $2) RETURNING id", title.strip(), photo_file_id) or 0
+    except Exception as e:
+        logging.error(f"Работа не сохранена: {e}")
+        return 0
+
+
+async def art_set(artwork_id: int, **fields) -> bool:
+    """Правка полей работы. Ключи ограничены — чужое сюда не попадёт."""
+    allowed = {"title", "year", "technique", "size", "price", "story",
+               "photo_file_id", "status", "ordering"}
+    pairs = [(k, v) for k, v in fields.items() if k in allowed]
+    if not pairs:
+        return False
+    sets = ", ".join(f"{k} = ${i + 2}" for i, (k, _) in enumerate(pairs))
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            done = await conn.execute(
+                f"UPDATE {SCHEMA}.artworks SET {sets} WHERE id = $1",
+                artwork_id, *[v for _, v in pairs])
+        return done.endswith("1")
+    except Exception as e:
+        logging.error(f"Работа не обновлена: {e}")
+        return False
+
+
+async def art_list(only_available: bool = False):
+    """Все работы: свежие сверху, если порядок не задан вручную"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            where = "WHERE status = 'available'" if only_available else ""
+            rows = await conn.fetch(
+                f"SELECT * FROM {SCHEMA}.artworks {where} "
+                "ORDER BY ordering DESC, id DESC")
+        return [dict(r) for r in rows]
+    except Exception as e:
+        logging.error(f"Галерея недоступна: {e}")
+        return []
+
+
+async def art_get(artwork_id: int):
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                f"SELECT * FROM {SCHEMA}.artworks WHERE id = $1", artwork_id)
+        return dict(row) if row else None
+    except Exception as e:
+        logging.error(f"Работа недоступна: {e}")
+        return None
+
+
+async def art_delete(artwork_id: int) -> bool:
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            done = await conn.execute(
+                f"DELETE FROM {SCHEMA}.artworks WHERE id = $1", artwork_id)
+        return done.endswith("1")
+    except Exception as e:
+        logging.error(f"Работа не удалена: {e}")
+        return False
+
+
+async def art_request(artwork_id: int, user_id: int, username: str,
+                      note: str = None) -> int:
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            return await conn.fetchval(
+                f"INSERT INTO {SCHEMA}.art_requests "
+                "(artwork_id, user_id, username, note) "
+                "VALUES ($1, $2, $3, $4) RETURNING id",
+                artwork_id, user_id, username, note) or 0
+    except Exception as e:
+        logging.error(f"Заявка на работу не сохранена: {e}")
+        return 0
+
+
+async def art_requests(limit: int = 20):
+    """Последние заявки с названиями работ"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(f"""
+                SELECT r.id, r.user_id, r.username, r.created_at,
+                       a.title, a.id AS artwork_id
+                FROM {SCHEMA}.art_requests r
+                LEFT JOIN {SCHEMA}.artworks a ON a.id = r.artwork_id
+                ORDER BY r.created_at DESC LIMIT $1""", limit)
+        return [dict(r) for r in rows]
+    except Exception as e:
+        logging.error(f"Заявки недоступны: {e}")
+        return []
 
 
 async def book_titles(category: str):
