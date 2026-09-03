@@ -374,6 +374,11 @@ async def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""")
 
+        # Номер поста работы в канале — чтобы правка не плодила копии.
+        await conn.execute(
+            f"ALTER TABLE {SCHEMA}.artworks "
+            "ADD COLUMN IF NOT EXISTS channel_msg_id BIGINT")
+
         # Заявки на работы: кто, что, когда и ответили ли уже.
         await conn.execute(f"""
         CREATE TABLE IF NOT EXISTS {SCHEMA}.art_requests (
