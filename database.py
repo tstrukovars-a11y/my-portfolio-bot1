@@ -2460,6 +2460,18 @@ async def set_book_link(book_id: int, url: str) -> bool:
         return False
 
 
+async def get_book_link_by_id(book_id: int):
+    """Ссылка книги по её номеру — так её знает библиотека бота"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            return await conn.fetchval(
+                f"SELECT buy_url FROM {SCHEMA}.books WHERE id = $1", book_id)
+    except Exception as e:
+        logging.error(f"Ссылка книги недоступна: {e}")
+        return None
+
+
 async def get_book_link(title: str):
     """Ссылка книги по её первой строке — так её знает публикатор"""
     try:

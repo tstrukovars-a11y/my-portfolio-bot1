@@ -212,15 +212,31 @@ async def open_book(call: CallbackQuery):
         return
     text, cover = row
     lang = await database.get_user_language(call.from_user.id)
-    markup = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text=inline_kb.label(inline_kb.BACK_TEXTS, lang),
-                             callback_data="intellect_books")]])
+
+    # Кнопка покупки нужна и здесь, а не только в канале: библиотека —
+    # то место, куда человек приходит за книгой осознанно.
+    rows = []
+    import digest
+    link = await database.get_book_link_by_id(book_id)
+    body = (text or "")
+    if link:
+        rows.append([InlineKeyboardButton(text="🛒 Купить", url=link)])
+        note = await database.get_setting(digest.DISCLOSURE_KEY)
+        erid = digest._erid(link)
+        marks = [m for m in (note, f"erid: {erid}" if erid else "") if m]
+        if marks:
+            body = f"{body}\n\n{' · '.join(marks)}"
+    rows.append([InlineKeyboardButton(
+        text=inline_kb.label(inline_kb.BACK_TEXTS, lang),
+        callback_data="intellect_books")])
+    markup = InlineKeyboardMarkup(inline_keyboard=rows)
+
     # parse_mode=None: текст пришёл из канала и разметкой не является
     if cover:
-        await call.message.answer_photo(cover, caption=(text or "")[:1024],
+        await call.message.answer_photo(cover, caption=body[:1024],
                                         parse_mode=None, reply_markup=markup)
     else:
-        await call.message.answer((text or "")[:4096], parse_mode=None,
+        await call.message.answer(body[:4096], parse_mode=None,
                                   reply_markup=markup)
     await call.answer()
 
