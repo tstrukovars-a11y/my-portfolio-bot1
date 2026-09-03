@@ -339,6 +339,50 @@ async def _mirror_thread(section: str) -> str:
             or await database.get_setting(MIRROR_THREAD_KEY))
 
 
+# Подписи ветки клуба по разделам: приглашение должно называть то, что
+# человек там найдёт, а не «наша группа».
+CLUB_LABELS = {
+    "books": "💬 Обсудить книги в клубе",
+    "genetics": "💬 Спросить про анализы",
+    "travel": "💬 Спросить про поездку",
+    "dinner": "💬 Кухня клуба",
+    "recipes": "💬 Кухня клуба",
+    "tennis": "💬 Теннис в клубе",
+    "sport": "💬 Спорт в клубе",
+    "morning": "💬 Обсудить в клубе",
+    "puzzle": "💬 Разобрать задачу",
+}
+CLUB_DEFAULT = "💬 Обсудить в клубе"
+CLUB_LINK_KEY = "digest_club_link"   # публичная ссылка-приглашение, если есть
+
+
+async def _club_row(section: str):
+    """Кнопка в тему группы, где этот раздел обсуждают.
+
+    Адрес собираем из настроек дубля: бот уже знает и чат, и тему каждого
+    раздела, отдельно их вписывать незачем. Для закрытой группы ссылка
+    вида t.me/c/<чат>/<тема> открывается только у участников — поэтому
+    если задано приглашение, ведём по нему.
+    """
+    target = await database.get_setting(MIRROR_KEY)
+    if not target:
+        return None
+    thread = await _mirror_thread(section)
+    label = CLUB_LABELS.get(section, CLUB_DEFAULT)
+
+    invite = await database.get_setting(CLUB_LINK_KEY)
+    if invite:
+        # У приглашения темы нет: оно ведёт в группу целиком.
+        return [InlineKeyboardButton(text=label, url=invite)]
+
+    try:
+        internal = str(int(target)).removeprefix("-100")
+    except (TypeError, ValueError):
+        return None
+    url = f"https://t.me/c/{internal}/{thread}" if thread else f"https://t.me/c/{internal}"
+    return [InlineKeyboardButton(text=label, url=url)]
+
+
 async def _mirror(bot: Bot, from_chat: int, message_id: int, section: str):
     """Дублирует свежий пост в группу, если она задана.
 
@@ -465,6 +509,10 @@ async def publish_next(bot: Bot, only: str = None, lead: str = None,
 
         if buy:
             rows.append(buy)
+
+        club = await _club_row(section)
+        if club:
+            rows.append(club)
 
         offer = await _offer_row(section)
         if offer:
@@ -1087,6 +1135,14 @@ async def digest_command(message: Message, bot: Bot):
         await message.answer(f"✅ Пометка: {html.escape(value) or 'снята'}")
         return
 
+    if command == "club" and len(parts) > 2:
+        value = "" if parts[2].strip().lower() in ("нет", "off") else parts[2].strip()
+        await database.set_setting(CLUB_LINK_KEY, value)
+        await message.answer(
+            f"✅ Приглашение в клуб: {html.escape(value)}" if value
+            else "✅ Приглашение снято — кнопка поведёт прямо в тему группы.")
+        return
+
     if command == "bot" and len(parts) > 2:
         await database.set_setting(BOT_KEY, parts[2].strip().lstrip("@"))
         await message.answer(
@@ -1240,6 +1296,7 @@ async def digest_command(message: Message, bot: Bot):
                  "<code>/digest country Россия</code> — чьи новости утром\n"
                  "<code>/digest ref travel https://t.me/…</code> — справочник раздела\n"
                  "<code>/digest bot имя_бота</code> — куда ведут кнопки заказа\n"
+                 "<code>/digest club ссылка</code> — приглашение в группу под постами\n"
                  "<code>/digest shop https://…{q}…</code> — партнёрская ссылка на книги\n"
                  "<code>/digest note текст</code> — пометка о партнёрской ссылке\n"
                  "<code>/digest now</code> — опубликовать вне сетки\n"
