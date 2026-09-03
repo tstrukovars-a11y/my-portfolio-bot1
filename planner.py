@@ -1,19 +1,26 @@
-# planner.py — общее расписание на несколько человек
-"""Календарь, в который пишут все участники сразу.
+# planner.py — календари семей и частных лиц внутри бота-визитки
+"""Раздел «Календарь»: у каждой семьи (или человека) он свой.
 
-Событие заводится одной фразой («завтра в 14:30 на час тренировка»), а
-чего в ней не хватило — бот спрашивает. Занятое время не молчит: бот
-показывает, чем оно занято, и предлагает отменить или перенести — прежнее
-событие или новое.
+Календарь заводится по подписке: владелец бота передаёт его администратору
+семьи, тот приглашает своих по ссылке и дальше ведёт расписание сам. Ни одна
+функция этого модуля не показывает события чужого календаря — владельцу бота
+в том числе: ему доступны только строки plan_spaces (кто, сколько человек,
+до какого числа оплачено).
+
+Событие заводится одной фразой («завтра в 14:30 на час тренировка»), а чего
+в ней не хватило — бот спрашивает. Занятое время не молчит: бот показывает,
+чем оно занято, и предлагает отменить или перенести — прежнее событие или
+новое.
 
 Повторяющееся событие хранится ОДНОЙ строкой вместе с правилом повтора и
 датой окончания; отдельные вхождения разворачиваются при показе. Поэтому
-перенести можно и одно занятие серии (запись в plan_overrides), и всю
-серию целиком (сдвиг самой строки события).
+перенести можно и одно занятие серии (запись в plan_overrides), и всю серию
+целиком (сдвиг самой строки события).
 """
 import html
 import logging
 import re
+import secrets
 from calendar import monthrange
 from datetime import datetime, date, time, timedelta, timezone
 
@@ -22,6 +29,7 @@ from aiogram.types import (Message, CallbackQuery,
                            InlineKeyboardMarkup, InlineKeyboardButton)
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
+from aiogram.filters import StateFilter
 from aiogram.exceptions import TelegramBadRequest
 
 import config
@@ -36,7 +44,8 @@ SECTION = "planner"
 TZ_KEY = "digest_tz"
 TZ_DEFAULT = 3
 
-MEMBERS_KEY = "plan_users"      # список id через запятую; пусто — можно всем
+TRIAL_KEY = "plan_trial_days"    # пробный период нового календаря; 0 — выключен
+GRACE_DAYS = 3                  # столько дней после оплаты календарь ещё пишущий
 
 WEEKDAYS = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
 WD_SHORT = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
@@ -107,23 +116,83 @@ def _unkey(s: str) -> date:
     return datetime.strptime(s, "%Y%m%d").date()
 
 
-# --- ДОСТУП ---
-
-async def _members() -> set:
-    raw = (await database.get_setting(MEMBERS_KEY) or "").strip()
-    return {int(x) for x in re.findall(r"-?\d+", raw)}
-
-
-async def _may_edit(user_id: int) -> bool:
-    """Пока список участников пуст, календарь открыт всем — иначе первый же
-    запуск запер бы владельца снаружи. Как только список задан командой
-    /plan_users, писать могут только он и владелец бота."""
-    allowed = await _members()
-    return (not allowed) or user_id in allowed or config.is_admin(user_id)
-
+# --- ДОСТУП: ЧЕЙ КАЛЕНДАРЬ И МОЖНО ЛИ В НЕГО ПИСАТЬ ---
 
 def _who(user) -> str:
     return (user.full_name or user.username or str(user.id))[:64]
+
+
+def _new_code() -> str:
+    """Код приглашения. По нему входят в семейный календарь без подтверждения,
+    поэтому он случайный, а не выведен из номера календаря."""
+    return secrets.token_urlsafe(9)
+
+
+async def _current_space(user_id: int):
+    """Календарь, в котором человек сейчас работает.
+
+    Обычно он один. У того, кто ведёт и семейный, и свой, выбор хранится в
+    настройках: переспрашивать на каждое нажатие незачем.
+    """
+    spaces = await database.plan_user_spaces(user_id)
+    if not spaces:
+        return None
+    if len(spaces) == 1:
+        return spaces[0]
+    chosen = await database.get_setting(f"plan_cur_{user_id}")
+    for space in spaces:
+        if str(space["id"]) == str(chosen):
+            return space
+    return spaces[0]
+
+
+async def _set_space(user_id: int, space_id: int):
+    await database.set_setting(f"plan_cur_{user_id}", str(space_id))
+
+
+async def _paid(space) -> bool:
+    """Подписка ещё действует? Пустая дата — календарь без срока.
+
+    После окончания даём несколько дней запаса: расписание семьи не должно
+    ломаться посреди недели из-за того, что платёж прошёл на день позже.
+    """
+    until = space["paid_until"]
+    return until is None or until + timedelta(days=GRACE_DAYS) >= await _today()
+
+
+async def _ctx(user_id: int):
+    """(календарь, можно ли писать). Без календаря — (None, False)."""
+    space = await _current_space(user_id)
+    if not space:
+        return None, False
+    return space, await _paid(space)
+
+
+def _expired_note(space) -> str:
+    return (f"⛔️ Подписка на «{_esc(space['title'])}» закончилась "
+            f"{space['paid_until']:%d.%m.%Y}. Расписание видно, но менять его нельзя — "
+            "продлите подписку у владельца бота.")
+
+
+async def _no_space_screen():
+    trial = 0
+    try:
+        trial = int(await database.get_setting(TRIAL_KEY) or 0)
+    except (TypeError, ValueError):
+        trial = 0
+
+    text = ("📅 <b>Календарь</b>\n\n"
+            "Своего календаря у вас пока нет. Календарь передаётся по подписке: "
+            "администратор получает его целиком, приглашает своих по ссылке и "
+            "ведёт расписание сам. Содержимое чужих календарей не видит никто — "
+            "владелец бота в том числе.\n\n"
+            "Есть приглашение? Откройте ссылку, которую прислал ваш администратор.")
+    rows = []
+    if trial > 0:
+        rows.append([InlineKeyboardButton(text=f"🎁 Завести на {trial} дней",
+                                          callback_data="plan:trial")])
+    rows.append([InlineKeyboardButton(text="⇦ В главное меню", callback_data="go_home")])
+    return text, InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 # --- РАЗБОР ФРАЗЫ ---
@@ -421,9 +490,11 @@ def _expand(events, overrides, d_from: date, d_to: date) -> list:
     return out
 
 
-async def _load(d_from: date, d_to: date) -> list:
+async def _load(space_id: int, d_from: date, d_to: date) -> list:
+    """Вхождения только своего календаря: space_id прибит к запросу, а не
+    к фильтру на стороне бота — чужие события сюда просто не доезжают."""
     wide_from, wide_to = d_from - timedelta(days=45), d_to + timedelta(days=45)
-    events = await database.plan_range(wide_from, wide_to)
+    events = await database.plan_range(space_id, wide_from, wide_to)
     overrides = await database.plan_overrides([e["id"] for e in events])
     return _expand(events, overrides, d_from, d_to)
 
@@ -452,7 +523,7 @@ def _draft_row(draft: dict) -> dict:
     }
 
 
-async def _find_conflicts(row: dict, ignore_event: int = 0) -> list:
+async def _find_conflicts(space_id: int, row: dict, ignore_event: int = 0) -> list:
     """Чем занято время нового события. Отдаёт пары (вхождение нового,
     занятое вхождение), первым — самое раннее пересечение."""
     start_date = row["starts_at"].date()
@@ -462,7 +533,7 @@ async def _find_conflicts(row: dict, ignore_event: int = 0) -> list:
     if not mine:
         return []
 
-    busy = await _load(mine[0]["start"].date(), mine[-1]["start"].date())
+    busy = await _load(space_id, mine[0]["start"].date(), mine[-1]["start"].date())
     clashes = []
     for a in mine:
         for b in busy:
@@ -596,13 +667,15 @@ def _until_kb() -> InlineKeyboardMarkup:
 
 # --- ЭКРАНЫ ДАШБОРДА ---
 
-async def _week_view(anchor: date, user_id: int):
+async def _week_view(space, anchor: date, user_id: int):
     monday = anchor - timedelta(days=anchor.weekday())
     sunday = monday + timedelta(days=6)
-    occs = await _load(monday, sunday)
+    occs = await _load(space["id"], monday, sunday)
     detail = _detail.get(user_id, False)
 
-    head = f"📅 <b>Неделя {monday.day} {MONTHS_IN[monday.month - 1]} — {sunday.day} {MONTHS_IN[sunday.month - 1]} {sunday.year}</b>"
+    head = (f"📅 <b>{_esc(space['title'])}</b>\n"
+            f"Неделя {monday.day} {MONTHS_IN[monday.month - 1]} — "
+            f"{sunday.day} {MONTHS_IN[sunday.month - 1]} {sunday.year}")
     lines, day_buttons = [head, ""], []
     today = await _today()
     for i in range(7):
@@ -623,10 +696,10 @@ async def _week_view(anchor: date, user_id: int):
     return "\n".join(lines).strip(), InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-async def _month_view(anchor: date, user_id: int):
+async def _month_view(space, anchor: date, user_id: int):
     first = anchor.replace(day=1)
     last = date(first.year, first.month, monthrange(first.year, first.month)[1])
-    occs = await _load(first, last)
+    occs = await _load(space["id"], first, last)
     detail = _detail.get(user_id, False)
 
     lines = [f"📅 <b>{MONTHS_NOM[first.month - 1]} {first.year}</b> — "
@@ -664,9 +737,9 @@ async def _month_view(anchor: date, user_id: int):
     return "\n".join(lines).strip(), InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-async def _year_view(anchor: date, user_id: int):
+async def _year_view(space, anchor: date, user_id: int):
     year = anchor.year
-    occs = await _load(date(year, 1, 1), date(year, 12, 31))
+    occs = await _load(space["id"], date(year, 1, 1), date(year, 12, 31))
     detail = _detail.get(user_id, False)
 
     counts = [0] * 12
@@ -694,8 +767,8 @@ async def _year_view(anchor: date, user_id: int):
     return "\n".join(lines).strip(), InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-async def _day_view(d: date, user_id: int):
-    occs = await _load(d, d)
+async def _day_view(space, d: date, user_id: int):
+    occs = await _load(space["id"], d, d)
     detail = _detail.get(user_id, True)
 
     lines = [f"📅 <b>{_fmt_day(d)}</b>", ""]
@@ -725,10 +798,14 @@ async def _day_view(d: date, user_id: int):
     return "\n".join(lines).strip(), InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-async def _occurrence(event_id: int, origin: date):
-    """Одно вхождение серии со всеми поправками — то, что показывает карточка"""
+async def _occurrence(space_id: int, event_id: int, origin: date):
+    """Одно вхождение серии со всеми поправками — то, что показывает карточка.
+
+    Номер календаря сверяем даже здесь: карточка открывается по номеру события
+    из кнопки, а кнопку можно прислать и из чужого чата.
+    """
     ev = await database.plan_event(event_id)
-    if not ev or ev["cancelled"]:
+    if not ev or ev["cancelled"] or ev["space_id"] != space_id:
         return None
     o = next((x for x in await database.plan_overrides([event_id])
               if x["occur_date"] == origin), None)
@@ -766,14 +843,14 @@ def _card_kb(occ) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-async def _render(mode: str, anchor: date, user_id: int):
+async def _render(space, mode: str, anchor: date, user_id: int):
     if mode == "m":
-        return await _month_view(anchor, user_id)
+        return await _month_view(space, anchor, user_id)
     if mode == "y":
-        return await _year_view(anchor, user_id)
+        return await _year_view(space, anchor, user_id)
     if mode == "d":
-        return await _day_view(anchor, user_id)
-    return await _week_view(anchor, user_id)
+        return await _day_view(space, anchor, user_id)
+    return await _week_view(space, anchor, user_id)
 
 
 async def _show(call: CallbackQuery, text: str, kb: InlineKeyboardMarkup):
@@ -914,7 +991,13 @@ async def _try_save(target, state: FSMContext, user, force: bool = False):
     draft = data.get("draft") or {}
     row = _draft_row(draft)
 
-    clashes = [] if force else await _find_conflicts(row)
+    space, can_write = await _ctx(user.id)
+    if not space or not can_write:
+        await state.clear()
+        return await _say(target, "Записывать сейчас некуда: календарь не передан "
+                                  "или подписка на него закончилась.")
+
+    clashes = [] if force else await _find_conflicts(space["id"], row)
     if clashes:
         mine, busy = clashes[0]
         b_ev = busy["event"]
@@ -932,8 +1015,9 @@ async def _try_save(target, state: FSMContext, user, force: bool = False):
                           _clash_kb(bool(b_ev["repeat_rule"]), b_ev["title"]))
 
     event_id = await database.plan_add(
-        row["title"], row["description"], row["starts_at"], row["duration_min"],
-        row["repeat_rule"], row["repeat_until"], user.id, _who(user))
+        space["id"], row["title"], row["description"], row["starts_at"],
+        row["duration_min"], row["repeat_rule"], row["repeat_until"],
+        user.id, _who(user))
     await state.clear()
 
     if not event_id:
@@ -976,6 +1060,11 @@ async def _apply_move(target, state: FSMContext, user, new_start: datetime):
     mv = data.get("mv") or {}
     purpose = mv.get("purpose")
 
+    space, can_write = await _ctx(user.id)
+    if not space or not can_write:
+        await state.clear()
+        return await _say(target, "Подписка на календарь неактивна — перенести не могу.")
+
     if purpose == "new":
         draft = data.get("draft") or {}
         draft["date"] = new_start.date().isoformat()
@@ -986,7 +1075,7 @@ async def _apply_move(target, state: FSMContext, user, new_start: datetime):
     event_id = mv["eid"]
     origin = _unkey(mv["date"])
     ev = await database.plan_event(event_id)
-    if not ev:
+    if not ev or ev["space_id"] != space["id"]:
         await state.clear()
         return await _say(target, "Событие уже удалено — переносить нечего.")
 
@@ -1006,7 +1095,7 @@ async def _apply_move(target, state: FSMContext, user, new_start: datetime):
              "repeat_until": ev["repeat_until"], "created_by": 0,
              "created_by_name": "", "cancelled": False}
     warn = ""
-    for _, busy in (await _find_conflicts(probe))[:1]:
+    for _, busy in (await _find_conflicts(space["id"], probe))[:1]:
         b_end = busy["start"] + timedelta(minutes=busy["duration"])
         warn = (f"\n\n⚠️ На новом месте пересечение: {busy['start']:%d.%m} "
                 f"{busy['start']:%H:%M}–{b_end:%H:%M} «{_esc(busy['event']['title'])}»")
@@ -1036,8 +1125,15 @@ _last_view: dict = {}
 
 
 async def _open(call: CallbackQuery, mode: str, anchor: date):
+    space, can_write = await _ctx(call.from_user.id)
+    if not space:
+        text, kb = await _no_space_screen()
+        return await _show(call, text, kb)
+
     _last_view[call.from_user.id] = (mode, _key(anchor))
-    text, kb = await _render(mode, anchor, call.from_user.id)
+    text, kb = await _render(space, mode, anchor, call.from_user.id)
+    if not can_write:
+        text = _expired_note(space) + "\n\n" + text
     await _show(call, text, kb)
 
 
@@ -1077,8 +1173,11 @@ async def dash_noop(call: CallbackQuery):
 
 @router.callback_query(F.data.startswith("plan:e:"))
 async def dash_card(call: CallbackQuery):
+    space, _ = await _ctx(call.from_user.id)
+    if not space:
+        return await call.answer("Календарь недоступен", show_alert=True)
     _, _, eid, key = call.data.split(":")
-    occ = await _occurrence(int(eid), _unkey(key))
+    occ = await _occurrence(space["id"], int(eid), _unkey(key))
     if not occ:
         await call.answer("Это событие уже отменили", show_alert=True)
         return await dash_day_key(call, _unkey(key))
@@ -1093,10 +1192,15 @@ async def dash_day_key(call: CallbackQuery, d: date):
 # --- ХЕНДЛЕРЫ: ДОБАВЛЕНИЕ ---
 
 async def _guard(call: CallbackQuery) -> bool:
-    if await _may_edit(call.from_user.id):
+    """Пускает к правкам только участника календаря с живой подпиской"""
+    space, can_write = await _ctx(call.from_user.id)
+    if space and can_write:
         return True
-    await call.answer("Календарь ведут участники команды — у вас только просмотр.",
-                      show_alert=True)
+    if not space:
+        await call.answer("Календарь вам ещё не передан — он открывается по подписке.",
+                          show_alert=True)
+    else:
+        await call.answer("Подписка закончилась: пока только просмотр.", show_alert=True)
     return False
 
 
@@ -1332,8 +1436,9 @@ async def move_text(message: Message, state: FSMContext):
 async def card_move(call: CallbackQuery, state: FSMContext):
     if not await _guard(call):
         return
+    space, _ = await _ctx(call.from_user.id)
     _, _, eid, key, scope = call.data.split(":")
-    occ = await _occurrence(int(eid), _unkey(key))
+    occ = await _occurrence(space["id"], int(eid), _unkey(key))
     if not occ:
         return await call.answer("Событие уже отменили", show_alert=True)
     await state.clear()
@@ -1348,8 +1453,9 @@ async def card_move(call: CallbackQuery, state: FSMContext):
 async def card_delete(call: CallbackQuery):
     if not await _guard(call):
         return
+    space, _ = await _ctx(call.from_user.id)
     _, _, eid, key, scope = call.data.split(":")
-    occ = await _occurrence(int(eid), _unkey(key))
+    occ = await _occurrence(space["id"], int(eid), _unkey(key))
     if not occ:
         return await call.answer("Событие уже отменили", show_alert=True)
 
@@ -1364,21 +1470,25 @@ async def card_delete(call: CallbackQuery):
         await _show(call, _card_text(occ) + "\n\n⚠️ Отменить <b>всю серию</b>, включая будущие занятия?", kb)
         return await call.answer()
 
-    await _do_delete(call, int(eid), _unkey(key), scope)
+    await _do_delete(call, space["id"], int(eid), _unkey(key), scope)
 
 
 @router.callback_query(F.data.startswith("plan:delok:"))
 async def card_delete_ok(call: CallbackQuery):
     if not await _guard(call):
         return
+    space, _ = await _ctx(call.from_user.id)
     _, _, eid, key, scope = call.data.split(":")
-    await _do_delete(call, int(eid), _unkey(key), scope)
+    await _do_delete(call, space["id"], int(eid), _unkey(key), scope)
 
 
-async def _do_delete(call: CallbackQuery, event_id: int, origin: date, scope: str):
+async def _do_delete(call: CallbackQuery, space_id: int, event_id: int,
+                     origin: date, scope: str):
     ev = await database.plan_event(event_id)
+    if not ev or ev["space_id"] != space_id:
+        return await call.answer("Событие недоступно", show_alert=True)
     day = origin
-    if scope == "one" and ev and ev["repeat_rule"]:
+    if scope == "one" and ev["repeat_rule"]:
         ok = await database.plan_set_override(event_id, origin, None, None, call.from_user.id)
         note = "Занятие отменено, остальные в серии остались"
     else:
@@ -1392,7 +1502,10 @@ async def _do_delete(call: CallbackQuery, event_id: int, origin: date, scope: st
 async def card_desc(call: CallbackQuery, state: FSMContext):
     if not await _guard(call):
         return
+    space, _ = await _ctx(call.from_user.id)
     _, _, eid, key = call.data.split(":")
+    if not await _occurrence(space["id"], int(eid), _unkey(key)):
+        return await call.answer("Событие недоступно", show_alert=True)
     await state.clear()
     await state.set_state(Add.edit_desc)
     await state.update_data(ed={"eid": int(eid), "key": key})
