@@ -343,6 +343,10 @@ def ru(name: str) -> str:
     if not name:
         return name
     clean = name.strip()
+    # Своё написание перевешивает словарь: его вписали, потому что в
+    # словаре было неверно или пусто.
+    if clean in _OVERRIDES:
+        return _OVERRIDES[clean]
     if clean in _RU:
         return _RU[clean]
 
@@ -420,15 +424,40 @@ def _key(name: str) -> str:
     return parts[-1]
 
 
+# Живой рейтинг и свои написания приезжают из базы: список в коде —
+# только запасной вариант на случай, если рейтинг ещё не подтянулся.
+_LIVE_TOP = set()
+_OVERRIDES = {}
+
+
+def set_top(names) -> int:
+    """Заменить список сильнейших тем, что пришёл из рейтинга"""
+    global _LIVE_TOP
+    _LIVE_TOP = {_key(n) for n in names if n}
+    return len(_LIVE_TOP)
+
+
+def set_overrides(mapping) -> int:
+    """Свои написания имён, добавленные через бота"""
+    global _OVERRIDES
+    _OVERRIDES = dict(mapping or {})
+    return len(_OVERRIDES)
+
+
+def add_nash(name: str):
+    """Пополнить круг своих — например, россиянина из свежего рейтинга"""
+    _NASHI.add(_key(name))
+
+
 def is_nash(name: str) -> bool:
     return _key(name) in _NASHI
 
 
 def is_top(name: str) -> bool:
-    return _key(name) in _TOP
+    key = _key(name)
+    return key in (_LIVE_TOP or _TOP)
 
 
 def notable(name: str) -> bool:
     """Стоит ли этот матч ставить в расписание"""
-    key = _key(name)
-    return key in _NASHI or key in _TOP
+    return is_nash(name) or is_top(name)

@@ -335,6 +335,27 @@ async def init_db():
             f"ALTER TABLE {SCHEMA}.puzzle_answers "
             "ADD COLUMN IF NOT EXISTS choice INTEGER")
 
+        # 11б. Рейтинг тура: кого показывать в анонсе. Тянется у ESPN раз в
+        # неделю, чтобы список сильнейших не устаревал в коде.
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.tennis_ranking (
+            tour TEXT NOT NULL,
+            place INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            country TEXT,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (tour, place)
+        )""")
+
+        # Свои написания имён: словарь в коде покрывает не всех, а
+        # исправлять написание не должно требовать деплоя.
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.player_names (
+            name_en TEXT PRIMARY KEY,
+            name_ru TEXT NOT NULL,
+            added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+
         # 12. Товары Pro-Shop: пол + тип вещи, карточка со ссылкой на пост-источник
         await conn.execute(f"""
         CREATE TABLE IF NOT EXISTS {SCHEMA}.shop_items (
@@ -634,6 +655,69 @@ async def init_db():
             available_time TEXT,
             username TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+
+        # 28. Календари. Один календарь — одна семья или один человек:
+        # события чужого календаря не видны никому снаружи, включая владельца
+        # бота. Подписку продлевает тот, кому календарь передан, — до её конца
+        # календарь пишущий, после — только для чтения.
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.plan_spaces (
+            id SERIAL PRIMARY KEY,
+            title TEXT NOT NULL,
+            owner_id BIGINT NOT NULL,
+            owner_name TEXT,
+            invite_code TEXT UNIQUE,
+            paid_until DATE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            closed BOOLEAN DEFAULT FALSE
+        )""")
+
+        # 29. Кто состоит в календаре. Владелец тоже участник — иначе при
+        # смене владельца пришлось бы чинить его собственный доступ.
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.plan_members (
+            space_id INTEGER NOT NULL REFERENCES {SCHEMA}.plan_spaces(id) ON DELETE CASCADE,
+            user_id BIGINT NOT NULL,
+            user_name TEXT,
+            role TEXT DEFAULT 'member',
+            joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (space_id, user_id)
+        )""")
+
+        # 30. События календаря. Одно событие — одна строка, даже если оно
+        # повторяется: правило повтора лежит рядом, а отдельные вхождения
+        # разворачиваются уже при показе. Иначе годовая еженедельная серия
+        # это полсотни строк, и перенос серии — полсотни правок.
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.plan_events (
+            id SERIAL PRIMARY KEY,
+            space_id INTEGER NOT NULL DEFAULT 0,
+            title TEXT NOT NULL,
+            description TEXT DEFAULT '',
+            starts_at TIMESTAMP NOT NULL,
+            duration_min INTEGER NOT NULL DEFAULT 60,
+            repeat_rule TEXT,
+            repeat_until DATE,
+            created_by BIGINT NOT NULL,
+            created_by_name TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            cancelled BOOLEAN DEFAULT FALSE
+        )""")
+
+        # 31. Отклонения отдельных вхождений серии: одно занятие перенесли
+        # или отменили, остальные идут по расписанию. Ключ — дата вхождения
+        # ПО ИСХОДНОМУ расписанию: только она не меняется, когда занятие
+        # двигают повторно.
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.plan_overrides (
+            event_id INTEGER NOT NULL REFERENCES {SCHEMA}.plan_events(id) ON DELETE CASCADE,
+            occur_date DATE NOT NULL,
+            moved_to TIMESTAMP,
+            duration_min INTEGER,
+            changed_by BIGINT,
+            changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (event_id, occur_date)
         )""")
 
     logging.info("PostgreSQL: таблицы инициализированы")
@@ -2535,6 +2619,93 @@ async def books_link_stats() -> dict:
         return {"total": 0, "done": 0}
 
 
+# ---------------------------------------------------------------------
+# ТЕННИС: РЕЙТИНГ И ИМЕНА
+# ---------------------------------------------------------------------
+
+async def save_ranking(tour: str, rows) -> int:
+    """Переписать рейтинг тура целиком. rows: (место, имя, страна)"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(
+                    f"DELETE FROM {SCHEMA}.tennis_ranking WHERE tour = $1", tour)
+                await conn.executemany(
+                    f"INSERT INTO {SCHEMA}.tennis_ranking (tour, place, name, country) "
+                    "VALUES ($1, $2, $3, $4)",
+                    [(tour, place, name, country) for place, name, country in rows])
+        return len(rows)
+    except Exception as e:
+        logging.error(f"Рейтинг не сохранён: {e}")
+        return 0
+
+
+async def ranking_names(limit: int = 25):
+    """Имена из первой сотни мест обоих туров"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT name, country FROM {SCHEMA}.tennis_ranking "
+                "WHERE place <= $1", limit)
+        return [(r["name"], r["country"]) for r in rows]
+    except Exception as e:
+        logging.error(f"Рейтинг недоступен: {e}")
+        return []
+
+
+async def ranking_top(tour: str, limit: int = 20):
+    """(место, имя) — для показа админу"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT place, name FROM {SCHEMA}.tennis_ranking "
+                "WHERE tour = $1 AND place <= $2 ORDER BY place", tour, limit)
+        return [(r["place"], r["name"]) for r in rows]
+    except Exception as e:
+        logging.error(f"Рейтинг недоступен: {e}")
+        return []
+
+
+async def ranking_updated():
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            return await conn.fetchval(
+                f"SELECT MAX(updated_at) FROM {SCHEMA}.tennis_ranking")
+    except Exception as e:
+        logging.error(f"Дата рейтинга недоступна: {e}")
+        return None
+
+
+async def set_player_name(name_en: str, name_ru: str) -> bool:
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"INSERT INTO {SCHEMA}.player_names (name_en, name_ru) "
+                "VALUES ($1, $2) ON CONFLICT (name_en) DO UPDATE "
+                "SET name_ru = EXCLUDED.name_ru", name_en.strip(), name_ru.strip())
+        return True
+    except Exception as e:
+        logging.error(f"Имя игрока не сохранено: {e}")
+        return False
+
+
+async def player_names():
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT name_en, name_ru FROM {SCHEMA}.player_names")
+        return {r["name_en"]: r["name_ru"] for r in rows}
+    except Exception as e:
+        logging.error(f"Свои имена недоступны: {e}")
+        return {}
+
+
 async def book_titles(category: str):
     """(id, автор и название) книг полки — для списка, по которому кликают"""
     try:
@@ -2914,3 +3085,319 @@ async def get_next_unsolved_quiz(user_id: int):
     except Exception as e:
         logging.error(f"БД недоступна при чтении головоломок: {e}")
         return None
+
+
+# --- ОБЩИЙ КАЛЕНДАРЬ ---
+#
+# Здесь только чтение и запись строк; разворачивание серии в отдельные даты
+# и поиск пересечений живут в planner.py — это правила показа, а не хранения.
+
+async def plan_add(space_id: int, title: str, description: str, starts_at,
+                   duration_min: int, repeat_rule: str, repeat_until,
+                   user_id: int, user_name: str):
+    """Заводит событие в конкретном календаре и возвращает его номер"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            return await conn.fetchval(
+                f"INSERT INTO {SCHEMA}.plan_events "
+                "(space_id, title, description, starts_at, duration_min, repeat_rule, "
+                " repeat_until, created_by, created_by_name) "
+                "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id",
+                space_id, title, description or "", starts_at, duration_min,
+                repeat_rule, repeat_until, user_id, user_name
+            )
+    except Exception as e:
+        logging.error(f"Не удалось записать событие календаря: {e}")
+        return None
+
+
+async def plan_event(event_id: int):
+    """Одно событие целиком, вместе с правилом повтора"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            return await conn.fetchrow(
+                f"SELECT * FROM {SCHEMA}.plan_events WHERE id = $1", event_id)
+    except Exception as e:
+        logging.error(f"БД недоступна при чтении события {event_id}: {e}")
+        return None
+
+
+async def plan_range(space_id: int, date_from, date_to):
+    """События, которые МОГУТ попасть в диапазон дат.
+
+    Разовое событие отбираем по своей дате, серию — по пересечению её окна
+    жизни с диапазоном. Точные даты вхождений считает planner: серия «каждый
+    вторник» пересекает любой месяц, но приходится в нём далеко не на все дни.
+    """
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            return await conn.fetch(
+                f"SELECT * FROM {SCHEMA}.plan_events "
+                "WHERE space_id = $3 AND NOT cancelled AND ("
+                "  (repeat_rule IS NULL AND starts_at::date BETWEEN $1 AND $2)"
+                "  OR (repeat_rule IS NOT NULL AND starts_at::date <= $2"
+                "      AND (repeat_until IS NULL OR repeat_until >= $1))"
+                ") ORDER BY starts_at",
+                date_from, date_to, space_id
+            )
+    except Exception as e:
+        logging.error(f"БД недоступна при чтении календаря: {e}")
+        return []
+
+
+async def plan_overrides(event_ids: list):
+    """Переносы и отмены отдельных вхождений перечисленных серий"""
+    if not event_ids:
+        return []
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            return await conn.fetch(
+                f"SELECT * FROM {SCHEMA}.plan_overrides WHERE event_id = ANY($1::int[])",
+                list(event_ids)
+            )
+    except Exception as e:
+        logging.error(f"БД недоступна при чтении переносов календаря: {e}")
+        return []
+
+
+async def plan_set_override(event_id: int, occur_date, moved_to,
+                            duration_min: int, user_id: int) -> bool:
+    """Переносит (moved_to задан) или отменяет (moved_to = None) одно вхождение"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"INSERT INTO {SCHEMA}.plan_overrides "
+                "(event_id, occur_date, moved_to, duration_min, changed_by, changed_at) "
+                "VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP) "
+                "ON CONFLICT (event_id, occur_date) DO UPDATE SET "
+                "moved_to = EXCLUDED.moved_to, duration_min = EXCLUDED.duration_min, "
+                "changed_by = EXCLUDED.changed_by, changed_at = CURRENT_TIMESTAMP",
+                event_id, occur_date, moved_to, duration_min, user_id
+            )
+        return True
+    except Exception as e:
+        logging.error(f"Не удалось изменить вхождение {event_id}/{occur_date}: {e}")
+        return False
+
+
+async def plan_cancel(event_id: int) -> bool:
+    """Отменяет событие целиком (серию — со всеми будущими вхождениями).
+
+    Строку не удаляем: карточка отменённого занятия ещё может понадобиться,
+    чтобы понять, кто и что убрал из общего расписания.
+    """
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            done = await conn.execute(
+                f"UPDATE {SCHEMA}.plan_events SET cancelled = TRUE WHERE id = $1", event_id)
+        return done.endswith("1")
+    except Exception as e:
+        logging.error(f"Не удалось отменить событие {event_id}: {e}")
+        return False
+
+
+async def plan_reschedule(event_id: int, new_start, duration_min: int = None) -> bool:
+    """Двигает событие целиком: разовое — насовсем, серию — вместе с правилом"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            done = await conn.execute(
+                f"UPDATE {SCHEMA}.plan_events SET starts_at = $2, "
+                "duration_min = COALESCE($3, duration_min) WHERE id = $1",
+                event_id, new_start, duration_min
+            )
+        return done.endswith("1")
+    except Exception as e:
+        logging.error(f"Не удалось перенести событие {event_id}: {e}")
+        return False
+
+
+async def plan_set_description(event_id: int, text: str) -> bool:
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            done = await conn.execute(
+                f"UPDATE {SCHEMA}.plan_events SET description = $2 WHERE id = $1",
+                event_id, text or ""
+            )
+        return done.endswith("1")
+    except Exception as e:
+        logging.error(f"Не удалось изменить описание события {event_id}: {e}")
+        return False
+
+
+# --- КАЛЕНДАРИ: ВЛАДЕЛЬЦЫ, УЧАСТНИКИ, ПОДПИСКА ---
+#
+# Владелец бота видит только эти строки: кто ведёт календарь, сколько в нём
+# людей и до какого числа оплачено. Событий чужой семьи он не читает — ни одна
+# функция ниже не возвращает содержимое plan_events.
+
+async def plan_space_create(title: str, owner_id: int, owner_name: str,
+                            invite_code: str, paid_until):
+    """Заводит календарь и сразу вписывает владельца в участники"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                space_id = await conn.fetchval(
+                    f"INSERT INTO {SCHEMA}.plan_spaces "
+                    "(title, owner_id, owner_name, invite_code, paid_until) "
+                    "VALUES ($1, $2, $3, $4, $5) RETURNING id",
+                    title, owner_id, owner_name, invite_code, paid_until)
+                await conn.execute(
+                    f"INSERT INTO {SCHEMA}.plan_members "
+                    "(space_id, user_id, user_name, role) VALUES ($1, $2, $3, 'owner') "
+                    "ON CONFLICT (space_id, user_id) DO NOTHING",
+                    space_id, owner_id, owner_name)
+        return space_id
+    except Exception as e:
+        logging.error(f"Не удалось создать календарь: {e}")
+        return None
+
+
+async def plan_space(space_id: int):
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            return await conn.fetchrow(
+                f"SELECT * FROM {SCHEMA}.plan_spaces WHERE id = $1", space_id)
+    except Exception as e:
+        logging.error(f"БД недоступна при чтении календаря {space_id}: {e}")
+        return None
+
+
+async def plan_space_by_code(code: str):
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            return await conn.fetchrow(
+                f"SELECT * FROM {SCHEMA}.plan_spaces "
+                "WHERE invite_code = $1 AND NOT closed", code)
+    except Exception as e:
+        logging.error(f"БД недоступна при поиске календаря по коду: {e}")
+        return None
+
+
+async def plan_user_spaces(user_id: int):
+    """Календари, в которых человек состоит, с его ролью в каждом"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            return await conn.fetch(
+                f"SELECT s.*, m.role FROM {SCHEMA}.plan_members m "
+                f"JOIN {SCHEMA}.plan_spaces s ON s.id = m.space_id "
+                "WHERE m.user_id = $1 AND NOT s.closed ORDER BY s.id",
+                user_id)
+    except Exception as e:
+        logging.error(f"БД недоступна при чтении календарей участника: {e}")
+        return []
+
+
+async def plan_member(space_id: int, user_id: int):
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            return await conn.fetchrow(
+                f"SELECT * FROM {SCHEMA}.plan_members "
+                "WHERE space_id = $1 AND user_id = $2", space_id, user_id)
+    except Exception as e:
+        logging.error(f"БД недоступна при проверке участника: {e}")
+        return None
+
+
+async def plan_member_add(space_id: int, user_id: int, user_name: str,
+                          role: str = "member") -> bool:
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"INSERT INTO {SCHEMA}.plan_members (space_id, user_id, user_name, role) "
+                "VALUES ($1, $2, $3, $4) ON CONFLICT (space_id, user_id) "
+                "DO UPDATE SET user_name = EXCLUDED.user_name",
+                space_id, user_id, user_name, role)
+        return True
+    except Exception as e:
+        logging.error(f"Не удалось добавить участника в календарь {space_id}: {e}")
+        return False
+
+
+async def plan_member_drop(space_id: int, user_id: int) -> bool:
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            gone = await conn.execute(
+                f"DELETE FROM {SCHEMA}.plan_members "
+                "WHERE space_id = $1 AND user_id = $2 AND role <> 'owner'",
+                space_id, user_id)
+        return gone.endswith("1")
+    except Exception as e:
+        logging.error(f"Не удалось убрать участника из календаря {space_id}: {e}")
+        return False
+
+
+async def plan_members_of(space_id: int):
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            return await conn.fetch(
+                f"SELECT * FROM {SCHEMA}.plan_members WHERE space_id = $1 "
+                "ORDER BY role DESC, joined_at", space_id)
+    except Exception as e:
+        logging.error(f"БД недоступна при чтении участников: {e}")
+        return []
+
+
+async def plan_space_extend(space_id: int, paid_until) -> bool:
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            done = await conn.execute(
+                f"UPDATE {SCHEMA}.plan_spaces SET paid_until = $2 WHERE id = $1",
+                space_id, paid_until)
+        return done.endswith("1")
+    except Exception as e:
+        logging.error(f"Не удалось продлить подписку календаря {space_id}: {e}")
+        return False
+
+
+async def plan_space_close(space_id: int, closed: bool = True) -> bool:
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            done = await conn.execute(
+                f"UPDATE {SCHEMA}.plan_spaces SET closed = $2 WHERE id = $1",
+                space_id, closed)
+        return done.endswith("1")
+    except Exception as e:
+        logging.error(f"Не удалось закрыть календарь {space_id}: {e}")
+        return False
+
+
+async def plan_spaces_overview():
+    """Витрина для владельца бота: кто, сколько людей, до какого числа оплачено.
+
+    Событий здесь нет намеренно: тексты, описания и время чужих встреч
+    владельцу бота не показываются нигде. Только количество — по нему видно,
+    живой календарь или заброшенный.
+    """
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            return await conn.fetch(
+                f"SELECT s.id, s.title, s.owner_id, s.owner_name, s.paid_until, "
+                "       s.closed, s.created_at, "
+                f"       (SELECT COUNT(*) FROM {SCHEMA}.plan_members m WHERE m.space_id = s.id) AS people, "
+                f"       (SELECT COUNT(*) FROM {SCHEMA}.plan_events e "
+                "         WHERE e.space_id = s.id AND NOT e.cancelled) AS events, "
+                f"       (SELECT MAX(e.created_at) FROM {SCHEMA}.plan_events e "
+                "         WHERE e.space_id = s.id) AS last_write "
+                f"FROM {SCHEMA}.plan_spaces s ORDER BY s.id")
+    except Exception as e:
+        logging.error(f"БД недоступна при чтении списка календарей: {e}")
+        return []

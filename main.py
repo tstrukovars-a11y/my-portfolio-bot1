@@ -29,6 +29,7 @@ import tennis_alerts
 import banners
 import avatars
 import puzzle_daily
+import tennis_rank
 import inline_kb
 
 
@@ -371,6 +372,12 @@ async def main():
     # Свои картинки разделов — до первого показа меню.
     await banners.load()
 
+    # Рейтинг и свои написания имён — из базы в память процесса.
+    try:
+        logging.info(f"Теннис: {await tennis_rank.apply()}")
+    except Exception as e:
+        logging.warning(f"Рейтинг не поднялся: {e}")
+
     logging.info(await translator.check_key())
 
     # Фоновая задача: подтягивает свежие заголовки при старте, затем каждые 24 часа
@@ -444,6 +451,7 @@ async def main():
     dp.include_router(banners.router)
     dp.include_router(avatars.router)
     dp.include_router(puzzle_daily.router)
+    dp.include_router(tennis_rank.router)
     dp.include_router(puzzles.router)
     dp.include_router(shop.router)
     dp.include_router(orders.router)
@@ -481,6 +489,7 @@ async def main():
     # Публикация в канал: запускаем после создания бота — раньше объекта ещё нет
     asyncio.create_task(digest.scheduler(bot))
     asyncio.create_task(tennis_alerts.alerts_scheduler(bot))
+    asyncio.create_task(tennis_rank.scheduler())
 
     # Своё имя бот спрашивает у Telegram, а не ждёт, пока его впишут руками:
     # на нём держатся глубокие ссылки из канала, и опечатка в нём означала бы
