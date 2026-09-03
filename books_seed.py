@@ -467,9 +467,24 @@ async def book_link_one(message: Message):
         return
     parts = message.text.split()
     if len(parts) < 3 or not parts[1].isdigit():
-        await message.answer("Нужно так: <code>/book_link 12 https://…</code>")
+        await message.answer(
+            "Нужно так: <code>/book_link 12 https://…</code>\n"
+            "Снять ссылку: <code>/book_link 12 нет</code>")
         return
-    ok = await database.set_book_link(int(parts[1]), parts[2].strip())
+
+    value = parts[2].strip()
+    # Книга кончилась — ссылку снимаем, кнопка «Купить» просто исчезает.
+    # Это лучше, чем вести читателя на «нет в наличии».
+    if value.lower() in ("нет", "-", "off", "убрать"):
+        ok = await database.set_book_link(int(parts[1]), "")
+        await message.answer("✅ Ссылка снята — кнопки «Купить» у этой книги "
+                             "больше нет" if ok else "❌ Книга не найдена")
+        return
+
+    if not value.startswith("http"):
+        await message.answer("Это не похоже на ссылку.")
+        return
+    ok = await database.set_book_link(int(parts[1]), value)
     await message.answer("✅ Сохранила" if ok else "❌ Книга с таким номером не найдена")
 
 
@@ -551,11 +566,19 @@ async def links_show(message: Message):
     if not config.is_admin(message.from_user.id):
         return
     left = await database.books_without_link()
+    have = await database.books_with_link()
     stats = await database.books_link_stats()
+
     lines = [f"🔗 Со ссылками: {stats['done']} из {stats['total']}", ""]
     if left:
         lines.append("<b>Без ссылки:</b>")
         lines += [f"<code>{i}</code> — {html.escape(t)}" for i, t in left[:40]]
-    else:
-        lines.append("Ссылки есть у всех книг.")
+        lines.append("")
+    if have:
+        lines.append("<b>Со ссылкой</b> — номер нужен, чтобы заменить:")
+        lines += [f"<code>{i}</code> — {html.escape(t)}" for i, t, _ in have[:40]]
+        lines += ["", "Заменить: <code>/book_link 12 https://…</code>",
+                  "Снять (книги нет в наличии): <code>/book_link 12 нет</code>"]
+    if not left and not have:
+        lines.append("Книг пока нет.")
     await message.answer("\n".join(lines))
