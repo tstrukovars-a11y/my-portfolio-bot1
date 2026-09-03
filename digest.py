@@ -356,13 +356,36 @@ CLUB_DEFAULT = "💬 Обсудить в клубе"
 CLUB_LINK_KEY = "digest_club_link"   # публичная ссылка-приглашение, если есть
 
 
-async def _club_row(section: str):
+async def _club_username(chat_id: int, bot: Bot = None):
+    """Юзернейм группы, если она публичная. Спрашиваем у Telegram один раз.
+
+    Кэш читаем всегда, даже когда бота под рукой нет: иначе уже известное
+    имя терялось и ссылка снова получалась «для своих».
+    """
+    cached = await database.get_setting("digest_club_username")
+    if cached:
+        return None if cached == "-" else cached
+    if bot is None:
+        return None
+    try:
+        chat = await bot.get_chat(chat_id)
+    except Exception as e:
+        logging.warning(f"Группа не опрошена: {e}")
+        return None
+    await database.set_setting("digest_club_username", chat.username or "-")
+    return chat.username
+
+
+async def _club_row(section: str, bot: Bot = None):
     """Кнопка в тему группы, где этот раздел обсуждают.
 
     Адрес собираем из настроек дубля: бот уже знает и чат, и тему каждого
-    раздела, отдельно их вписывать незачем. Для закрытой группы ссылка
-    вида t.me/c/<чат>/<тема> открывается только у участников — поэтому
-    если задано приглашение, ведём по нему.
+    раздела, вписывать их отдельно незачем.
+
+    Форма ссылки решает всё. У публичной группы это t.me/<имя>/<тема> —
+    она открывается у любого, даже не вступившего, и ведёт сразу в нужную
+    ветку. У закрытой остаётся t.me/c/<чат>/<тема>, а она работает только
+    у участников, поэтому для закрытой лучше задать приглашение.
     """
     target = await database.get_setting(MIRROR_KEY)
     if not target:
@@ -372,14 +395,22 @@ async def _club_row(section: str):
 
     invite = await database.get_setting(CLUB_LINK_KEY)
     if invite:
-        # У приглашения темы нет: оно ведёт в группу целиком.
+        # Заданное вручную приглашение перевешивает: у него темы нет,
+        # зато оно точно открывается у всех.
         return [InlineKeyboardButton(text=label, url=invite)]
 
     try:
-        internal = str(int(target)).removeprefix("-100")
+        chat_id = int(target)
     except (TypeError, ValueError):
         return None
-    url = f"https://t.me/c/{internal}/{thread}" if thread else f"https://t.me/c/{internal}"
+
+    username = await _club_username(chat_id, bot)
+    if username:
+        url = f"https://t.me/{username}/{thread}" if thread else f"https://t.me/{username}"
+    else:
+        internal = str(chat_id).removeprefix("-100")
+        url = (f"https://t.me/c/{internal}/{thread}" if thread
+               else f"https://t.me/c/{internal}")
     return [InlineKeyboardButton(text=label, url=url)]
 
 
@@ -510,7 +541,7 @@ async def publish_next(bot: Bot, only: str = None, lead: str = None,
         if buy:
             rows.append(buy)
 
-        club = await _club_row(section)
+        club = await _club_row(section, bot)
         if club:
             rows.append(club)
 
@@ -1029,6 +1060,7 @@ async def set_mirror_here(call: CallbackQuery):
         return
 
     await database.set_setting(MIRROR_KEY, chat_id)
+    await database.set_setting("digest_club_username", "")
     if section == "all":
         await database.set_setting(MIRROR_THREAD_KEY, thread if thread != "0" else "")
         label = "всё"
@@ -1183,6 +1215,7 @@ async def digest_command(message: Message, bot: Bot):
                 "группы и нажмите кнопку — номер подставится сам.")
             return
         await database.set_setting(MIRROR_KEY, bits[0])
+        await database.set_setting("digest_club_username", "")
 
         if len(bits) > 2:
             # Всё после номера темы — название раздела: у тем бывают имена
