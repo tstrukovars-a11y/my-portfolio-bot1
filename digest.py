@@ -414,12 +414,31 @@ async def _club_row(section: str, bot: Bot = None):
     return [InlineKeyboardButton(text=label, url=url)]
 
 
-async def _mirror(bot: Bot, from_chat: int, message_id: int, section: str):
+async def _channel_username(bot: Bot, chat_id: int):
+    """Юзернейм канала — из него собирается ссылка на конкретный пост"""
+    cached = await database.get_setting("digest_channel_username")
+    if cached:
+        return None if cached == "-" else cached
+    try:
+        chat = await bot.get_chat(chat_id)
+    except Exception as e:
+        logging.warning(f"Канал не опрошен: {e}")
+        return None
+    await database.set_setting("digest_channel_username", chat.username or "-")
+    return chat.username
+
+
+async def _mirror(bot: Bot, from_chat: int, message_id: int, section: str,
+                  markup: InlineKeyboardMarkup = None):
     """Дублирует свежий пост в группу, если она задана.
 
-    Именно пересылка, а не копия: у пересланного поста остаётся подпись
-    канала, и по ней участники группы попадают в сам канал. Ради этого
-    перехода дубль и нужен — копия без подписи роста не даёт.
+    Раньше дубль был пересылкой — ради подписи канала, по которой
+    участники группы в него переходят. Но пересылка не переносит кнопки:
+    они принадлежат исходному сообщению. В группе оставались текст и
+    обложка без «Купить», без справочника и без заказа.
+
+    Поэтому копия плюс явная кнопка «Читать в канале». Переход она даёт
+    не хуже подписи, а всё остальное доезжает целиком.
 
     Ошибка дубля не отменяет публикацию: пост в канале уже вышел, и
     сбрасывать его из-за недоступной группы было бы хуже.
@@ -428,10 +447,24 @@ async def _mirror(bot: Bot, from_chat: int, message_id: int, section: str):
     if not target:
         return
     thread = await _mirror_thread(section)
+
+    # Кнопку клуба в самой группе не показываем: она ведёт туда же, где
+    # человек уже находится.
+    club = await _club_row(section, bot)
+    club_url = club[0].url if club else None
+    rows = [row for row in (markup.inline_keyboard if markup else [])
+            if not (club_url and len(row) == 1 and row[0].url == club_url)]
+
+    username = await _channel_username(bot, from_chat)
+    source = (f"https://t.me/{username}/{message_id}" if username
+              else f"https://t.me/c/{str(from_chat).removeprefix('-100')}/{message_id}")
+    rows.append([InlineKeyboardButton(text="📣 Читать в «Акценте»", url=source)])
+
     try:
-        await bot.forward_message(
+        await bot.copy_message(
             chat_id=int(target), from_chat_id=from_chat, message_id=message_id,
             message_thread_id=int(thread) if thread else None,
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
         )
     except Exception as e:
         logging.error(f"Дайджест: пост вышел, но дубль в группу не прошёл: {e}")
@@ -596,7 +629,7 @@ async def publish_next(bot: Bot, only: str = None, lead: str = None,
             await database.mark_published(section, item_id, sent.message_id)
         await database.set_setting("digest_last_section", section)
         await database.set_setting(LAST_AT_KEY, datetime.now().isoformat())
-        await _mirror(bot, chat, sent.message_id, section)
+        await _mirror(bot, chat, sent.message_id, section, markup)
         kind = "напоминание" if repeat else "опубликовано"
         return f"{kind}: {section}/{item_id} — {title[:50]}"
 
@@ -1198,6 +1231,7 @@ async def digest_command(message: Message, bot: Bot):
         return
 
     if command == "chat" and len(parts) > 2:
+        await database.set_setting("digest_channel_username", "")
         await database.set_setting(TARGET_KEY, parts[2].strip())
         await message.answer(f"✅ Канал публикации: <code>{html.escape(parts[2].strip())}</code>")
         return
