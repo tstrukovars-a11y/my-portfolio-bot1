@@ -57,6 +57,23 @@ def is_admin(user_id: int) -> bool:
     return bool(ADMIN_ID) and user_id == ADMIN_ID
 
 
+# Кому календарь достаётся без подписки: своя тестовая группа и владелец бота.
+# Список можно переопределить переменной PLAN_FREE_USERS ("111,222"), но и без
+# неё эти люди заводят себе календарь сами и бессрочно.
+def _free_calendar_users() -> set:
+    raw = (os.getenv("PLAN_FREE_USERS") or "").replace(",", " ").split()
+    ids = {int(x) for x in raw if x.isdigit()}
+    return ids or {1097484776, 132276171, 5135747687}
+
+
+PLAN_FREE_USERS = _free_calendar_users()
+
+
+def calendar_is_free(user_id: int) -> bool:
+    """Заводит календарь без оплаты и без пробного периода"""
+    return user_id in PLAN_FREE_USERS or is_admin(user_id)
+
+
 # Один бот сидит админом в нескольких каналах, поэтому каждый сборщик слушает
 # только свой. Если переменная не задана (0), фильтр по каналу отключён и пост
 # принимается откуда угодно — так поведение не ломается, пока id не проставлены.

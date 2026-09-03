@@ -400,11 +400,15 @@ def get_intellect_menu(lang):
     g = "🧬 Генетика и Наука" if lang == "ru" else "🧬 Genetics & Science"
     p = "🧩 Головоломки" if lang == "ru" else "🧩 Puzzles"
     b = "📚 Моя библиотека" if lang == "ru" else "📚 My Library"
+    # Календарь. Кнопку видят все: у кого календаря ещё нет, тот попадёт на
+    # экран с условиями — это и есть вход в продукт.
+    c = "📅 Мой календарь" if lang == "ru" else "📅 My calendar"
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=d, callback_data="menu_diary")],
         [InlineKeyboardButton(text=g, callback_data="intellect_genetics")],
         [InlineKeyboardButton(text=p, callback_data="intellect_puzzle")],
         [InlineKeyboardButton(text=b, callback_data="intellect_books")],
+        [InlineKeyboardButton(text=c, callback_data="plan:open")],
         [InlineKeyboardButton(text="⇦ В главное меню" if lang == "ru" else "⇦ Main Menu", callback_data="go_home")]
     ])
 

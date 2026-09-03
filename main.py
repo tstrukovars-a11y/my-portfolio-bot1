@@ -31,6 +31,7 @@ import avatars
 import puzzle_daily
 import tennis_rank
 import inline_kb
+import planner
 
 
 def _make_webhook_secret() -> str:
@@ -448,6 +449,7 @@ async def main():
         return True
 
     # Приоритеты регистрации роутеров
+    dp.include_router(planner.router)
     dp.include_router(banners.router)
     dp.include_router(avatars.router)
     dp.include_router(puzzle_daily.router)
