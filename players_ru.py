@@ -154,6 +154,14 @@ _RU = {
     "Caty McNally": "Кэти Макналли",
     "Lucrezia Stefanini": "Лукреция Стефанини",
     "Xiyu Wang": "Ван Сиюй",
+    "Zheng Qinwen": "Чжэн Циньвэнь",
+    "Bu Yunchaokete": "Бу Юньчаокэтэ",
+    "Botic Van De Zandschulp": "Ботик ван де Зандсхюлп",
+    "Leolia Jeanjean": "Леолия Жанжан",
+    "Jurij Rodionov": "Юрий Родионов",
+    "Nadia Podoroska": "Надя Подороска",
+    "Dane Sweeny": "Дейн Суини",
+    "Tristan Schoolkate": "Тристан Скулкейт",
 }
 
 # По фамилии — на случай, когда источник отдаёт имя иначе («I. Swiatek»,
@@ -352,3 +360,75 @@ def ru(name: str) -> str:
     if any("а" <= ch.lower() <= "я" or ch in "ёЁ" for ch in clean):
         return clean
     return translit(clean)
+
+
+# =====================================================================
+# КОГО ПОКАЗЫВАТЬ ОБЯЗАТЕЛЬНО
+# =====================================================================
+#
+# В сетке «Шлема» полторы сотни имён, и большинство читателю ничего не
+# говорит. Отбираем два круга: свои — россияне и те, кто уехал под другой
+# флаг, но остался «нашим» для аудитории, — и первая двадцатка рейтинга.
+#
+# Источник посева и рейтинга не отдаёт, поэтому список ручной. Он
+# устаревает: рейтинг меняется каждую неделю, и раз в пару месяцев сюда
+# надо заглядывать. Ошибка здесь безобидна — матч просто не попадёт в
+# расписание, счёт и сетка всё равно доступны по кнопке.
+
+_NASHI = {
+    # Россия
+    "medvedev", "rublev", "khachanov", "safiullin", "karatsev", "kotov",
+    "shevchenko", "donskoy",
+    "andreeva", "shnaider", "samsonova", "alexandrova", "pavlyuchenkova",
+    "kudermetova", "kalinskaya", "potapova", "rakhimova", "zakharova",
+    "korneeva", "avanesyan", "blinkova", "kasatkina", "gracheva",
+    # уехали под другой флаг, но для аудитории свои
+    "rybakina", "putintseva", "bublik", "shapovalov", "svitolina",
+    "kostyuk", "starodubtseva", "azarenka", "sabalenka",
+}
+
+# Первая двадцатка с небольшим запасом
+_TOP = {
+    "sinner", "alcaraz", "djokovic", "zverev", "fritz", "draper", "ruud",
+    "musetti", "de minaur", "medvedev", "shelton", "rublev", "paul",
+    "tsitsipas", "rune", "cerundolo", "khachanov", "humbert", "tiafoe",
+    "machac", "cobolli", "lehecka", "fils", "mensik", "auger-aliassime",
+    "sabalenka", "swiatek", "gauff", "pegula", "paolini", "zheng qinwen",
+    "navarro", "rybakina", "badosa", "keys", "andreeva", "kasatkina",
+    "haddad maia", "krejcikova", "vekic", "svitolina", "kostyuk",
+    "muchova", "samsonova", "alexandrova", "shnaider", "collins",
+}
+
+
+# Имена, где фамилия стоит первой: сверять надо по первому слову.
+_SURNAME_FIRST = {"zheng", "bu", "wang", "zhang", "li", "sun", "yuan", "shang"}
+
+
+def _key(name: str) -> str:
+    """Фамилия в нижнем регистре — по ней и сверяем"""
+    clean = (name or "").replace(".", " ").strip().lower()
+    parts = clean.split()
+    if not parts:
+        return ""
+    # Двусоставные фамилии: «de Minaur», «Haddad Maia»
+    if len(parts) >= 2 and parts[-2] in ("de", "van", "haddad", "auger", "bautista"):
+        return " ".join(parts[-2:])
+    # У восточных имён фамилия первая, и одной её мало: Zheng Qinwen —
+    # первая ракетка, а Michael Zheng — юниор из США с той же фамилией.
+    if parts[0] in _SURNAME_FIRST:
+        return " ".join(parts[:2]) if len(parts) > 1 else parts[0]
+    return parts[-1]
+
+
+def is_nash(name: str) -> bool:
+    return _key(name) in _NASHI
+
+
+def is_top(name: str) -> bool:
+    return _key(name) in _TOP
+
+
+def notable(name: str) -> bool:
+    """Стоит ли этот матч ставить в расписание"""
+    key = _key(name)
+    return key in _NASHI or key in _TOP

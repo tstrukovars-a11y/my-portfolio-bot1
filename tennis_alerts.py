@@ -27,14 +27,14 @@ import tennis_live
 
 router = Router()
 
-MAX_MATCHES = 8          # больше кнопок под постом не читается
+MAX_MATCHES = 10         # больше кнопок под постом не читается
 CHECK_EVERY = 60         # раз в минуту: слать надо в момент начала,
                          # а не «когда-нибудь в ближайшие две»
 # За сколько минут до начала слать. Десять — чтобы успеть включить
 # трансляцию. Ноль означал бы «в момент начала».
 LEAD_DEFAULT = 10
 LEAD_KEY = "tennis_lead"
-RESULTS_MAX = 12         # длиннее сводку с утра не читают
+MAX_MESSAGE = 4000       # запас до телеграмовских 4096
 
 
 def _title(match) -> str:
@@ -80,6 +80,15 @@ def _starts(match):
         return datetime.fromisoformat(raw.replace("Z", "+00:00"))
     except ValueError:
         return None
+
+
+def _notable(match) -> bool:
+    """Есть ли в матче тот, ради кого его стоит анонсировать"""
+    for side in (match.get("sides") or [])[:2]:
+        name = ((side.get("athlete") or {}).get("displayName") or "")
+        if players_ru.notable(name):
+            return True
+    return False
 
 
 async def _today(tour: str):
@@ -147,6 +156,19 @@ async def _shift():
     return timedelta(minutes=round(raw.total_seconds() / 60))
 
 
+def _split(text: str):
+    """Длинный текст — на сообщения, по границам строк"""
+    parts, current = [], ""
+    for line in text.split("\n"):
+        if len(current) + len(line) + 1 > MAX_MESSAGE and current:
+            parts.append(current)
+            current = ""
+        current += (line if not current else "\n" + line)
+    if current:
+        parts.append(current)
+    return parts
+
+
 def _matches_word(n: int) -> str:
     """матч / матча / матчей"""
     if n % 10 == 1 and n % 100 != 11:
@@ -192,11 +214,14 @@ async def publish_schedule(bot: Bot, chat: int, thread=None) -> str:
         day = await _today(tour)
         if not day:
             continue
-        # Показываем ближайшие по времени, а выводим сгруппированно по
-        # турниру — иначе заголовки турниров пошли бы вперемешку.
-        matches = sorted(day[:MAX_MATCHES],
+
+        # Из полутора сотен матчей «Шлема» в анонс идут те, где играют свои
+        # или первая двадцатка: остальные фамилии читателю ничего не
+        # говорят, а кнопок под постом всё равно ограниченное число.
+        picked = [m for m in day if _notable(m)] or day
+        matches = sorted(picked[:MAX_MATCHES],
                          key=lambda m: (_event(m), m.get("date") or ""))
-        rest = len(day) - len(matches)
+        rest = len(picked) - len(matches)
 
         lines = [f"🎾 <b>{tennis_live.TOURS[tour]['title']} — сегодня</b>"]
         rows = []
@@ -218,8 +243,13 @@ async def publish_schedule(bot: Bot, chat: int, thread=None) -> str:
                 text=f"🔔 {title[:38]}", callback_data=f"tmatch_{tour}_{m['id']}")])
 
         lines.append("")
+        skipped = len(day) - len(picked)
         if rest:
-            lines.append(f"И ещё {rest} {_matches_word(rest)} сегодня — в сетке.")
+            lines.append(f"И ещё {rest} {_matches_word(rest)} с участием "
+                         f"сильнейших — в сетке.")
+        elif skipped:
+            lines.append(f"Всего сегодня {len(day)} {_matches_word(len(day))}, "
+                         f"полная сетка по кнопке ниже.")
         lines.append(
             f"Нажмите на матч — пришлю ссылку на трансляцию в личные "
             f"сообщения, {('за ' + str(lead) + ' ' + _minutes_word(lead) + ' до начала') if lead else 'к началу'}.")
@@ -287,14 +317,17 @@ async def publish_results(bot: Bot, chat: int, thread=None) -> str:
     shift = await _shift()
     yesterday = (datetime.now(timezone.utc) + shift - timedelta(days=1)).date()
 
-    blocks = []
+    blocks, total = [], 0
     for tour in ("wta", "atp"):
         played = await _finished(tour, yesterday)
         if not played:
             continue
+        total += len(played)
         lines = [f"<b>{tennis_live.TOURS[tour]['title']}</b>"]
         current = None
-        for m in played[:RESULTS_MAX]:
+        # Все матчи, без «и ещё пять»: итог дня, из которого вырезали
+        # половину, — это не итог.
+        for m in played:
             event = _event(m)
             if event != current:
                 current = event
@@ -302,27 +335,31 @@ async def publish_results(bot: Bot, chat: int, thread=None) -> str:
             line = _result_line(m)
             if line:
                 lines.append(line)
-        rest = len(played) - min(len(played), RESULTS_MAX)
-        if rest:
-            lines.append(f"<i>…и ещё {rest} {_matches_word(rest)}</i>")
         blocks.append("\n".join(lines))
 
     if not blocks:
         return "вчера крупных матчей не было"
 
     head = f"🎾 <b>Вчера на кортах — {yesterday.strftime('%d.%m')}</b>"
-    text = head + "\n\n" + "\n\n".join(blocks)
     rows = [[InlineKeyboardButton(
         text=f"🗓 Сетка {tennis_live.TOURS[tour]['title']}",
         url=tennis_live.TOURS[tour]["draws"])] for tour in ("wta", "atp")]
-    try:
-        await bot.send_message(chat, text[:4096],
-                               message_thread_id=thread,
-                               reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
-    except Exception as e:
-        logging.error(f"Сводка результатов не вышла: {e}")
-        return f"ошибка: {e}"
-    return "итоги вчерашнего дня"
+
+    # День «Шлема» — это полсотни матчей, в одно сообщение они не влезают.
+    # Режем по строкам, кнопки вешаем на последнее.
+    parts = _split(head + "\n\n" + "\n\n".join(blocks))
+    for i, part in enumerate(parts):
+        last = i == len(parts) - 1
+        try:
+            await bot.send_message(
+                chat, part, message_thread_id=thread,
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=rows) if last else None)
+        except Exception as e:
+            logging.error(f"Сводка результатов не вышла: {e}")
+            return f"ошибка: {e}"
+        if not last:
+            await asyncio.sleep(3.2)
+    return f"итоги вчерашнего дня: матчей {total}, сообщений {len(parts)}"
 
 
 @router.message(F.text.startswith("/tennis_lead"))
