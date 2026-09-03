@@ -23,22 +23,44 @@ import players_ru
 router = Router()
 
 URL = "https://site.api.espn.com/apis/site/v2/sports/tennis/{tour}/rankings"
-HEADERS = {"User-Agent": "Mozilla/5.0"}
+
+# С сервера Render запрос с подставным браузерным User-Agent получал 403,
+# хотя табло тем же хостом отдаётся свободно. Разница была в заголовках:
+# табло ходит с одним Accept и не притворяется браузером. Поэтому идём по
+# списку вариантов и запоминаем сработавший, а не гадаем.
+HEADER_SETS = (
+    {"Accept": "application/json"},
+    {"Accept": "application/json",
+     "Referer": "https://www.espn.com/", "Origin": "https://www.espn.com"},
+    {"Accept": "application/json", "User-Agent": "Mozilla/5.0"},
+)
 KEEP = 60                 # столько мест храним: с запасом на травмы и откаты
 NOTABLE_PLACE = 25        # кого считаем сильнейшими для анонса
 REFRESH_HOURS = 24 * 7    # ESPN обновляет раз в неделю, чаще незачем
 RUSSIAN_FLAGS = {"rus", "russia"}
 
 
+async def _get(tour: str):
+    """Ответ ESPN либо None. Перебираем наборы заголовков по очереди."""
+    last = None
+    async with httpx.AsyncClient(timeout=25, follow_redirects=True) as client:
+        for number, headers in enumerate(HEADER_SETS, 1):
+            try:
+                response = await client.get(URL.format(tour=tour), headers=headers)
+                response.raise_for_status()
+                if number > 1:
+                    logging.info(f"Рейтинг {tour}: подошёл набор заголовков №{number}")
+                return response.json()
+            except Exception as e:
+                last = e
+    logging.error(f"Рейтинг {tour} не скачался ни одним способом: {last}")
+    return None
+
+
 async def _fetch(tour: str):
     """[(место, имя, страна)] либо пусто"""
-    try:
-        async with httpx.AsyncClient(timeout=25, follow_redirects=True) as client:
-            response = await client.get(URL.format(tour=tour), headers=HEADERS)
-            response.raise_for_status()
-            data = response.json()
-    except Exception as e:
-        logging.error(f"Рейтинг {tour} не скачался: {e}")
+    data = await _get(tour)
+    if not data:
         return []
 
     out = []
