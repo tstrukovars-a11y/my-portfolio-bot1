@@ -7,11 +7,11 @@
 # Ключ живёт в переменной окружения, а не в базе и не в коде: это доступ к
 # деньгам, и ему не место там, куда я или кто-то ещё может заглянуть.
 #
-# Схему выгрузки я не видела — она у каждой сети своя и в открытой
-# документации не описана. Поэтому разбор терпимый: ищем заказы по любым
-# похожим тегам и читаем поля и из атрибутов, и из вложенных узлов. Если
-# формат окажется другим, «/advcake сырое» покажет ответ как есть, и я
-# поправлю разбор по факту, а не по догадке.
+# Отвечают они JSON, хотя документация обещала XML, — поэтому разбираем
+# оба вида. И главное: при неполном кабинете приходит не пустой список, а
+# {"success": false, "error": "…"} — эту причину надо показывать дословно,
+# иначе владелец видит «не разобралось» и не понимает, что дело в анкете.
+import json
 import logging
 import os
 import xml.etree.ElementTree as ET
@@ -51,6 +51,38 @@ def _field(node, names):
         child = node.find(name)
         if child is not None and (child.text or "").strip():
             return child.text.strip()
+    return ""
+
+
+def _from_json(text: str):
+    """(заказы, ошибка) из JSON-ответа. None — значит это не JSON."""
+    try:
+        data = json.loads(text)
+    except (ValueError, TypeError):
+        return None, None
+    if isinstance(data, list):
+        return data, None
+    if not isinstance(data, dict):
+        return None, None
+
+    if data.get("error"):
+        return None, str(data["error"])
+    if data.get("success") is False:
+        return None, "AdvCake отказал, но причину не назвал."
+
+    for key in ("data", "orders", "result", "items", "rows"):
+        rows = data.get(key)
+        if isinstance(rows, list):
+            return rows, None
+    return [], None
+
+
+def _pick(row: dict, names):
+    """Поле из словаря по любому из подходящих имён"""
+    for name in names:
+        value = row.get(name)
+        if value not in (None, ""):
+            return str(value)
     return ""
 
 
@@ -100,6 +132,12 @@ def _money(value: str) -> float:
 
 def summary(xml_text: str, days: int) -> str:
     """Человеческая сводка по выгрузке"""
+    rows, error = _from_json(xml_text)
+    if error:
+        return f"AdvCake отвечает: «{error}»"
+    if rows is not None:
+        return _summary_rows(rows, days, json_mode=True)
+
     orders = _orders(xml_text)
     if orders is None:
         return ("Ответ пришёл, но разобрать его не вышло — покажите мне "
@@ -107,13 +145,21 @@ def summary(xml_text: str, days: int) -> str:
     if not orders:
         return f"За {days} дн. заказов нет."
 
+    return _summary_rows(orders, days, json_mode=False)
+
+
+def _summary_rows(orders, days: int, json_mode: bool) -> str:
+    if not orders:
+        return f"За {days} дн. заказов нет."
+
+    get = (lambda row, names: _pick(row, names)) if json_mode else _field
     total = 0.0
     statuses, shops, subs = Counter(), Counter(), Counter()
     for node in orders:
-        total += _money(_field(node, SUM_FIELDS))
-        statuses[_field(node, STATUS_FIELDS) or "без статуса"] += 1
-        shops[_field(node, OFFER_FIELDS) or "—"] += 1
-        sub = _field(node, SUB_FIELDS)
+        total += _money(get(node, SUM_FIELDS))
+        statuses[get(node, STATUS_FIELDS) or "без статуса"] += 1
+        shops[get(node, OFFER_FIELDS) or "—"] += 1
+        sub = get(node, SUB_FIELDS)
         if sub:
             subs[sub] += 1
 
