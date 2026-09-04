@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="950" height="950" viewBox="0 0 950 950"><rect width="950" height="950" fill="#F2F5F6"/><g transform="translate(0,332)"><clipPath id="n0"><circle cx="127.0" cy="127.0" r="105.0"/></clipPath><g clip-path="url(#n0)"><g transform="translate(22,22) scale(0.41015625)">
+  <rect width="512" height="512" fill="#14171A"/>
+  <path d="M150 404 L256 186 L362 404" fill="none" stroke="#FFFFFF" stroke-width="54" stroke-linejoin="miter"/>
+  <path d="M190 348 H322" stroke="#FFFFFF" stroke-width="44"/>
+  <g transform="translate(318,110)" fill="none" stroke="#EA7A3C" stroke-width="13" stroke-linecap="round" stroke-linejoin="round">
+    <g transform="rotate(34)">
+      <circle cx="-4" cy="-14" r="30"/>
+      <path d="M-4,16 V54"/>
+    </g>
+    <circle cx="50" cy="-46" r="10"/>
+  </g>
+</g></g><text x="127.0" y="254" text-anchor="middle" font-family="Helvetica,Arial" font-size="15" fill="#16191C">Ракетка и мяч, контур</text><clipPath id="n1"><circle cx="359.0" cy="127.0" r="105.0"/></clipPath><g clip-path="url(#n1)"><g transform="translate(254,22) scale(0.41015625)">
+  <rect width="512" height="512" fill="#14171A"/>
+  <path d="M150 404 L256 186 L362 404" fill="none" stroke="#FFFFFF" stroke-width="54" stroke-linejoin="miter"/>
+  <path d="M190 348 H322" stroke="#FFFFFF" stroke-width="44"/>
+  <g transform="translate(327,107)" fill="none" stroke="#EA7A3C" stroke-width="13" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M-52,6 H52"/>
+    <path d="M0,-16 V6"/>
+    <path d="M-20,-16 H20"/>
+    <path d="M-40,6 L-46,44"/>
+    <path d="M40,6 L46,44"/>
+  </g>
+</g></g><text x="359.0" y="254" text-anchor="middle" font-family="Helvetica,Arial" font-size="15" fill="#16191C">Стол с сеткой</text><clipPath id="n2"><circle cx="591.0" cy="127.0" r="105.0"/></clipPath><g clip-path="url(#n2)"><g transform="translate(486,22) scale(0.41015625)">
+  <rect width="512" height="512" fill="#14171A"/>
+  <path d="M150 404 L256 186 L362 404" fill="none" stroke="#FFFFFF" stroke-width="54" stroke-linejoin="miter"/>
+  <path d="M190 348 H322" stroke="#FFFFFF" stroke-width="44"/>
+  <g transform="translate(327,107)">
+    <circle cx="26" cy="-30" r="18" fill="#EA7A3C"/>
+    <path d="M-46,44 C-34,4 -8,-14 12,-24" fill="none" stroke="#EA7A3C" stroke-width="12" stroke-linecap="round" stroke-dasharray="4 20"/>
+  </g>
+</g></g><text x="591.0" y="254" text-anchor="middle" font-family="Helvetica,Arial" font-size="15" fill="#16191C">Мяч и траектория</text><clipPath id="n3"><circle cx="823.0" cy="127.0" r="105.0"/></clipPath><g clip-path="url(#n3)"><g transform="translate(718,22) scale(0.41015625)">
+  <rect width="512" height="512" fill="#14171A"/>
+  <path d="M150 404 L256 186 L362 404" fill="none" stroke="#FFFFFF" stroke-width="54" stroke-linejoin="miter"/>
+  <path d="M190 348 H322" stroke="#FFFFFF" stroke-width="44"/>
+  <g transform="translate(327,107)" fill="#EA7A3C">
+    <g transform="rotate(-30) translate(-26,0)">
+      <circle cx="0" cy="-14" r="24"/><rect x="-7" y="8" width="14" height="34" rx="7"/>
+    </g>
+    <g transform="rotate(30) translate(26,0)">
+      <circle cx="0" cy="-14" r="24"/><rect x="-7" y="8" width="14" height="34" rx="7"/>
+    </g>
+    <circle cx="0" cy="-44" r="10"/>
+  </g>
+</g></g><text x="823.0" y="254" text-anchor="middle" font-family="Helvetica,Arial" font-size="15" fill="#16191C">Две ракетки и мяч</text></g></svg>
