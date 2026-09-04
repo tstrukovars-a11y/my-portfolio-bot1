@@ -259,8 +259,16 @@ async def channel_command(message: Message):
     parts = message.text.split(maxsplit=1)
     arg = parts[1].strip() if len(parts) > 1 else ""
 
-    if arg.startswith("http") or arg.startswith("@"):
-        url = arg if arg.startswith("http") else f"https://t.me/{arg.lstrip('@')}"
+    # Принимаем все три вида, которыми ссылку присылают на практике:
+    # «@имя», «t.me/имя» и полный адрес. Отказ из-за пропущенного https —
+    # придирка, а не проверка.
+    if arg.startswith(("http", "@", "t.me/", "telegram.me/")):
+        if arg.startswith("http"):
+            url = arg
+        elif arg.startswith("@"):
+            url = f"https://t.me/{arg.lstrip('@')}"
+        else:
+            url = f"https://{arg}"
         await database.set_setting(LINK_KEY, url)
         import inline_kb
         inline_kb.CHANNEL_URL = url
