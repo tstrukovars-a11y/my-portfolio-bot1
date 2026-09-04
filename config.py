@@ -134,6 +134,13 @@ PUZZLE_BANNER = get_banner("AgACAgIAAxkDAAPgagtm_U8YM5obddnWLhCd2FEUdZIAAtUaaxts
 # отдельную: по умолчанию та же, дальше меняется через /banner кухня.
 FOOD_BANNER = ART_BANNER
 
+# Картины, ателье и интерактив делили чужие картинки: первые две — с
+# «Творчеством», третий вообще не ставил свою, а переписывал подпись поверх
+# предыдущего экрана. По умолчанию оставляем прежний вид.
+PAINTINGS_BANNER = ART_BANNER
+ATELIER_BANNER = ART_BANNER
+GAME_BANNER = MAIN_BANNER
+
 GENETICS_BANNER = get_banner("AgACAgIAAxkDAAPgagtm_U8YM5obddnWLhCd2FEUdZIAAtUaaxts1mFIepn6ZMSRdg0BAAMCAAN5AAM7BA")
 
 # Локальные лимиты ИИ

@@ -34,6 +34,9 @@ SECTIONS = {
     "настольный": "TABLE_TENNIS_BANNER",
     "путешествия": "TRAVEL_BANNER",
     "творчество": "ART_BANNER",
+    "картины": "PAINTINGS_BANNER",
+    "ателье": "ATELIER_BANNER",
+    "интерактив": "GAME_BANNER",
     "кухня": "FOOD_BANNER",
     "музыка": "MUSIC_BANNER",
     "новости": "NEWS_BANNER",
@@ -60,6 +63,9 @@ LABELS = {
     "настольный": "🏓 Настольный",
     "путешествия": "🌍 Путешествия",
     "творчество": "🎨 Творчество",
+    "картины": "🖼 Картины",
+    "ателье": "👗 Ателье",
+    "интерактив": "🎮 Интерактив",
     "кухня": "🍳 Кухня",
     "музыка": "🎵 Музыка",
     "новости": "📰 Новости",
@@ -90,10 +96,23 @@ async def load():
         logging.info(f"Свои картинки разделов: {changed}")
 
 
-def _menu() -> InlineKeyboardMarkup:
+async def _own() -> set:
+    """Разделы, где уже стоит своя картинка — чтобы было видно, что загружено"""
+    out = set()
+    for name, attr in SECTIONS.items():
+        try:
+            if await database.get_setting(_KEY + attr):
+                out.add(name)
+        except Exception:
+            return out
+    return out
+
+
+def _menu(own=()) -> InlineKeyboardMarkup:
     rows, row = [], []
     for name in SECTIONS:
-        row.append(InlineKeyboardButton(text=LABELS.get(name, name),
+        mark = "✅ " if name in own else ""
+        row.append(InlineKeyboardButton(text=mark + LABELS.get(name, name),
                                         callback_data=f"banner_{name}"))
         if len(row) == 3:
             rows.append(row)
@@ -127,8 +146,9 @@ async def banner_command(message: Message, state: FSMContext):
         "🖼 <b>Картинка раздела</b>\n\n"
         "Выберите раздел — и пришлите фото. Оно заменит картинку сразу, "
         "без передеплоя.\n\n"
-        "Вернуть прежнюю: <code>/banner сброс библиотека</code>",
-        reply_markup=_menu())
+        "Вернуть прежнюю: <code>/banner сброс библиотека</code>\n"
+        "Галочка — там уже стоит ваше фото.",
+        reply_markup=_menu(await _own()))
 
 
 @router.callback_query(F.data.startswith("banner_"))

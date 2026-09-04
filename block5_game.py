@@ -1,7 +1,10 @@
 # block5_game.py
 import logging
 from aiogram import Router, F
-from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import (CallbackQuery, InlineKeyboardMarkup,
+                           InlineKeyboardButton, InputMediaPhoto)
+from aiogram.exceptions import TelegramBadRequest
+import config
 import database
 import inline_kb
 
@@ -102,7 +105,16 @@ async def start_game_block(call: CallbackQuery):
                               callback_data="char_list")],
         [InlineKeyboardButton(text=inline_kb.label(inline_kb.HOME_TEXTS, lang), callback_data="go_home")]
     ])
-    await call.message.edit_caption(caption=t["intro"], reply_markup=kb, parse_mode="Markdown")
+    # Свою картинку раздел ставит сам: раньше он лишь переписывал подпись,
+    # и наверху оставался снимок предыдущего экрана.
+    try:
+        await call.message.edit_media(
+            media=InputMediaPhoto(media=config.GAME_BANNER, caption=t["intro"],
+                                  parse_mode="Markdown"),
+            reply_markup=kb)
+    except TelegramBadRequest:
+        await call.message.edit_caption(caption=t["intro"], reply_markup=kb,
+                                        parse_mode="Markdown")
     await call.answer()
 
 @router.callback_query(F.data == "game_step1")

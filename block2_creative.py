@@ -68,7 +68,7 @@ async def open_creative_paintings(call: CallbackQuery):
         user_lang = await database.get_user_language(call.from_user.id)
         caption_text = menu_texts.ART_MAIN_TEXTS.get(user_lang, menu_texts.ART_MAIN_TEXTS["en"])
         await call.message.edit_media(
-            media=InputMediaPhoto(media=config.ART_BANNER, caption=caption_text, parse_mode="Markdown"),
+            media=InputMediaPhoto(media=config.PAINTINGS_BANNER, caption=caption_text, parse_mode="Markdown"),
             reply_markup=inline_kb.get_art_hub_main_menu(user_lang)
         )
     except TelegramBadRequest:
@@ -131,7 +131,7 @@ async def open_creative_atelier_main(call: CallbackQuery):
         user_lang = await database.get_user_language(call.from_user.id)
         caption_text = menu_texts.ATELIER_MAIN_TEXTS.get(user_lang, menu_texts.ATELIER_MAIN_TEXTS["en"])
         await call.message.edit_media(
-            media=InputMediaPhoto(media=config.ART_BANNER, caption=caption_text, parse_mode="Markdown"),
+            media=InputMediaPhoto(media=config.ATELIER_BANNER, caption=caption_text, parse_mode="Markdown"),
             reply_markup=inline_kb.get_creative_atelier_menu(user_lang)
         )
     except TelegramBadRequest:
