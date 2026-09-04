@@ -86,7 +86,9 @@ async def cmd_start(message: Message, state: FSMContext, bot: Bot):
         )
         return
 
-    fast_file_id = "AgACAgIAAxkDAAPgagtm983BGj8mNN0_gspgL8EFOjsAAtMaaxts1mFI4UNK-uuf9mkBAAMCAAN5AAM7BA"
+    # Картинка стартового экрана была вписана прямо сюда и настройку не
+    # читала: /banner главная сохранял фото, а экран показывал прежнее.
+    fast_file_id = config.MAIN_BANNER
     
     await message.answer_photo(
         photo=fast_file_id,
@@ -155,7 +157,9 @@ async def navigate_home(call: CallbackQuery, bot: Bot):
 
     # Достаем язык из БД
     lang = await database.get_user_language(user_id)
-    fast_file_id = "AgACAgIAAxkDAAPgagtm983BGj8mNN0_gspgL8EFOjsAAtMaaxts1mFI4UNK-uuf9mkBAAMCAAN5AAM7BA"
+    # Картинка стартового экрана была вписана прямо сюда и настройку не
+    # читала: /banner главная сохранял фото, а экран показывал прежнее.
+    fast_file_id = config.MAIN_BANNER
 
     welcome_texts = {
         "ru": "🎯 **Главное меню**\n\nВыберите интересующий вас раздел для продолжения работы:",
