@@ -130,6 +130,10 @@ TABLE_TENNIS_BANNER = SPORT_BANNER
 # ДОБАВЛЯЕМ НЕДОСТАЮЩИЕ БАННЕРЫ ДЛЯ ПОДРАЗДЕЛОВ БЛОКА 3
 BOOKS_BANNER = get_banner("AgACAgIAAxkDAAPgagtm_U8YM5obddnWLhCd2FEUdZIAAtUaaxts1mFIepn6ZMSRdg0BAAMCAAN5AAM7BA")
 PUZZLE_BANNER = get_banner("AgACAgIAAxkDAAPgagtm_U8YM5obddnWLhCd2FEUdZIAAtUaaxts1mFIepn6ZMSRdg0BAAMCAAN5AAM7BA")
+# У кулинарии своей картинки не было — показывалась «творческая». Заводим
+# отдельную: по умолчанию та же, дальше меняется через /banner кухня.
+FOOD_BANNER = ART_BANNER
+
 GENETICS_BANNER = get_banner("AgACAgIAAxkDAAPgagtm_U8YM5obddnWLhCd2FEUdZIAAtUaaxts1mFIepn6ZMSRdg0BAAMCAAN5AAM7BA")
 
 # Локальные лимиты ИИ
