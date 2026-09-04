@@ -238,13 +238,25 @@ async def remind(bot: Bot) -> str:
         return "кабинетов нет"
     rows = [[InlineKeyboardButton(text=i["name"][:40], url=i["url"])]
             for i in items]
+
+    # Если ключ AdvCake задан, вместо «сходи посмотри» сразу цифры.
+    numbers = ""
+    try:
+        import advcake
+        if advcake._key():
+            raw, error = await advcake.fetch(advcake.MAX_DAYS)
+            numbers = ("\n\n" + advcake.summary(raw, advcake.MAX_DAYS)) if raw else ""
+    except Exception as e:
+        logging.warning(f"Цифры AdvCake к напоминанию не подъехали: {e}")
+
     try:
         await bot.send_message(
             config.ADMIN_ID,
             "🗄 <b>Пора заглянуть в кабинеты</b>\n\n"
             "Проверьте начисления за прошлый месяц: партнёрские программы "
-            "считают вознаграждение сами и о нём не сообщают.\n\n"
-            "Отключить: <code>/kab напоминание нет</code>",
+            "считают вознаграждение сами и о нём не сообщают."
+            + numbers +
+            "\n\nОтключить: <code>/kab напоминание нет</code>",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
     except Exception as e:
         logging.error(f"Напоминание о кабинетах не ушло: {e}")
