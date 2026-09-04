@@ -2,13 +2,13 @@
   <rect width="512" height="512" fill="#14171A"/>
   <path d="M150 404 L256 186 L362 404" fill="none" stroke="#FFFFFF" stroke-width="54" stroke-linejoin="miter"/>
   <path d="M190 348 H322" stroke="#FFFFFF" stroke-width="44"/>
-  <g transform="translate(327,109) rotate(0) scale(0.92)" fill="#F2C14E" stroke="none">
-    <ellipse cx="0" cy="-16" rx="34" ry="40"/>
-    <rect x="-7" y="20" width="14" height="40" rx="6"/>
+  <g transform="translate(327,109) rotate(45)">
+    <circle cx="0" cy="-18" r="37" fill="#F2C14E"/>
+    <rect x="-8" y="16" width="16" height="44" rx="7" fill="#F2C14E"/>
     <g fill="#14171A">
-      <circle cx="-14" cy="-26" r="5"/><circle cx="0" cy="-26" r="5"/>
-      <circle cx="14" cy="-26" r="5"/><circle cx="-7" cy="-10" r="5"/>
-      <circle cx="7" cy="-10" r="5"/>
+      <circle cx="-15" cy="-30" r="5"/><circle cx="0" cy="-30" r="5"/>
+      <circle cx="15" cy="-30" r="5"/><circle cx="-8" cy="-14" r="5"/>
+      <circle cx="8" cy="-14" r="5"/><circle cx="0" cy="0" r="5"/>
     </g>
   </g>
 </svg>

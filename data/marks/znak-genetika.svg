@@ -4,12 +4,12 @@
   <path d="M190 348 H322" stroke="#FFFFFF" stroke-width="44"/>
   <g transform="translate(327,105) rotate(16)">
     <g fill="#7E5BEF">
-      <path d="M-30,-62 C-30,-30 30,-30 30,2 C30,34 -30,34 -30,62 L-12,62 C-12,44 48,44 48,2 C48,-40 -12,-40 -12,-62 Z"/>
-      <path d="M30,-62 C30,-30 -30,-30 -30,2 C-30,34 30,34 30,62 L12,62 C12,44 -48,44 -48,2 C-48,-40 12,-40 12,-62 Z"/>
+      <path d="M-21,-62 C-21,-32 21,-32 21,2 C21,36 -21,36 -21,62 L-7,62 C-7,44 35,44 35,2 C35,-40 -7,-40 -7,-62 Z"/>
+      <path d="M21,-62 C21,-32 -21,-32 -21,2 C-21,36 21,36 21,62 L7,62 C7,44 -35,44 -35,2 C-35,-40 7,-40 7,-62 Z"/>
     </g>
-    <g stroke="#7E5BEF" stroke-width="8" stroke-linecap="round">
-      <path d="M-15,-50 H15"/>
-      <path d="M-15,52 H15"/>
+    <g stroke="#7E5BEF" stroke-width="7" stroke-linecap="round">
+      <path d="M-10,-50 H10"/>
+      <path d="M-10,52 H10"/>
     </g>
   </g>
 </svg>
