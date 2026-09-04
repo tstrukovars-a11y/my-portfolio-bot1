@@ -8,9 +8,10 @@
 # Считаем на лету, ничего не храня: любая сохранённая сводка врёт на
 # следующий день после первой же загруженной фотографии.
 import html
+import json
 
 from aiogram import Router, F
-from aiogram.types import Message
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 
 import config
 import database
@@ -18,6 +19,28 @@ import database
 router = Router()
 
 MAX_NAMES = 6      # длиннее список не читается, дальше — по своей команде
+
+# Кабинеты партнёрских программ. Ссылки живут в базе, а не в коде: программ
+# со временем станет больше, а деплой ради закладки — глупость.
+CABINETS_KEY = "admin_cabinets"
+CABINETS_DEFAULT = [
+    {"name": "📚 Читай-город", "url": "https://partners.chitai-gorod.ru/"},
+]
+
+
+async def _cabinets() -> list:
+    raw = await database.get_setting(CABINETS_KEY)
+    if not raw:
+        return list(CABINETS_DEFAULT)
+    try:
+        saved = json.loads(raw)
+        return saved if isinstance(saved, list) else list(CABINETS_DEFAULT)
+    except (ValueError, TypeError):
+        return list(CABINETS_DEFAULT)
+
+
+async def _save_cabinets(items: list):
+    await database.set_setting(CABINETS_KEY, json.dumps(items, ensure_ascii=False))
 
 
 def _line(title: str, missing: int, total: int, command: str) -> str:
@@ -97,3 +120,60 @@ async def todo(message: Message):
               "<code>/buffer</code></i>"]
 
     await message.answer("\n".join(lines))
+
+
+# =====================================================================
+# КАБИНЕТЫ ПАРТНЁРСКИХ ПРОГРАММ
+# =====================================================================
+
+@router.message(F.text.startswith("/kab"))
+async def cabinets(message: Message):
+    """Ссылки на личные кабинеты партнёрок — одним экраном"""
+    if not config.is_admin(message.from_user.id):
+        return
+
+    parts = message.text.split(maxsplit=2)
+    action = parts[1].lower() if len(parts) > 1 else ""
+    items = await _cabinets()
+
+    # /kab + Литрес https://… — добавить или заменить по названию
+    if action in ("+", "добавить", "add") and len(parts) > 2:
+        body = parts[2].strip()
+        if " " not in body or "http" not in body:
+            await message.answer(
+                "Нужно название и ссылка: "
+                "<code>/kab + Литрес https://litres.ru/...</code>")
+            return
+        name, url = body.rsplit(" ", 1)
+        if not url.startswith("http"):
+            await message.answer("Ссылка должна начинаться с https://")
+            return
+        items = [i for i in items if i["name"].lower() != name.strip().lower()]
+        items.append({"name": name.strip()[:40], "url": url.strip()})
+        await _save_cabinets(items)
+        await message.answer(f"✅ Добавила: {html.escape(name.strip())}")
+        return
+
+    if action in ("-", "удалить", "del") and len(parts) > 2:
+        name = parts[2].strip().lower()
+        left = [i for i in items if name not in i["name"].lower()]
+        if len(left) == len(items):
+            await message.answer("Такого кабинета в списке нет.")
+            return
+        await _save_cabinets(left)
+        await message.answer("✅ Убрала.")
+        return
+
+    if not items:
+        await message.answer(
+            "Кабинетов пока нет.\n\n"
+            "Добавить: <code>/kab + Литрес https://…</code>")
+        return
+
+    rows = [[InlineKeyboardButton(text=i["name"][:40], url=i["url"])]
+            for i in items]
+    await message.answer(
+        "🗄 <b>Кабинеты партнёрских программ</b>\n\n"
+        "Добавить: <code>/kab + Литрес https://…</code>\n"
+        "Убрать: <code>/kab - Литрес</code>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
