@@ -3,10 +3,10 @@
   <path d="M150 404 L256 186 L362 404" fill="none" stroke="#FFFFFF" stroke-width="54" stroke-linejoin="miter"/>
   <path d="M190 348 H322" stroke="#FFFFFF" stroke-width="44"/>
   <g transform="translate(327,109) rotate(45)">
-    <path d="M-27,33 A43,43 0 1,1 27,33" fill="none" stroke="#C08B5C" stroke-width="21" stroke-linecap="round"/>
-    <g fill="#C08B5C">
-      <circle cx="-27" cy="33" r="12"/>
-      <circle cx="27" cy="33" r="12"/>
+    <path d="M-44,46 C-44,-16 -24,-54 0,-54 C24,-54 44,-16 44,46 C44,54 32,56 28,48 C24,40 24,20 24,4 C24,-20 14,-32 0,-32 C-14,-32 -24,-20 -24,4 C-24,20 -24,40 -28,48 C-32,56 -44,54 -44,46 Z" fill="#C08B5C"/>
+    <g fill="#14171A">
+      <circle cx="-34" cy="24" r="5"/><circle cx="-31" cy="-2" r="5"/>
+      <circle cx="34" cy="24" r="5"/><circle cx="31" cy="-2" r="5"/>
     </g>
   </g>
 </svg>

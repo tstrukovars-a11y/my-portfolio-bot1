@@ -2,14 +2,11 @@
   <rect width="512" height="512" fill="#14171A"/>
   <path d="M150 404 L256 186 L362 404" fill="none" stroke="#FFFFFF" stroke-width="54" stroke-linejoin="miter"/>
   <path d="M190 348 H322" stroke="#FFFFFF" stroke-width="44"/>
-  <g transform="translate(327,105) rotate(16)">
-    <g fill="#7E5BEF">
-      <path d="M-21,-62 C-21,-32 21,-32 21,2 C21,36 -21,36 -21,62 L-7,62 C-7,44 35,44 35,2 C35,-40 -7,-40 -7,-62 Z"/>
-      <path d="M21,-62 C21,-32 -21,-32 -21,2 C-21,36 21,36 21,62 L7,62 C7,44 -35,44 -35,2 C-35,-40 7,-40 7,-62 Z"/>
-    </g>
-    <g stroke="#7E5BEF" stroke-width="7" stroke-linecap="round">
-      <path d="M-10,-50 H10"/>
-      <path d="M-10,52 H10"/>
-    </g>
+  <g transform="translate(327,107) rotate(10)" fill="#7E5BEF">
+      <g transform="rotate(-31)"><path d="M0,8 C-8,-14 -12,-32 -11,-47 A11,11 0 0,1 11,-47 C12,-32 8,-14 0,8 Z"/></g>
+      <g transform="rotate(31)"><path d="M0,8 C-8,-14 -12,-32 -11,-47 A11,11 0 0,1 11,-47 C12,-32 8,-14 0,8 Z"/></g>
+      <g transform="rotate(149)"><path d="M0,8 C-8,-14 -12,-32 -11,-47 A11,11 0 0,1 11,-47 C12,-32 8,-14 0,8 Z"/></g>
+      <g transform="rotate(-149)"><path d="M0,8 C-8,-14 -12,-32 -11,-47 A11,11 0 0,1 11,-47 C12,-32 8,-14 0,8 Z"/></g>
+      <circle r="9"/>
   </g>
 </svg>
