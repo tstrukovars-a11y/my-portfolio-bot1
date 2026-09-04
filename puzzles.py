@@ -141,7 +141,10 @@ async def open_puzzle_hub(call: CallbackQuery):
     markup = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=_t(BTN_SOLVE, lang), callback_data="start_solving_puzzles")],
         [InlineKeyboardButton(text=_t(BTN_STATS, lang), callback_data="puzzle_stats")],
-        [InlineKeyboardButton(text="🔙 Назад" if lang == "ru" else "🔙 Back", callback_data="menu_diary")]
+        # Назад — в тот раздел, откуда пришли: головоломки живут в
+        # «Интеллекте», а не в Дневнике директора.
+        [InlineKeyboardButton(text="🔙 Назад" if lang == "ru" else "🔙 Back",
+                              callback_data="menu_intellect")]
     ])
 
     try:
