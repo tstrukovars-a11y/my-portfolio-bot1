@@ -1550,6 +1550,17 @@ async def get_travel_place(place_id: int):
         return None
 
 
+async def count_spots() -> int:
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            return await conn.fetchval(
+                f"SELECT COUNT(*) FROM {SCHEMA}.travel_spots") or 0
+    except Exception as e:
+        logging.error(f"БД недоступна при подсчёте достопримечательностей: {e}")
+        return 0
+
+
 async def count_travel_places() -> int:
     try:
         pool = await get_pool()

@@ -31,6 +31,7 @@ import avatars
 import puzzle_daily
 import tennis_rank
 import art_shop
+import checklist
 import inline_kb
 import planner
 
@@ -456,6 +457,7 @@ async def main():
     dp.include_router(puzzle_daily.router)
     dp.include_router(tennis_rank.router)
     dp.include_router(art_shop.router)
+    dp.include_router(checklist.router)
     dp.include_router(puzzles.router)
     dp.include_router(shop.router)
     dp.include_router(orders.router)
