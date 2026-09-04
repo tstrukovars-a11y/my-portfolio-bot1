@@ -89,6 +89,26 @@ SHOP_KEY = "book_shop_url"
 DISCLOSURE_KEY = "book_shop_note"     # пометка о партнёрской ссылке
 
 
+# Магазин узнаём по адресу: подпись «Купить» ничего не говорит, а имя
+# магазина сразу отвечает на вопрос «бумага или файл».
+SHOP_LABELS = (
+    ("litres", "📱 Литрес"),
+    ("chitai-gorod", "📗 Читай-город"),
+    ("ozon", "📦 Ozon"),
+    ("labirint", "📚 Лабиринт"),
+    ("book24", "📚 Book24"),
+    ("wildberries", "📦 WB"),
+)
+
+
+def _shop_label(url: str) -> str:
+    host = urlparse(url or "").netloc.lower()
+    for key, label in SHOP_LABELS:
+        if key in host:
+            return label
+    return "🛒 Купить"
+
+
 def _erid(url: str) -> str:
     """Рекламный идентификатор из партнёрской ссылки.
 
@@ -111,20 +131,27 @@ def _search_query(title: str) -> str:
 
 
 async def _buy_row(section: str, title: str):
+    """Кнопки покупки: своя ссылка книги и общий шаблон — обе, если есть.
+
+    Раньше своя ссылка вытесняла шаблон. Но это разные магазины и разные
+    товары: у одного бумага, у другого файл. Выбор между ними — то, что
+    читателю и нужно, а нам два источника вместо одного.
+    """
     if section != "books":
         return None
 
-    # Своя ссылка книги важнее шаблона: магазин отдаёт ссылку на страницу
-    # товара, и она ведёт точно туда, а поиск по названию — примерно.
+    row = []
     own = await database.get_book_link(title)
     if own:
-        return [InlineKeyboardButton(text="🛒 Купить", url=own)]
+        row.append(InlineKeyboardButton(text=_shop_label(own), url=own))
 
     template = await database.get_setting(SHOP_KEY)
-    if not template or "{q}" not in template:
-        return None
-    return [InlineKeyboardButton(text="🛒 Купить",
-                                 url=template.replace("{q}", _search_query(title)))]
+    if template and "{q}" in template:
+        url = template.replace("{q}", _search_query(title))
+        # Дубль одного магазина двумя кнопками читателю не нужен
+        if not row or _shop_label(url) != row[0].text:
+            row.append(InlineKeyboardButton(text=_shop_label(url), url=url))
+    return row or None
 
 
 async def _offer_row(section: str):
@@ -545,7 +572,7 @@ async def publish_next(bot: Bot, only: str = None, lead: str = None,
         caption = f"{head}\n\n{body}"
         if buy:
             note = await database.get_setting(DISCLOSURE_KEY)
-            erid = _erid(buy[0].url if buy else "")
+            erid = " · ".join(filter(None, (_erid(b.url) for b in buy)))
             if note or erid:
                 marks = [m for m in (note, f"erid: {erid}" if erid else "") if m]
                 caption += "\n\n" + " · ".join(marks)

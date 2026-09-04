@@ -217,12 +217,25 @@ async def open_book(call: CallbackQuery):
     # то место, куда человек приходит за книгой осознанно.
     rows = []
     import digest
-    link = await database.get_book_link_by_id(book_id)
     body = (text or "")
+
+    # Кнопки собираем тем же кодом, что и в канале: два магазина, если оба
+    # заданы, и одинаковые пометки о рекламе.
+    buy = []
+    link = await database.get_book_link_by_id(book_id)
     if link:
-        rows.append([InlineKeyboardButton(text="🛒 Купить", url=link)])
+        buy.append(InlineKeyboardButton(text=digest._shop_label(link), url=link))
+    template = await database.get_setting(digest.SHOP_KEY)
+    if template and "{q}" in template:
+        first = (text or "").split("\n")[0]
+        url = template.replace("{q}", digest._search_query(first))
+        if not buy or digest._shop_label(url) != buy[0].text:
+            buy.append(InlineKeyboardButton(text=digest._shop_label(url), url=url))
+
+    if buy:
+        rows.append(buy)
         note = await database.get_setting(digest.DISCLOSURE_KEY)
-        erid = digest._erid(link)
+        erid = " · ".join(filter(None, (digest._erid(x.url) for x in buy)))
         marks = [m for m in (note, f"erid: {erid}" if erid else "") if m]
         if marks:
             body = f"{body}\n\n{' · '.join(marks)}"
