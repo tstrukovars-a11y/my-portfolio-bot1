@@ -8,12 +8,13 @@
 # config. Все полсотни мест, где написано config.BOOKS_BANNER, остаются
 # нетронутыми — они читают уже подменённое значение.
 import logging
+import time
 
 from aiogram import Router, F, Bot
 from aiogram.types import (Message, CallbackQuery, InlineKeyboardMarkup,
                            InlineKeyboardButton)
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
+from aiogram.dispatcher.event.bases import SkipHandler
 
 import config
 import database
@@ -75,9 +76,31 @@ LABELS = {
 
 _KEY = "banner_"
 
+# Какой раздел ждёт фото — в базе, а не в памяти процесса. С FSM выбор
+# терялся при каждом деплое: человек жал раздел, присылал фото, и оно
+# уходило в никуда без единого слова.
+PENDING_KEY = "banner_pending"
+PENDING_MINUTES = 30
 
-class Waiting(StatesGroup):
-    photo = State()
+
+async def _pending_set(user_id: int, section: str):
+    await database.set_setting(
+        PENDING_KEY, f"{user_id}:{section}:{int(time.time()) + PENDING_MINUTES * 60}")
+
+
+async def _pending_get(user_id: int):
+    raw = await database.get_setting(PENDING_KEY) or ""
+    try:
+        who, section, until = raw.split(":")
+        if int(who) == user_id and int(until) > time.time() and section in SECTIONS:
+            return section
+    except ValueError:
+        pass
+    return None
+
+
+async def _pending_clear():
+    await database.set_setting(PENDING_KEY, "")
 
 
 async def load():
@@ -123,7 +146,7 @@ def _menu(own=()) -> InlineKeyboardMarkup:
 
 
 @router.message(F.text.startswith("/banner"))
-async def banner_command(message: Message, state: FSMContext):
+async def banner_command(message: Message):
     if not config.is_admin(message.from_user.id):
         return
     parts = message.text.split()
@@ -141,7 +164,7 @@ async def banner_command(message: Message, state: FSMContext):
         await message.answer(f"↩️ {LABELS.get(name, name)} — вернула прежнюю картинку.")
         return
 
-    await state.clear()
+    await _pending_clear()
     await message.answer(
         "🖼 <b>Картинка раздела</b>\n\n"
         "Выберите раздел — и пришлите фото. Оно заменит картинку сразу, "
@@ -152,7 +175,7 @@ async def banner_command(message: Message, state: FSMContext):
 
 
 @router.callback_query(F.data.startswith("banner_"))
-async def pick_section(call: CallbackQuery, state: FSMContext):
+async def pick_section(call: CallbackQuery):
     if not config.is_admin(call.from_user.id):
         await call.answer()
         return
@@ -160,8 +183,7 @@ async def pick_section(call: CallbackQuery, state: FSMContext):
     if name not in SECTIONS:
         await call.answer()
         return
-    await state.set_state(Waiting.photo)
-    await state.update_data(section=name)
+    await _pending_set(call.from_user.id, name)
     await call.message.answer(
         f"Жду фото для раздела {LABELS.get(name, name)}.\n\n"
         "Горизонтальное подходит лучше: под картинкой идёт текст, и "
@@ -169,19 +191,31 @@ async def pick_section(call: CallbackQuery, state: FSMContext):
     await call.answer()
 
 
-@router.message(Waiting.photo, F.text == "/cancel")
-async def cancel(message: Message, state: FSMContext):
-    await state.clear()
+@router.message(F.text == "/cancel")
+async def cancel(message: Message):
+    if not config.is_admin(message.from_user.id):
+        raise SkipHandler
+    if not await _pending_get(message.from_user.id):
+        raise SkipHandler
+    await _pending_clear()
     await message.answer("Отменила, картинка прежняя.")
 
 
-@router.message(Waiting.photo, F.photo)
+@router.message(F.photo)
 async def save_photo(message: Message, state: FSMContext):
-    data = await state.get_data()
-    name = data.get("section")
+    """Фото от владельца, когда раздел выбран. Иначе пропускаем дальше."""
+    if not config.is_admin(message.from_user.id):
+        raise SkipHandler
+    # Идёт другой разговор с фотографиями — обложки книг, картины, места:
+    # перехватывать его нельзя.
+    if await state.get_state():
+        raise SkipHandler
+    name = await _pending_get(message.from_user.id)
+    if not name:
+        raise SkipHandler
     attr = SECTIONS.get(name)
     if not attr:
-        await state.clear()
+        await _pending_clear()
         return
 
     # Берём самый крупный размер: Telegram отдаёт лесенку превью, а в
@@ -189,15 +223,20 @@ async def save_photo(message: Message, state: FSMContext):
     file_id = message.photo[-1].file_id
     await database.set_setting(_KEY + attr, file_id)
     setattr(config, attr, file_id)
-    await state.clear()
+    await _pending_clear()
     await message.answer_photo(
         file_id,
         caption=f"✅ Готово: {LABELS.get(name, name)}. "
                 f"Откройте раздел — картинка уже новая.")
 
 
-@router.message(Waiting.photo)
+@router.message(F.document)
 async def not_a_photo(message: Message):
+    """Файлом вместо фото — частая ошибка, о ней надо сказать"""
+    if not config.is_admin(message.from_user.id):
+        raise SkipHandler
+    if not await _pending_get(message.from_user.id):
+        raise SkipHandler
     await message.answer(
-        "Нужна именно фотография. Если отправляете файлом, Telegram "
-        "не даёт file_id картинки — пришлите как фото. Отменить — /cancel")
+        "Нужна именно фотография. Отправленное файлом Telegram не отдаёт "
+        "как картинку — пришлите как фото. Отменить — /cancel")
