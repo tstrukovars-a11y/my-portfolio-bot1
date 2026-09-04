@@ -496,6 +496,7 @@ async def main():
     asyncio.create_task(digest.scheduler(bot))
     asyncio.create_task(tennis_alerts.alerts_scheduler(bot))
     asyncio.create_task(tennis_rank.scheduler())
+    asyncio.create_task(checklist.scheduler(bot))
 
     # Своё имя бот спрашивает у Telegram, а не ждёт, пока его впишут руками:
     # на нём держатся глубокие ссылки из канала, и опечатка в нём означала бы

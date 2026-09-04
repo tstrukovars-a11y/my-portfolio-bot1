@@ -7,10 +7,12 @@
 #
 # Считаем на лету, ничего не храня: любая сохранённая сводка врёт на
 # следующий день после первой же загруженной фотографии.
+import asyncio
 import html
 import json
+import logging
 
-from aiogram import Router, F
+from aiogram import Router, F, Bot
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 
 import config
@@ -23,6 +25,10 @@ MAX_NAMES = 6      # длиннее список не читается, даль
 # Кабинеты партнёрских программ. Ссылки живут в базе, а не в коде: программ
 # со временем станет больше, а деплой ради закладки — глупость.
 CABINETS_KEY = "admin_cabinets"
+REMIND_DAY_KEY = "cabinets_remind_day"    # число месяца, 0 — не напоминать
+REMIND_SENT_KEY = "cabinets_reminded"     # какой месяц уже напомнили
+REMIND_DAY_DEFAULT = 5                    # к пятому числу выплаты обычно видны
+REMIND_HOUR = 11
 CABINETS_DEFAULT = [
     {"name": "📚 Читай-город", "url": "https://partners.chitai-gorod.ru/"},
 ]
@@ -154,6 +160,31 @@ async def cabinets(message: Message):
         await message.answer(f"✅ Добавила: {html.escape(name.strip())}")
         return
 
+    if action in ("напоминание", "напоминания", "remind"):
+        value = parts[2].strip().lower() if len(parts) > 2 else ""
+        if value in ("нет", "off", "0"):
+            await database.set_setting(REMIND_DAY_KEY, "0")
+            await message.answer("✅ Напоминать не буду.")
+            return
+        if value.isdigit():
+            day = max(1, min(28, int(value)))
+            await database.set_setting(REMIND_DAY_KEY, str(day))
+            await message.answer(f"✅ Буду напоминать {day}-го числа, в "
+                                 f"{REMIND_HOUR}:00 по часам канала.")
+            return
+        day = await _remind_day()
+        await message.answer(
+            (f"Напоминаю {day}-го числа каждого месяца." if day
+             else "Сейчас не напоминаю.")
+            + "\n\nИзменить: <code>/kab напоминание 10</code>\n"
+              "Выключить: <code>/kab напоминание нет</code>\n"
+              "Прислать сейчас: <code>/kab проверка</code>")
+        return
+
+    if action in ("проверка", "test") :
+        await message.answer(f"✅ {await remind(message.bot)}")
+        return
+
     if action in ("-", "удалить", "del") and len(parts) > 2:
         name = parts[2].strip().lower()
         left = [i for i in items if name not in i["name"].lower()]
@@ -175,5 +206,66 @@ async def cabinets(message: Message):
     await message.answer(
         "🗄 <b>Кабинеты партнёрских программ</b>\n\n"
         "Добавить: <code>/kab + Литрес https://…</code>\n"
-        "Убрать: <code>/kab - Литрес</code>",
+        "Убрать: <code>/kab - Литрес</code>\n"
+        f"Напоминание: <code>/kab напоминание</code> — "
+        f"{'выключено' if not await _remind_day() else str(await _remind_day()) + '-го'}",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+
+
+# =====================================================================
+# НАПОМИНАНИЕ О ВЫПЛАТАХ
+# =====================================================================
+#
+# Партнёрские программы считают вознаграждение своими циклами и никого не
+# оповещают: деньги начислены, а вы об этом не знаете. Раз в месяц бот
+# толкает заглянуть — с теми же кнопками, чтобы не искать адреса.
+#
+# Отметка о том, что за этот месяц уже напомнили, лежит в базе: иначе
+# перезапуск сервиса в тот же день слал бы напоминание второй раз.
+
+async def _remind_day() -> int:
+    try:
+        return max(0, min(28, int(await database.get_setting(REMIND_DAY_KEY)
+                                  or REMIND_DAY_DEFAULT)))
+    except (TypeError, ValueError):
+        return REMIND_DAY_DEFAULT
+
+
+async def remind(bot: Bot) -> str:
+    """Отправить напоминание владельцу. Строка — для лога."""
+    items = await _cabinets()
+    if not items:
+        return "кабинетов нет"
+    rows = [[InlineKeyboardButton(text=i["name"][:40], url=i["url"])]
+            for i in items]
+    try:
+        await bot.send_message(
+            config.ADMIN_ID,
+            "🗄 <b>Пора заглянуть в кабинеты</b>\n\n"
+            "Проверьте начисления за прошлый месяц: партнёрские программы "
+            "считают вознаграждение сами и о нём не сообщают.\n\n"
+            "Отключить: <code>/kab напоминание нет</code>",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+    except Exception as e:
+        logging.error(f"Напоминание о кабинетах не ушло: {e}")
+        return f"ошибка: {e}"
+    return "напомнила о кабинетах"
+
+
+async def scheduler(bot: Bot):
+    """Раз в час смотрит, не пора ли напомнить"""
+    await asyncio.sleep(180)
+    while True:
+        try:
+            day = await _remind_day()
+            if day:
+                import digest
+                now = await digest._local_now()
+                stamp = now.strftime("%Y-%m")
+                already = await database.get_setting(REMIND_SENT_KEY)
+                if now.day == day and now.hour >= REMIND_HOUR and already != stamp:
+                    logging.info(f"Кабинеты: {await remind(bot)}")
+                    await database.set_setting(REMIND_SENT_KEY, stamp)
+        except Exception as e:
+            logging.error(f"Проверка напоминания о кабинетах сорвалась: {e}")
+        await asyncio.sleep(3600)
