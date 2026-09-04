@@ -155,6 +155,13 @@ _RU = {
     "Lucrezia Stefanini": "Лукреция Стефанини",
     "Xiyu Wang": "Ван Сиюй",
     "Zheng Qinwen": "Чжэн Циньвэнь",
+    "Wu Yibing": "У Ибин",
+    "Shang Juncheng": "Шан Цзюньчэн",
+    "Zhang Zhizhen": "Чжан Чжичжэнь",
+    "Wang Xinyu": "Ван Синьюй",
+    "Wang Xiyu": "Ван Сиюй",
+    "Zhu Lin": "Чжу Линь",
+    "Yuan Yue": "Юань Юэ",
     "Bu Yunchaokete": "Бу Юньчаокэтэ",
     "Botic Van De Zandschulp": "Ботик ван де Зандсхюлп",
     "Leolia Jeanjean": "Леолия Жанжан",
@@ -405,7 +412,9 @@ _TOP = {
 
 
 # Имена, где фамилия стоит первой: сверять надо по первому слову.
-_SURNAME_FIRST = {"zheng", "bu", "wang", "zhang", "li", "sun", "yuan", "shang"}
+_SURNAME_FIRST = {"zheng", "bu", "wang", "zhang", "li", "sun", "yuan",
+                  "shang", "wu", "zhu", "yan", "xu", "gao", "lin",
+                  "chen", "liu", "he", "tang", "cui", "zhou"}
 
 
 def _key(name: str) -> str:
@@ -456,6 +465,27 @@ def is_nash(name: str) -> bool:
 def is_top(name: str) -> bool:
     key = _key(name)
     return key in (_LIVE_TOP or _TOP)
+
+
+def short(name: str) -> str:
+    """«Мария Саккари» → «М. Саккари» — для кнопок, где дорог каждый символ.
+
+    Telegram обрезает подпись кнопки, и из двух полных имён на ней
+    оставалось полтора. Инициал читается так же, а места занимает вчетверо
+    меньше.
+    """
+    full = ru(name)
+    parts = full.split()
+    if len(parts) < 2:
+        return full
+
+    # У восточных имён фамилия первая, сокращать надо второе слово:
+    # Чжэн Циньвэнь → Чжэн Ц.
+    source = (name or "").split()
+    if source and source[0].lower() in _SURNAME_FIRST:
+        return f"{parts[0]} {parts[1][0]}."
+
+    return f"{parts[0][0]}. {' '.join(parts[1:])}"
 
 
 def notable(name: str) -> bool:

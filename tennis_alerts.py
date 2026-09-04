@@ -38,9 +38,12 @@ MAX_MESSAGE = 4000       # запас до телеграмовских 4096
 
 
 def _title(match) -> str:
-    """Кто с кем — коротко, для кнопки"""
+    """Кто с кем — инициал и фамилия, для кнопки"""
     sides = match.get("sides") or []
-    names = [tennis_live._player(s) for s in sides[:2]]
+    names = []
+    for side in sides[:2]:
+        raw = ((side.get("athlete") or {}).get("displayName") or "")
+        names.append(players_ru.short(raw) if raw else "")
     return " — ".join(n for n in names if n) or "матч"
 
 
