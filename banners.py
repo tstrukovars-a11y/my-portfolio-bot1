@@ -44,6 +44,27 @@ SECTIONS = {
 # будет не к чему.
 _FACTORY = {attr: getattr(config, attr, None) for attr in SECTIONS.values()}
 
+# Подписи с иконками. Держим отдельно от ключей: ключ — то, что человек
+# пишет в команде («/banner сброс библиотека»), и эмодзи там только мешал бы.
+LABELS = {
+    "главная": "🏠 Главная",
+    "библиотека": "📚 Библиотека",
+    "генетика": "🧬 Генетика",
+    "наука": "🔬 Наука",
+    "спорт": "🏆 Спорт",
+    "теннис": "🎾 Теннис",
+    "гольф": "🏌 Гольф",
+    "лошади": "🏇 Лошади",
+    "падел": "🥎 Падел",
+    "настольный": "🏓 Настольный",
+    "путешествия": "🌍 Путешествия",
+    "творчество": "🎨 Творчество",
+    "музыка": "🎵 Музыка",
+    "новости": "📰 Новости",
+    "головоломки": "🧩 Головоломки",
+    "ии": "🤖 ИИ",
+}
+
 _KEY = "banner_"
 
 
@@ -70,7 +91,8 @@ async def load():
 def _menu() -> InlineKeyboardMarkup:
     rows, row = [], []
     for name in SECTIONS:
-        row.append(InlineKeyboardButton(text=name, callback_data=f"banner_{name}"))
+        row.append(InlineKeyboardButton(text=LABELS.get(name, name),
+                                        callback_data=f"banner_{name}"))
         if len(row) == 3:
             rows.append(row)
             row = []
@@ -95,7 +117,7 @@ async def banner_command(message: Message, state: FSMContext):
         await database.set_setting(_KEY + attr, "")
         if _FACTORY.get(attr) is not None:
             setattr(config, attr, _FACTORY[attr])
-        await message.answer(f"↩️ «{name}» — вернула прежнюю картинку.")
+        await message.answer(f"↩️ {LABELS.get(name, name)} — вернула прежнюю картинку.")
         return
 
     await state.clear()
@@ -119,7 +141,7 @@ async def pick_section(call: CallbackQuery, state: FSMContext):
     await state.set_state(Waiting.photo)
     await state.update_data(section=name)
     await call.message.answer(
-        f"Жду фото для раздела «{name}».\n\n"
+        f"Жду фото для раздела {LABELS.get(name, name)}.\n\n"
         "Горизонтальное подходит лучше: под картинкой идёт текст, и "
         "вертикальная занимает весь экран. Отменить — /cancel")
     await call.answer()
@@ -148,7 +170,8 @@ async def save_photo(message: Message, state: FSMContext):
     await state.clear()
     await message.answer_photo(
         file_id,
-        caption=f"✅ Готово: «{name}». Откройте раздел — картинка уже новая.")
+        caption=f"✅ Готово: {LABELS.get(name, name)}. "
+                f"Откройте раздел — картинка уже новая.")
 
 
 @router.message(Waiting.photo)
