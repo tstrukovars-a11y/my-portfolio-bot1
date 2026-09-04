@@ -2,8 +2,14 @@
   <rect width="512" height="512" fill="#14171A"/>
   <path d="M150 404 L256 186 L362 404" fill="none" stroke="#FFFFFF" stroke-width="54" stroke-linejoin="miter"/>
   <path d="M190 348 H322" stroke="#FFFFFF" stroke-width="44"/>
-  <g transform="translate(327,109)" fill="none" stroke="#7E5BEF" stroke-width="19" stroke-linecap="round">
-    <path d="M-34,-48 C-6,-16 6,16 34,48"/>
-    <path d="M34,-48 C6,-16 -6,16 -34,48"/>
+  <g transform="translate(327,105) rotate(16)">
+    <g fill="#7E5BEF">
+      <path d="M-30,-62 C-30,-30 30,-30 30,2 C30,34 -30,34 -30,62 L-12,62 C-12,44 48,44 48,2 C48,-40 -12,-40 -12,-62 Z"/>
+      <path d="M30,-62 C30,-30 -30,-30 -30,2 C-30,34 30,34 30,62 L12,62 C12,44 -48,44 -48,2 C-48,-40 12,-40 12,-62 Z"/>
+    </g>
+    <g stroke="#7E5BEF" stroke-width="8" stroke-linecap="round">
+      <path d="M-15,-50 H15"/>
+      <path d="M-15,52 H15"/>
+    </g>
   </g>
 </svg>
