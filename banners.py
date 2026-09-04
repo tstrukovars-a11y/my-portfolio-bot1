@@ -137,7 +137,9 @@ def _menu(own=()) -> InlineKeyboardMarkup:
         mark = "✅ " if name in own else ""
         row.append(InlineKeyboardButton(text=mark + LABELS.get(name, name),
                                         callback_data=f"banner_{name}"))
-        if len(row) == 3:
+        # По две в ряд: с галочкой и эмодзи три подписи не помещаются и
+        # Telegram режет их до «…отека».
+        if len(row) == 2:
             rows.append(row)
             row = []
     if row:
