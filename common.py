@@ -10,6 +10,23 @@ import inline_kb
 
 router = Router()
 
+async def is_subscriber(bot: Bot, user_id: int) -> bool:
+    """Подписан ли человек на канал дайджеста.
+
+    Нужно ровно для одного: не предлагать подписаться тому, кто уже
+    подписан. Ошибку глотаем и считаем, что не подписан — предложить
+    лишний раз безобиднее, чем спрятать кнопку у того, кому она нужна.
+    """
+    try:
+        chat = await database.get_setting("digest_chat")
+        if not chat:
+            return False
+        member = await bot.get_chat_member(chat_id=int(chat), user_id=user_id)
+        return member.status not in ("left", "kicked")
+    except Exception:
+        return False
+
+
 async def check_channel_subscriptions(bot: Bot, user_id: int) -> bool:
     """Вспомогательная функция проверки подписки на каналы"""
     # Если в конфиге каналы не настроены (дефолтные id), пропускаем проверку
@@ -120,7 +137,9 @@ async def set_language(call: CallbackQuery, bot: Bot):
     
     await call.message.edit_caption(
         caption=caption,
-        reply_markup=inline_kb.get_main_menu(selected_lang, config.is_admin(user_id)),
+        reply_markup=inline_kb.get_main_menu(
+            selected_lang, config.is_admin(user_id),
+            await is_subscriber(bot, user_id)),
         parse_mode="Markdown"
     )
     await call.answer()
@@ -153,7 +172,9 @@ async def navigate_home(call: CallbackQuery, bot: Bot):
             caption=caption,
             parse_mode="Markdown"
         ),
-        reply_markup=inline_kb.get_main_menu(lang, config.is_admin(user_id))
+        reply_markup=inline_kb.get_main_menu(
+            lang, config.is_admin(user_id),
+            await is_subscriber(bot, user_id))
     )
     await call.answer()
 # Примечание: хендлер menu_vpn обрабатывается в block6_vpn.py, здесь дублирующая версия удалена

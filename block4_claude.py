@@ -9,6 +9,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from anthropic import AsyncAnthropic
 
+import common
 import config
 import database
 import menu_texts
@@ -195,7 +196,9 @@ async def process_confirmed_exit(message: Message, state: FSMContext):
     await message.answer_photo(
         photo=config.MAIN_BANNER,
         caption=menu_texts.MAIN_MENU_TEXTS.get(lang, menu_texts.MAIN_MENU_TEXTS["en"]),
-        reply_markup=inline_kb.get_main_menu(lang, config.is_admin(user_id)),
+        reply_markup=inline_kb.get_main_menu(
+            lang, config.is_admin(user_id),
+            await common.is_subscriber(bot, user_id)),
         parse_mode="Markdown"
     )
 

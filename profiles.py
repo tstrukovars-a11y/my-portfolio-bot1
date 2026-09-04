@@ -3,6 +3,7 @@ from aiogram import Router, F
 from aiogram.types import CallbackQuery, Message, InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
+import common
 import config
 import database
 import menu_texts
@@ -64,7 +65,9 @@ async def cancel_profiles_password(call: CallbackQuery, state: FSMContext):
 
     user_lang = await database.get_user_language(call.from_user.id)
     caption = menu_texts.MAIN_MENU_TEXTS.get(user_lang, menu_texts.MAIN_MENU_TEXTS["en"])
-    markup = inline_kb.get_main_menu(user_lang, config.is_admin(call.from_user.id))
+    markup = inline_kb.get_main_menu(
+        user_lang, config.is_admin(call.from_user.id),
+        await common.is_subscriber(call.bot, call.from_user.id))
 
     try:
         await call.message.delete()

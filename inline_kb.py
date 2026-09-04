@@ -27,13 +27,27 @@ language_menu = InlineKeyboardMarkup(inline_keyboard=[
 # /channel. Пока пусто — кнопки просто нет.
 CHANNEL_URL = ""
 
+# Канал стоит первой строкой не из тщеславия: это единственная кнопка,
+# которая уводит человека дальше бота и приводит завтра. Разделы никуда
+# не денутся — их откроют и со второй позиции.
+#
+# Подписчику предлагать подписаться глупо, поэтому подпись меняется. Знать,
+# подписан ли человек, бот может — этим занимается вызывающий код.
 CHANNEL_TITLES = {
-    "ru": "📣 Наш канал", "en": "📣 Our channel",
-    "fr": "📣 Notre canal", "he": "📣 הערוץ שלנו",
+    "ru": "📣 Подписаться на журнал для бизнеса",
+    "en": "📣 Subscribe to the business journal",
+    "fr": "📣 S'abonner au journal business",
+    "he": "📣 להירשם למגזין העסקי",
+}
+CHANNEL_TITLES_MEMBER = {
+    "ru": "📣 Акцент — свежие публикации",
+    "en": "📣 Aktsent — latest posts",
+    "fr": "📣 Aktsent — dernières publications",
+    "he": "📣 Aktsent — פרסומים אחרונים",
 }
 
 
-def get_main_menu(lang, is_admin=False):
+def get_main_menu(lang, is_admin=False, subscribed=False):
     titles = {
         "ru": ["🏆 Спорт и путешествия", "🎨 Творчество", "🧠 Интеллект и карьера", "🤖 Чат AI", "💼 Профили: HH & LinkedIn", "🎮 Интерактив"],
         "en": ["🏆 Sports & Travel", "🎨 Creativity", "🧠 Intellect & Career", "🤖 AI Chat", "💼 Profiles: HH & LinkedIn", "🎮 Interactive"],
@@ -59,7 +73,13 @@ def get_main_menu(lang, is_admin=False):
     }
     a_title = analytics_titles.get(lang, analytics_titles["en"])
 
-    rows = [
+    rows = []
+    if CHANNEL_URL:
+        titles = CHANNEL_TITLES_MEMBER if subscribed else CHANNEL_TITLES
+        rows.append([InlineKeyboardButton(
+            text=titles.get(lang, titles["en"]), url=CHANNEL_URL)])
+
+    rows += [
         [InlineKeyboardButton(text=m[0], callback_data="menu_sport")],
         [InlineKeyboardButton(text=m[1], callback_data="menu_creative")],
         [InlineKeyboardButton(text=m[2], callback_data="menu_intellect")],
@@ -68,10 +88,6 @@ def get_main_menu(lang, is_admin=False):
         [InlineKeyboardButton(text=v_title, callback_data="menu_vpn")],
         [InlineKeyboardButton(text=a_title, callback_data="menu_analytics")],
     ]
-    if CHANNEL_URL:
-        rows.append([InlineKeyboardButton(
-            text=CHANNEL_TITLES.get(lang, CHANNEL_TITLES["en"]), url=CHANNEL_URL)])
-
     # Профили идут последними: это визитная карточка для тех, кто уже
     # заинтересовался, а не то, с чего начинают знакомство с ботом.
     rows.append([InlineKeyboardButton(text=m[4], callback_data="menu_profiles")])
