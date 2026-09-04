@@ -2,9 +2,9 @@
   <rect width="512" height="512" fill="#14171A"/>
   <path d="M150 404 L256 186 L362 404" fill="none" stroke="#FFFFFF" stroke-width="54" stroke-linejoin="miter"/>
   <path d="M190 348 H322" stroke="#FFFFFF" stroke-width="44"/>
-  <g transform="translate(327,109) rotate(0) scale(0.92)" fill="#B07CF0" stroke="none">
-    <ellipse cx="-14" cy="30" rx="26" ry="20" transform="rotate(-20 -14 30)"/>
-    <rect x="6" y="-46" width="13" height="76" rx="5"/>
-    <path d="M19,-46 C40,-40 48,-28 46,-8 C40,-24 30,-30 19,-30 Z"/>
+  <g transform="translate(327,105)" fill="#B07CF0">
+    <ellipse cx="-16" cy="36" rx="27" ry="20" transform="rotate(-22 -16 36)"/>
+    <path d="M5,32 V-46 C5,-52 17,-52 17,-46 V32 Z"/>
+    <path d="M17,-46 C40,-38 50,-22 46,0 C44,-16 32,-28 17,-30 Z"/>
   </g>
 </svg>
