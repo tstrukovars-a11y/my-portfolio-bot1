@@ -118,6 +118,10 @@ SHOP_LABELS = (
 # книг — банк под рецептом выглядел бы дико, а именно так и вышло бы.
 SHOP_SECTION_KEY = "shop_url_"
 
+# Пометка о рекламе у каждого магазина своя: рекламодатель и ИНН разные, и
+# одна общая строка была бы неверной для обоих. Ключ — по домену ссылки.
+SHOP_NOTE_KEY = "shop_note_"
+
 
 def _shop_label(url: str) -> str:
     host = urlparse(url or "").netloc.lower()
@@ -125,6 +129,28 @@ def _shop_label(url: str) -> str:
         if key in host:
             return label
     return "🛒 Купить"
+
+
+def _shop_key(url: str) -> str:
+    """Короткое имя магазина по адресу — им же названы настройки пометок"""
+    host = urlparse(url or "").netloc.lower()
+    for key, _ in SHOP_LABELS:
+        if key in host:
+            return key
+    return host.removeprefix("www.") or "shop"
+
+
+async def _ad_mark(url: str) -> str:
+    """«Реклама. ООО …, ИНН …, erid: …» для одной ссылки"""
+    note = await database.get_setting(SHOP_NOTE_KEY + _shop_key(url))
+    if not note:
+        note = await database.get_setting(DISCLOSURE_KEY)
+    erid = _erid(url)
+    if note and erid and "erid" not in note.lower():
+        return f"{note}, erid: {erid}"
+    if note:
+        return note
+    return f"erid: {erid}" if erid else ""
 
 
 def _erid(url: str) -> str:
@@ -624,11 +650,11 @@ async def publish_next(bot: Bot, only: str = None, lead: str = None,
         body = (text or title or "").strip()
         caption = f"{head}\n\n{body}"
         if buy:
-            note = await database.get_setting(DISCLOSURE_KEY)
-            erid = " · ".join(filter(None, (_erid(b.url) for b in buy)))
-            if note or erid:
-                marks = [m for m in (note, f"erid: {erid}" if erid else "") if m]
-                caption += "\n\n" + " · ".join(marks)
+            # Своя строка на каждый магазин: у Литреса свой ИНН и erid, у
+            # Читай-города свой, и валить их в одну пометку нельзя.
+            marks = [m for m in [await _ad_mark(b.url) for b in buy] if m]
+            if marks:
+                caption += "\n\n" + "\n".join(dict.fromkeys(marks))
         if farewell:
             caption += f"\n\n{farewell}"
         caption += await _ad_block()
@@ -1307,9 +1333,21 @@ async def digest_command(message: Message, bot: Bot):
         return
 
     if command == "note" and len(parts) > 2:
-        value = "" if parts[2].strip().lower() in ("нет", "off") else parts[2].strip()
-        await database.set_setting(DISCLOSURE_KEY, value)
-        await message.answer(f"✅ Пометка: {html.escape(value) or 'снята'}")
+        body = parts[2].strip()
+        head = body.split(maxsplit=1)
+        known = {k for k, _ in SHOP_LABELS}
+        if head and head[0].lower() in known:
+            shop, value = head[0].lower(), (head[1].strip() if len(head) > 1 else "")
+            key = SHOP_NOTE_KEY + shop
+        else:
+            shop, value, key = None, body, DISCLOSURE_KEY
+        if value.lower() in ("нет", "off"):
+            value = ""
+        await database.set_setting(key, value)
+        where = f" для {shop}" if shop else " общая"
+        await message.answer(
+            f"✅ Пометка{where}: {html.escape(value) or 'снята'}\n\n"
+            "Своя пометка магазину: <code>/digest note litres Реклама. ООО …</code>")
         return
 
     if command == "club" and len(parts) > 2:

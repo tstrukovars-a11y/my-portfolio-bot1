@@ -127,14 +127,25 @@ async def _get(client, url, params):
         return None, f"Не дозвонилась до AdvCake: {type(e).__name__}"
 
 
-ID_FIELDS = ("id", "offer_id", "alias", "offer_alias")
+ID_FIELDS = ("id", "offer_id")
+ALIAS_FIELDS = ("alias", "offer_alias", "code", "name")
+
+# Как именно называть оффер в выгрузке, документация не говорит, а «offer=957»
+# им не подошло. Поэтому перебираем разумные пары «имя параметра — значение»
+# и запоминаем сработавшую: гадать один раз лучше, чем каждый запрос.
+PARAM_NAMES = ("offer", "offer_id", "offer_alias", "id")
+_working = {"param": None, "index": None}
+
+
+async def offers_raw():
+    key = _key()
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        return await _get(client, OFFERS_URL, {"pass": key, "type": "json"})
 
 
 async def offers():
-    """[(id, название)] подключённых офферов либо (None, ошибка)"""
-    key = _key()
-    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        text, error = await _get(client, OFFERS_URL, {"pass": key, "type": "json"})
+    """[(id, алиас, название)] подключённых офферов либо (None, ошибка)"""
+    text, error = await offers_raw()
     if error:
         return None, error
     rows, error = parse(text)
@@ -144,26 +155,50 @@ async def offers():
     for row in rows or []:
         get = _pick if isinstance(row, dict) else _field
         ident = get(row, ID_FIELDS)
-        if ident:
-            out.append((ident, get(row, ("name", "offer_name", "title")) or ident))
+        alias = get(row, ALIAS_FIELDS)
+        if ident or alias:
+            out.append((ident, alias, get(row, ("name", "title")) or alias or ident))
     return out, None
 
 
-async def fetch(days: int = MAX_DAYS, offer=None):
-    """(текст ответа, ошибка) по одному офферу.
-
-    Выгрузка требует оффер: без него отвечает «Invalid offer». Поэтому
-    сначала спрашиваем список подключённых, потом ходим по каждому.
-    """
+async def fetch(days: int = MAX_DAYS, values=()):
+    """(текст ответа, ошибка). values — чем можно назвать оффер."""
     key = _key()
     if not key:
         return None, ("Ключ не задан. Впишите его в Render → Environment, "
                       "переменная <code>ADVCAKE_KEY</code>, и перезапустите сервис.")
-    params = {"pass": key, "days": max(1, min(MAX_DAYS, days))}
-    if offer:
-        params["offer"] = offer
+    base = {"pass": key, "days": max(1, min(MAX_DAYS, days))}
+    values = [v for v in values if v]
+
+    # Запоминаем не только имя параметра, но и каким из значений он сработал:
+    # иначе на следующем запросе перебор начинался заново.
+    tries = []
+    if _working["param"] and _working["index"] is not None \
+            and _working["index"] < len(values):
+        tries.append((_working["param"], _working["index"]))
+    for name in PARAM_NAMES:
+        for index in range(len(values)):
+            if (name, index) not in tries:
+                tries.append((name, index))
+    tries.append((None, None))   # вдруг без оффера тоже отвечают
+
+    last = None
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        return await _get(client, ORDERS_URL, params)
+        for name, index in tries:
+            params = dict(base)
+            if name is not None:
+                params[name] = values[index]
+            text, error = await _get(client, ORDERS_URL, params)
+            if error:
+                last = error
+                continue
+            _, answer_error = parse(text)
+            if answer_error:
+                last = answer_error
+                continue
+            _working["param"], _working["index"] = name, index
+            return text, None
+    return None, last or "AdvCake не ответил"
 
 
 async def report(days: int = MAX_DAYS) -> str:
@@ -176,15 +211,12 @@ async def report(days: int = MAX_DAYS) -> str:
                 "нужную программу — до одобрения статистики не будет.")
 
     rows, failed = [], []
-    for ident, name in found[:10]:
-        text, error = await fetch(days, ident)
+    for ident, alias, name in found[:10]:
+        text, error = await fetch(days, (ident, alias, name))
         if error:
             failed.append(f"{name}: {error}")
             continue
-        part, error = parse(text)
-        if error:
-            failed.append(f"{name}: {error}")
-            continue
+        part, _ = parse(text)
         rows.extend(part or [])
 
     if not rows and failed:
@@ -280,15 +312,26 @@ async def advcake_command(message: Message):
         return
 
     if arg in ("сырое", "raw"):
-        found, error = await offers()
-        offer = found[0][0] if found else None
-        raw, error = await fetch(MAX_DAYS, offer)
+        found, _ = await offers()
+        first = found[0] if found else ()
+        raw, error = await fetch(MAX_DAYS, first)
         if error:
             await message.answer(f"❌ {error}")
             return
         await message.answer(
-            f"Оффер: <code>{offer or 'не выбран'}</code>\n\nОтвет:\n\n<code>"
+            f"Параметр: <code>{_working['param'] or 'не подобран'}</code>\n\n"
+            f"Ответ:\n\n<code>"
             + raw[:900].replace("<", "&lt;").replace(">", "&gt;") + "</code>")
+        return
+
+    if arg in ("офферы", "offers") and len(parts) > 2 and parts[2].lower() in ("сырое", "raw"):
+        text, error = await offers_raw()
+        if error:
+            await message.answer(f"❌ {error}")
+            return
+        await message.answer("Список офферов как есть:\n\n<code>"
+                             + text[:900].replace("<", "&lt;").replace(">", "&gt;")
+                             + "</code>")
         return
 
     if arg in ("офферы", "offers"):
@@ -300,7 +343,8 @@ async def advcake_command(message: Message):
             await message.answer("Подключённых офферов нет.")
             return
         await message.answer("<b>Офферы</b>\n" + "\n".join(
-            f"<code>{i}</code> — {n}" for i, n in found[:20]))
+            f"<code>{i or '—'}</code> · <code>{a or '—'}</code> — {n}"
+            for i, a, n in found[:20]))
         return
 
     days = int(arg) if arg.isdigit() else MAX_DAYS
