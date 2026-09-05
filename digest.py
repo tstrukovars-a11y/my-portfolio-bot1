@@ -326,7 +326,9 @@ VOTE_LABELS = {
     "genetics": "💡 Знали это",
     "recipes": "🍳 Готовили",
     "travel": "📍 Были здесь",
-    "books": "📖 Читали",
+    # «Читали?» — вопрос о прошлом, «Рекомендую» — поступок читателя,
+    # и он же полезнее: советы видно, а прочитанное ни на что не влияет.
+    "books": "👍 Рекомендую",
 }
 
 
@@ -499,18 +501,19 @@ async def _club_row(section: str, bot: Bot = None):
     ветку. У закрытой остаётся t.me/c/<чат>/<тема>, а она работает только
     у участников, поэтому для закрытой лучше задать приглашение.
     """
+    label = CLUB_LABELS.get(section, CLUB_DEFAULT)
+
+    # Заданная вручную ссылка на клуб перевешивает и работает сама по себе:
+    # раньше кнопки не было вовсе, пока не настроен дубль постов, — а это
+    # разные вещи, обсуждение может жить и без дубля.
+    invite = await database.get_setting(CLUB_LINK_KEY)
+    if invite:
+        return [InlineKeyboardButton(text=label, url=invite)]
+
     target = await database.get_setting(MIRROR_KEY)
     if not target:
         return None
     thread = await _mirror_thread(section)
-    label = CLUB_LABELS.get(section, CLUB_DEFAULT)
-
-    invite = await database.get_setting(CLUB_LINK_KEY)
-    if invite:
-        # Заданное вручную приглашение перевешивает: у него темы нет,
-        # зато оно точно открывается у всех.
-        return [InlineKeyboardButton(text=label, url=invite)]
-
     try:
         chat_id = int(target)
     except (TypeError, ValueError):
