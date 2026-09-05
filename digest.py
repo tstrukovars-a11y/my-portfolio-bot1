@@ -98,7 +98,25 @@ SHOP_LABELS = (
     ("labirint", "📚 Лабиринт"),
     ("book24", "📚 Book24"),
     ("wildberries", "📦 WB"),
+    ("aviasales", "✈️ Билеты"),
+    ("ostrovok", "🏨 Отели"),
+    ("travelpayouts", "✈️ Поездка"),
+    ("tinkoff", "🏦 Открыть счёт"),
+    ("tbank", "🏦 Открыть счёт"),
+    ("tochka", "🏦 Открыть счёт"),
+    ("alfabank", "🏦 Открыть счёт"),
+    ("sber", "🏦 Открыть счёт"),
+    ("skillbox", "🎓 Курс"),
+    ("netology", "🎓 Курс"),
+    ("practicum", "🎓 Курс"),
+    ("sportmaster", "🎾 Экипировка"),
+    ("samokat", "🛒 Продукты"),
+    ("lavka", "🛒 Продукты"),
 )
+
+# Оффер раздела: своя ссылка у каждого. Раньше шаблон был один и только для
+# книг — банк под рецептом выглядел бы дико, а именно так и вышло бы.
+SHOP_SECTION_KEY = "shop_url_"
 
 
 def _shop_label(url: str) -> str:
@@ -130,6 +148,29 @@ def _search_query(title: str) -> str:
     return quote(title.replace(" — ", " ").replace("—", " ").strip(), safe="")
 
 
+async def _shop_template(section: str):
+    """(подпись, шаблон) оффера раздела либо (None, None).
+
+    Подпись можно задать вручную через «Подпись | ссылка»: у банка она не
+    выводится из адреса, «Купить» там ни о чём.
+    """
+    raw = await database.get_setting(SHOP_SECTION_KEY + section)
+    if not raw and section == "books":
+        raw = await database.get_setting(SHOP_KEY)      # прежняя настройка книг
+    if not raw:
+        return None, None
+    if "|" in raw:
+        label, url = raw.split("|", 1)
+        return label.strip() or None, url.strip()
+    return None, raw.strip()
+
+
+def _shop_url(template: str, title: str, section: str) -> str:
+    """{q} — запрос, {sub} — метка раздела для статистики сети"""
+    url = template.replace("{q}", _search_query(title)) if "{q}" in template else template
+    return url.replace("{sub}", quote(section, safe=""))
+
+
 async def _buy_row(section: str, title: str):
     """Кнопки покупки: своя ссылка книги и общий шаблон — обе, если есть.
 
@@ -137,20 +178,19 @@ async def _buy_row(section: str, title: str):
     товары: у одного бумага, у другого файл. Выбор между ними — то, что
     читателю и нужно, а нам два источника вместо одного.
     """
-    if section != "books":
-        return None
-
     row = []
-    own = await database.get_book_link(title)
-    if own:
-        row.append(InlineKeyboardButton(text=_shop_label(own), url=own))
+    if section == "books":
+        own = await database.get_book_link(title)
+        if own:
+            row.append(InlineKeyboardButton(text=_shop_label(own), url=own))
 
-    template = await database.get_setting(SHOP_KEY)
-    if template and "{q}" in template:
-        url = template.replace("{q}", _search_query(title))
+    label, template = await _shop_template(section)
+    if template:
+        url = _shop_url(template, title, section)
+        text = label or _shop_label(url)
         # Дубль одного магазина двумя кнопками читателю не нужен
-        if not row or _shop_label(url) != row[0].text:
-            row.append(InlineKeyboardButton(text=_shop_label(url), url=url))
+        if not row or text != row[0].text:
+            row.append(InlineKeyboardButton(text=text, url=url))
     return row or None
 
 
@@ -218,6 +258,19 @@ SECTION_TITLES = {
     "recipes": "🍳 Кулинария",
     "travel": "🌍 Путешествия",
     "books": "📚 Деловая литература",
+}
+
+# Названия слотов сетки — для списков, где раньше светились служебные слова
+SLOT_TITLES = {
+    "morning": "☀️ Утро: новости и курсы",
+    "results": "🎾 Итоги матчей",
+    "tennis": "🎾 Расписание тенниса",
+    "books": "📚 Деловая литература",
+    "genetics": "🧬 Генетика",
+    "puzzle": "🧩 Задача дня",
+    "travel": "🌍 Путешествия",
+    "sport": "🏆 Спортивный факт",
+    "dinner": "🍳 Рецепт на ужин",
 }
 
 # Вопрос читателю под каждым постом. Формулировка своя для раздела: «были
@@ -1206,19 +1259,51 @@ async def digest_command(message: Message, bot: Bot):
         await message.answer(f"✅ {key[1]} → {html.escape(bits[1])}")
         return
 
-    if command == "shop" and len(parts) > 2:
-        value = parts[2].strip()
-        if "{q}" not in value:
-            await message.answer(
-                "В шаблоне должно быть <code>{q}</code> — место для запроса.\n\n"
-                "Пример:\n"
-                "<code>/digest shop https://www.ozon.ru/search/?text={q}&partner=ВАША_МЕТКА</code>")
+    if command == "shop":
+        sections = [s for _, s, _ in SCHEDULE]
+        # /digest shop — показать, что уже настроено
+        if len(parts) < 3:
+            lines = ["🛒 <b>Офферы разделов</b>", ""]
+            for section in sections:
+                label, template = await _shop_template(section)
+                mark = f"{label or _shop_label(template)}" if template else "—"
+                lines.append(f"{SLOT_TITLES.get(section, section)}: {mark}")
+            lines += ["", "Задать: <code>/digest shop travel ✈️ Отели | https://…{q}…</code>",
+                      "Снять: <code>/digest shop travel нет</code>",
+                      "<code>{q}</code> — запрос, <code>{sub}</code> — метка раздела "
+                      "для статистики сети."]
+            await message.answer("\n".join(lines))
             return
-        await database.set_setting(SHOP_KEY, value)
-        sample = value.replace("{q}", _search_query("Энди Гроув — Высокоэффективный менеджмент"))
+
+        # Раздел указан первым словом; без него — книги, как было раньше
+        head = parts[2].split(maxsplit=1)
+        if head[0].lower() in sections:
+            section, value = head[0].lower(), (head[1].strip() if len(head) > 1 else "")
+        else:
+            section, value = "books", parts[2].strip()
+
+        if value.lower() in ("нет", "off", ""):
+            await database.set_setting(SHOP_SECTION_KEY + section, "")
+            if section == "books":
+                await database.set_setting(SHOP_KEY, "")
+            await message.answer(f"✅ Оффер снят: {SLOT_TITLES.get(section, section)}")
+            return
+
+        url_part = value.split("|", 1)[1].strip() if "|" in value else value
+        if not url_part.startswith("http"):
+            await message.answer(
+                "Нужна ссылка, начиная с https://\n\n"
+                "Можно с подписью: <code>Подпись | https://…</code>")
+            return
+
+        await database.set_setting(SHOP_SECTION_KEY + section, value)
+        label, template = await _shop_template(section)
+        sample = _shop_url(template, "Энди Гроув — Высокоэффективный менеджмент", section)
         await message.answer(
-            f"✅ Партнёрская ссылка задана.\n\nПроверьте, что она открывается:\n"
-            f"{html.escape(sample)}")
+            f"✅ {SLOT_TITLES.get(section, section)} → "
+            f"{html.escape(label or _shop_label(sample))}\n\n"
+            f"Проверьте, что открывается:\n{html.escape(sample)}")
+        return
         return
 
     if command == "note" and len(parts) > 2:
