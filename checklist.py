@@ -244,8 +244,7 @@ async def remind(bot: Bot) -> str:
     try:
         import advcake
         if advcake._key():
-            raw, error = await advcake.fetch(advcake.MAX_DAYS)
-            numbers = ("\n\n" + advcake.summary(raw, advcake.MAX_DAYS)) if raw else ""
+            numbers = "\n\n" + await advcake.report(advcake.MAX_DAYS)
     except Exception as e:
         logging.warning(f"Цифры AdvCake к напоминанию не подъехали: {e}")
 

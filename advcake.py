@@ -31,7 +31,9 @@ OFFERS_URL = "https://api.advcake.ru/offers"
 MAX_DAYS = 7            # столько отдаёт выгрузка за один запрос
 TIMEOUT = 30
 
-ORDER_TAGS = {"order", "orders", "action", "row", "item", "conversion"}
+ORDER_TAGS = {"order", "action", "row", "item", "conversion"}
+# Обёртки списка: сами по себе заказами не являются, даже когда пустые
+CONTAINER_TAGS = {"orders", "actions", "rows", "items", "conversions", "data"}
 SUM_FIELDS = ("payment", "commission", "reward", "sum", "amount", "price", "cart")
 STATUS_FIELDS = ("status", "state", "action_status")
 OFFER_FIELDS = ("offer", "offer_name", "advertiser", "shop")
@@ -86,33 +88,35 @@ def _pick(row: dict, names):
     return ""
 
 
-def _orders(xml_text: str):
-    """Список заказов из ответа. Пусто — значит формат другой."""
+def _from_xml(text: str):
+    """(заказы, ошибка) из XML. Ошибка у них лежит тегом <error>, и раньше
+    я принимала служебные теги ответа за три заказа."""
     try:
-        root = ET.fromstring(xml_text)
+        root = ET.fromstring(text)
     except ET.ParseError as e:
         logging.warning(f"AdvCake: ответ не разобрался как XML: {e}")
-        return None
+        return None, None
 
-    found = [node for node in root.iter()
-             if node.tag.lower().rstrip("s") in {t.rstrip("s") for t in ORDER_TAGS}
-             and node is not root]
-    # Иногда заказы лежат прямо детьми корня без узнаваемого имени
-    return found or list(root)
+    error = root.find("error")
+    if error is not None and (error.text or "").strip():
+        return None, error.text.strip()
+    success = root.find("success")
+    if success is not None and (success.text or "").strip().lower() == "false":
+        return None, "AdvCake отказал, но причину не назвал."
+
+    found = [n for n in root.iter()
+             if n is not root
+             and n.tag.lower() not in CONTAINER_TAGS
+             and n.tag.lower().rstrip("s") in ORDER_TAGS]
+    return found, None
 
 
-async def fetch(days: int = MAX_DAYS):
-    """(текст ответа, ошибка). Ошибка — строкой для показа владельцу."""
-    key = _key()
-    if not key:
-        return None, ("Ключ не задан. Впишите его в Render → Environment, "
-                      "переменная <code>ADVCAKE_KEY</code>, и перезапустите сервис.")
+async def _get(client, url, params):
+    """Текст ответа либо (None, причина)"""
     try:
-        async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-            response = await client.get(
-                ORDERS_URL, params={"pass": key, "days": max(1, min(MAX_DAYS, days))})
-            response.raise_for_status()
-            return response.text, None
+        response = await client.get(url, params=params)
+        response.raise_for_status()
+        return response.text, None
     except httpx.HTTPStatusError as e:
         code = e.response.status_code
         if code in (401, 403):
@@ -121,6 +125,74 @@ async def fetch(days: int = MAX_DAYS):
     except Exception as e:
         logging.error(f"AdvCake недоступен: {e}")
         return None, f"Не дозвонилась до AdvCake: {type(e).__name__}"
+
+
+ID_FIELDS = ("id", "offer_id", "alias", "offer_alias")
+
+
+async def offers():
+    """[(id, название)] подключённых офферов либо (None, ошибка)"""
+    key = _key()
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        text, error = await _get(client, OFFERS_URL, {"pass": key, "type": "json"})
+    if error:
+        return None, error
+    rows, error = parse(text)
+    if error:
+        return None, error
+    out = []
+    for row in rows or []:
+        get = _pick if isinstance(row, dict) else _field
+        ident = get(row, ID_FIELDS)
+        if ident:
+            out.append((ident, get(row, ("name", "offer_name", "title")) or ident))
+    return out, None
+
+
+async def fetch(days: int = MAX_DAYS, offer=None):
+    """(текст ответа, ошибка) по одному офферу.
+
+    Выгрузка требует оффер: без него отвечает «Invalid offer». Поэтому
+    сначала спрашиваем список подключённых, потом ходим по каждому.
+    """
+    key = _key()
+    if not key:
+        return None, ("Ключ не задан. Впишите его в Render → Environment, "
+                      "переменная <code>ADVCAKE_KEY</code>, и перезапустите сервис.")
+    params = {"pass": key, "days": max(1, min(MAX_DAYS, days))}
+    if offer:
+        params["offer"] = offer
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        return await _get(client, ORDERS_URL, params)
+
+
+async def report(days: int = MAX_DAYS) -> str:
+    """Сводка по всем подключённым офферам разом"""
+    found, error = await offers()
+    if error:
+        return f"AdvCake отвечает: «{error}»"
+    if not found:
+        return ("В кабинете нет подключённых офферов. Подайте заявку на "
+                "нужную программу — до одобрения статистики не будет.")
+
+    rows, failed = [], []
+    for ident, name in found[:10]:
+        text, error = await fetch(days, ident)
+        if error:
+            failed.append(f"{name}: {error}")
+            continue
+        part, error = parse(text)
+        if error:
+            failed.append(f"{name}: {error}")
+            continue
+        rows.extend(part or [])
+
+    if not rows and failed:
+        return "AdvCake отвечает:\n" + "\n".join(f"• {f}" for f in failed[:5])
+    summary_text = _summary_rows(rows, days, json_mode=bool(rows) and isinstance(rows[0], dict))
+    if failed:
+        summary_text += "\n\n<i>Не ответили: " + "; ".join(failed[:3]) + "</i>"
+    return summary_text
 
 
 def _money(value: str) -> float:
@@ -132,20 +204,21 @@ def _money(value: str) -> float:
 
 def summary(xml_text: str, days: int) -> str:
     """Человеческая сводка по выгрузке"""
-    rows, error = _from_json(xml_text)
+    rows, error = parse(xml_text)
     if error:
         return f"AdvCake отвечает: «{error}»"
-    if rows is not None:
-        return _summary_rows(rows, days, json_mode=True)
-
-    orders = _orders(xml_text)
-    if orders is None:
+    if rows is None:
         return ("Ответ пришёл, но разобрать его не вышло — покажите мне "
                 "<code>/advcake сырое</code>, и я поправлю разбор.")
-    if not orders:
-        return f"За {days} дн. заказов нет."
+    return _summary_rows(rows, days, json_mode=not rows or isinstance(rows[0], dict))
 
-    return _summary_rows(orders, days, json_mode=False)
+
+def parse(text: str):
+    """(заказы, ошибка) — из чего бы ни пришёл ответ"""
+    rows, error = _from_json(text)
+    if rows is not None or error:
+        return rows, error
+    return _from_xml(text)
 
 
 def _summary_rows(orders, days: int, json_mode: bool) -> str:
@@ -206,15 +279,29 @@ async def advcake_command(message: Message):
             "Сюда его не присылайте.")
         return
 
-    days = int(arg) if arg.isdigit() else MAX_DAYS
-    raw, error = await fetch(days)
-    if error:
-        await message.answer(f"❌ {error}")
-        return
-
     if arg in ("сырое", "raw"):
+        found, error = await offers()
+        offer = found[0][0] if found else None
+        raw, error = await fetch(MAX_DAYS, offer)
+        if error:
+            await message.answer(f"❌ {error}")
+            return
         await message.answer(
-            "Первые строки ответа:\n\n<code>"
+            f"Оффер: <code>{offer or 'не выбран'}</code>\n\nОтвет:\n\n<code>"
             + raw[:900].replace("<", "&lt;").replace(">", "&gt;") + "</code>")
         return
-    await message.answer(summary(raw, days))
+
+    if arg in ("офферы", "offers"):
+        found, error = await offers()
+        if error:
+            await message.answer(f"❌ AdvCake отвечает: «{error}»")
+            return
+        if not found:
+            await message.answer("Подключённых офферов нет.")
+            return
+        await message.answer("<b>Офферы</b>\n" + "\n".join(
+            f"<code>{i}</code> — {n}" for i, n in found[:20]))
+        return
+
+    days = int(arg) if arg.isdigit() else MAX_DAYS
+    await message.answer(await report(days))
