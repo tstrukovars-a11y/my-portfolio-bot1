@@ -365,6 +365,26 @@ async def publish_results(bot: Bot, chat: int, thread=None) -> str:
     return f"итоги вчерашнего дня: матчей {total}, сообщений {len(parts)}"
 
 
+@router.message(F.text.startswith("/tennis_paid"))
+async def paid_command(message: Message):
+    """Платные напоминания или свободные"""
+    if not config.is_admin(message.from_user.id):
+        return
+    parts = message.text.split()
+    if len(parts) > 1:
+        value = "да" if parts[1].lower() in ("да", "yes", "on") else ""
+        await database.set_setting(PAID_KEY, value)
+        await message.answer(
+            "✅ Напоминания только по подписке." if value else
+            "✅ Напоминания открыты всем.")
+        return
+    await message.answer(
+        ("Сейчас: только по подписке." if await _paid() else
+         "Сейчас: открыты всем.")
+        + "\n\nЗакрыть подпиской: <code>/tennis_paid да</code>\n"
+          "Открыть всем: <code>/tennis_paid нет</code>")
+
+
 @router.message(F.text.startswith("/tennis_lead"))
 async def lead_command(message: Message):
     """За сколько минут предупреждать: 0 — ровно в момент начала"""
@@ -407,8 +427,7 @@ async def _handle_match_start(message: Message, bot: Bot):
     if tour not in tennis_live.TOURS:
         return
 
-    if not (config.is_admin(message.from_user.id)
-            or await database.check_subscription(message.from_user.id)):
+    if not await _allowed(message.from_user.id):
         await message.answer(NO_SUB)
         return
 
@@ -496,6 +515,21 @@ async def results_command(message: Message, bot: Bot):
 
 NO_SUB = ("🎾 Напоминания о матчах — часть теннисной подписки.\n\n"
           "Оформить: откройте бота → Спорт → Большой теннис.")
+
+# Брать ли за напоминания деньги. По умолчанию нет: читатель канала,
+# нажавший колокольчик и не получивший ничего, больше не нажмёт — а это
+# единственная кнопка, которая уводит из канала в бота.
+PAID_KEY = "tennis_alerts_paid"
+
+
+async def _paid() -> bool:
+    return (await database.get_setting(PAID_KEY) or "").strip() == "да"
+
+
+async def _allowed(user_id: int) -> bool:
+    if config.is_admin(user_id) or not await _paid():
+        return True
+    return await database.check_subscription(user_id)
 NO_CHAT = ("Чтобы получать напоминания, откройте бота и нажмите «Старт» — "
            "иначе я не смогу вам написать.")
 
@@ -533,8 +567,7 @@ async def toggle_match(call: CallbackQuery):
 
     # Подписка проверяется здесь, а не при показе: расписание видят все,
     # платят только за напоминание. Так пост работает и как витрина.
-    if not (config.is_admin(call.from_user.id)
-            or await database.check_subscription(call.from_user.id)):
+    if not await _allowed(call.from_user.id):
         # Не «у вас нет подписки», а сразу экран, где её оформляют.
         await _open_bot(call, "sport_tennis", NO_SUB)
         return
@@ -585,7 +618,9 @@ async def _confirm(bot: Bot, user_id: int, tour: str, match_id: str,
     when = (starts + shift).strftime("%H:%M") if starts else "по расписанию"
     lead = await _lead()
     text = (f"🔔 <b>Напоминание включено</b>\n\n{html.escape(title)}\n"
-            f"Начало в {when}. {_lead_phrase(lead)}")
+            f"Начало в {when}. {_lead_phrase(lead)}\n\n"
+            f"<i>Придёт только вам. На кнопке в канале видно лишь число — "
+            f"сколько человек собирается смотреть.</i>")
     markup = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
         text="🔕 Выключить напоминание",
         callback_data=f"tmute_{tour}_{match_id}")]])
