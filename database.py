@@ -895,6 +895,37 @@ async def drop_alert(user_id: int, match_id: str) -> bool:
         return False
 
 
+async def pending_matches():
+    """[(match_id, tour)] матчей, о которых ещё предстоит напомнить"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT DISTINCT match_id, tour FROM {SCHEMA}.match_alerts "
+                "WHERE NOT sent")
+        return [(r["match_id"], r["tour"]) for r in rows]
+    except Exception as e:
+        logging.error(f"Ожидающие напоминания недоступны: {e}")
+        return []
+
+
+async def update_alert_time(match_id: str, starts_at) -> int:
+    """Новое время начала для всех подписок на матч. Возвращает число строк."""
+    if starts_at is not None and starts_at.tzinfo is not None:
+        starts_at = starts_at.astimezone(timezone.utc).replace(tzinfo=None)
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            done = await conn.execute(
+                f"UPDATE {SCHEMA}.match_alerts SET starts_at = $1 "
+                "WHERE match_id = $2 AND NOT sent AND starts_at IS DISTINCT FROM $1",
+                starts_at, match_id)
+        return int(done.rsplit(" ", 1)[-1]) if done else 0
+    except Exception as e:
+        logging.error(f"Время матча не обновилось: {e}")
+        return 0
+
+
 async def due_alerts(within_minutes: int = 10):
     """Напоминания, которым пора уйти: матч вот-вот начнётся"""
     try:

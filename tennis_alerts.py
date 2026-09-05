@@ -698,6 +698,39 @@ def _with_count(markup, data: str, title: str, total: int):
 # ДОСТАВКА
 # =====================================================================
 
+async def refresh_times() -> int:
+    """Сверить время начала у матчей, о которых ещё не напомнили.
+
+    Теннисное расписание плавает: корт освобождается, когда доиграет
+    предыдущая пара, и матч сдвигается на час-другой. Время мы запомнили в
+    момент подписки, и без сверки напоминание пришло бы к тому времени,
+    которого уже нет. Источник время пересматривает — берём оттуда.
+    """
+    waiting = await database.pending_matches()
+    if not waiting:
+        return 0
+
+    fresh = {}
+    for tour in {t for _, t in waiting}:
+        try:
+            data = await tennis_live.fetch_scoreboard(tour)
+            for match in tennis_live._singles(data, tour, big_only=True):
+                when = _starts(match)
+                if match.get("id") and when:
+                    fresh[match["id"]] = when
+        except Exception as e:
+            logging.warning(f"Расписание {tour} не сверилось: {e}")
+
+    moved = 0
+    for match_id, _ in waiting:
+        when = fresh.get(match_id)
+        if when and await database.update_alert_time(match_id, when):
+            moved += 1
+    if moved:
+        logging.info(f"Теннис: перенесено матчей {moved}")
+    return moved
+
+
 async def alerts_scheduler(bot: Bot):
     """Раз в две минуты смотрит, кому пора слать ссылку.
 
@@ -705,8 +738,15 @@ async def alerts_scheduler(bot: Bot):
     вечно висящее напоминание засоряет очередь.
     """
     await asyncio.sleep(90)
+    ticks = 0
     while True:
         try:
+            # Сверяем время раз в десять минут: чаще незачем, а реже можно
+            # не успеть заметить перенос.
+            if ticks % 10 == 0:
+                await refresh_times()
+            ticks += 1
+
             lead = await _lead()
             for user_id, match_id, tour, title in await database.due_alerts(lead):
                 head = ("Начинается" if lead <= 0
