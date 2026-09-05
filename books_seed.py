@@ -371,7 +371,10 @@ async def take_cover(message: Message, state: FSMContext):
 MODE_KEY = "book_links_user"      # кто сейчас вводит
 CURSOR_KEY = "book_links_cursor"  # какую книгу назвали последней
 SKIP_KEY = "book_links_skipped"   # что пропустили за эту сессию
-MODE_MINUTES = 90                 # дольше сессия не живёт
+# Сессия на полдня. Полтора часа было мало: ссылку на каждую книгу надо
+# сначала сделать в кабинете магазина, а это ходьба туда-сюда с перерывами.
+# Сессия истекала посреди работы, и присланная ссылка уходила в никуда.
+MODE_MINUTES = 720
 
 
 def _link_kb() -> InlineKeyboardMarkup:
@@ -521,7 +524,7 @@ async def link_stop(call: CallbackQuery):
 
 
 @router.message(F.text.startswith("http"))
-async def link_got(message: Message):
+async def link_got(message: Message, state: FSMContext):
     """Голая ссылка от админа во время сессии ввода.
 
     Фильтр без состояния: сессия хранится в базе и переживает деплой.
@@ -530,7 +533,22 @@ async def link_got(message: Message):
     """
     if not config.is_admin(message.from_user.id):
         raise SkipHandler
+    # Идёт другой разговор — картина, место, обложка: там ссылку ждёт свой
+    # обработчик, и перехватывать её нельзя.
+    if await state.get_state():
+        raise SkipHandler
     if not await _mode_active(message.from_user.id):
+        # Молчать нельзя: человек присылает ссылку за ссылкой и не знает,
+        # что сессия кончилась, — со стороны это выглядит как «бот больше
+        # не просит книги».
+        if await database.books_without_link():
+            await message.answer(
+                "Ссылку вижу, но сессия ввода закончилась — не знаю, какой "
+                "книге её приписать.\n\n"
+                "Продолжить с того же места: <code>/book_links</code>\n"
+                "Конкретной книге: <code>/book_link 12 ссылка</code> "
+                "(номера — <code>/book_links_show</code>)")
+            return
         raise SkipHandler
 
     current = await database.get_setting(CURSOR_KEY)
