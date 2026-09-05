@@ -23,8 +23,13 @@ router = Router()
 MARKS = Path(__file__).parent / "data" / "marks"
 
 # раздел -> (файл знака, ключ настройки с id канала, человеческое имя)
+#
+# У клуба знак тот же, что у «Акцента»: группа обсуждает посты канала, и
+# одинаковая аватарка сразу говорит читателю, что это одно место. Ключ,
+# наоборот, свой: id группы для аватарки не должен включать дубль постов.
 TARGETS = {
     "акцент":       ("znak-aktsent-512.png",       "digest_chat",     "Акцент"),
+    "клуб":         ("znak-aktsent-512.png",       "club_chat",       "Клуб"),
     "книги":        ("znak-knigi-512.png",         "books_channel",   "Бизнес-литература"),
     "путешествия":  ("znak-puteshestviya-512.png", "travel_channel",  "Вокруг света"),
     "еда":          ("znak-eda-512.png",           "recipes_channel", "Кухня"),
@@ -47,9 +52,14 @@ async def _apply(bot: Bot, name: str) -> str:
         return f"❌ {title}: файла {file_name} нет в data/marks"
 
     raw = await database.get_setting(key)
+    # У группы id обычно уже известен по настройке дубля — не заставлять же
+    # искать его второй раз.
+    if not raw and name == "клуб":
+        raw = await database.get_setting("digest_mirror")
     if not raw:
-        return (f"⚪️ {title}: канал не задан (настройка <code>{key}</code>). "
-                f"Задайте его, и команда сработает.")
+        return (f"⚪️ {title}: чат не задан (настройка <code>{key}</code>).\n"
+                f"Напишите <code>/id</code> прямо в нём — бот покажет номер, "
+                f"потом <code>/avatar {name} номер</code>.")
     try:
         chat_id = int(raw)
     except (TypeError, ValueError):
@@ -58,7 +68,7 @@ async def _apply(bot: Bot, name: str) -> str:
     try:
         await bot.set_chat_photo(chat_id, FSInputFile(path))
     except TelegramForbiddenError:
-        return f"❌ {title}: бот не в канале"
+        return f"❌ {title}: бота там нет"
     except TelegramBadRequest as e:
         # Самая частая причина — нет права «Изменение профиля канала».
         return (f"❌ {title}: {e.message}\n"
