@@ -155,13 +155,24 @@ def _summary_rows(orders, days: int, json_mode: bool) -> str:
     get = (lambda row, names: _pick(row, names)) if json_mode else _field
     total = 0.0
     statuses, shops, subs = Counter(), Counter(), Counter()
+    known = 0          # у скольких строк нашлось хоть одно поле заказа
     for node in orders:
-        total += _money(get(node, SUM_FIELDS))
-        statuses[get(node, STATUS_FIELDS) or "без статуса"] += 1
-        shops[get(node, OFFER_FIELDS) or "—"] += 1
-        sub = get(node, SUB_FIELDS)
+        money, status = get(node, SUM_FIELDS), get(node, STATUS_FIELDS)
+        shop, sub = get(node, OFFER_FIELDS), get(node, SUB_FIELDS)
+        if money or status or shop:
+            known += 1
+        total += _money(money)
+        statuses[status or "без статуса"] += 1
+        shops[shop or "—"] += 1
         if sub:
             subs[sub] += 1
+
+    # Строки есть, а полей заказа в них нет — значит это не заказы, и
+    # рапортовать «заказов 3» нельзя: цифра выглядит правдой, ею не будучи.
+    if not known:
+        return (f"Пришло {len(orders)} записей, но полей заказа в них нет — "
+                f"похоже, это не заказы.\n\nПокажите <code>/advcake сырое</code>, "
+                f"поправлю разбор под их формат.")
 
     lines = [f"💰 <b>AdvCake за {days} дн.</b>", "",
              f"Заказов: <b>{len(orders)}</b>"]
