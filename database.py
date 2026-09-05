@@ -379,6 +379,16 @@ async def init_db():
             f"ALTER TABLE {SCHEMA}.artworks "
             "ADD COLUMN IF NOT EXISTS channel_msg_id BIGINT")
 
+        # Переходы по кнопкам: своя статистика, не зависящая от сети.
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.link_clicks (
+            id SERIAL PRIMARY KEY,
+            section TEXT,
+            host TEXT,
+            title TEXT,
+            clicked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+
         # Заявки на работы: кто, что, когда и ответили ли уже.
         await conn.execute(f"""
         CREATE TABLE IF NOT EXISTS {SCHEMA}.art_requests (
@@ -2759,6 +2769,42 @@ async def player_names():
 # ---------------------------------------------------------------------
 # КАРТИНЫ
 # ---------------------------------------------------------------------
+
+async def add_click(section: str, host: str, title: str):
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"INSERT INTO {SCHEMA}.link_clicks (section, host, title) "
+                "VALUES ($1, $2, $3)", section[:40], host[:60], title[:120])
+    except Exception as e:
+        logging.error(f"Клик не сохранён: {e}")
+
+
+async def clicks_stats(days: int = 30):
+    """(всего, по разделам, по магазинам, топ материалов) за период"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            where = (f"WHERE clicked_at >= NOW() - ($1 || ' days')::interval")
+            total = await conn.fetchval(
+                f"SELECT COUNT(*) FROM {SCHEMA}.link_clicks {where}", str(days)) or 0
+            by_section = await conn.fetch(
+                f"SELECT section, COUNT(*) AS n FROM {SCHEMA}.link_clicks {where} "
+                "GROUP BY section ORDER BY n DESC LIMIT 8", str(days))
+            by_host = await conn.fetch(
+                f"SELECT host, COUNT(*) AS n FROM {SCHEMA}.link_clicks {where} "
+                "GROUP BY host ORDER BY n DESC LIMIT 8", str(days))
+            top = await conn.fetch(
+                f"SELECT title, COUNT(*) AS n FROM {SCHEMA}.link_clicks {where} "
+                "AND title <> '' GROUP BY title ORDER BY n DESC LIMIT 8", str(days))
+        return (total, [(r["section"], r["n"]) for r in by_section],
+                [(r["host"], r["n"]) for r in by_host],
+                [(r["title"], r["n"]) for r in top])
+    except Exception as e:
+        logging.error(f"Статистика переходов недоступна: {e}")
+        return 0, [], [], []
+
 
 async def art_add(title: str, photo_file_id: str = None) -> int:
     """Новая работа. Возвращает её номер либо 0."""

@@ -217,7 +217,13 @@ async def _buy_row(section: str, title: str):
         # Дубль одного магазина двумя кнопками читателю не нужен
         if not row or text != row[0].text:
             row.append(InlineKeyboardButton(text=text, url=url))
-    return row or None
+
+    # Ведём через свой счётчик: сеть покажет заказы когда-нибудь, а клики
+    # видны с первого дня. Пометки о рекламе считаются по исходной ссылке,
+    # поэтому оборачиваем в самом конце.
+    import links
+    return [InlineKeyboardButton(text=b.text, url=links.wrap(b.url, section, title))
+            for b in row] or None
 
 
 async def _offer_row(section: str):
@@ -652,7 +658,8 @@ async def publish_next(bot: Bot, only: str = None, lead: str = None,
         if buy:
             # Своя строка на каждый магазин: у Литреса свой ИНН и erid, у
             # Читай-города свой, и валить их в одну пометку нельзя.
-            marks = [m for m in [await _ad_mark(b.url) for b in buy] if m]
+            import links
+            marks = [m for m in [await _ad_mark(links.unwrap(b.url)) for b in buy] if m]
             if marks:
                 caption += "\n\n" + "\n".join(dict.fromkeys(marks))
         if farewell:

@@ -280,3 +280,34 @@ async def scheduler(bot: Bot):
         except Exception as e:
             logging.error(f"Проверка напоминания о кабинетах сорвалась: {e}")
         await asyncio.sleep(3600)
+
+
+# =====================================================================
+# ПЕРЕХОДЫ ПО КНОПКАМ
+# =====================================================================
+
+@router.message(F.text.startswith("/clicks"))
+async def clicks(message: Message):
+    """Своя статистика переходов — она есть с первого дня, без сетей"""
+    if not config.is_admin(message.from_user.id):
+        return
+    parts = message.text.split()
+    days = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 30
+
+    total, by_section, by_host, top = await database.clicks_stats(days)
+    if not total:
+        return await message.answer(
+            f"👆 За {days} дн. переходов не было.\n\n"
+            "Считаются нажатия на кнопки магазинов под публикациями.")
+
+    lines = [f"👆 <b>Переходы за {days} дн.</b>", "", f"Всего: <b>{total}</b>"]
+    if by_section:
+        lines += ["", "<b>Разделы</b>"]
+        lines += [f"{s or '—'} — {n}" for s, n in by_section]
+    if by_host:
+        lines += ["", "<b>Магазины</b>"]
+        lines += [f"{h or '—'} — {n}" for h, n in by_host]
+    if top:
+        lines += ["", "<b>Что нажимали</b>"]
+        lines += [f"{html.escape(t[:40])} — {n}" for t, n in top]
+    await message.answer("\n".join(lines))

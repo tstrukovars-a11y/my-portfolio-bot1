@@ -151,6 +151,30 @@ def make_handle_ping(bot: Bot, dp: Dispatcher):
                     logging.exception(f"Ошибка разбора webhook-обновления: {e}")
                 response = b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
 
+        elif path == "/go" and method == "GET":
+            # Счётчик переходов: записываем клик и отправляем в магазин.
+            # Подпись обязательна — иначе наш адрес стал бы открытым
+            # редиректом, которым уводят куда угодно.
+            import links
+            code, target = await links.handle(
+                {k: (v[0] if isinstance(v, list) else v)
+                 for k, v in query_params.items()})
+            if code == 302:
+                response = (
+                    "HTTP/1.1 302 Found\r\n"
+                    f"Location: {target}\r\n"
+                    "Cache-Control: no-store\r\n"
+                    "Content-Length: 0\r\nConnection: close\r\n\r\n"
+                ).encode("utf-8")
+            else:
+                payload = target.encode("utf-8")
+                response = (
+                    f"HTTP/1.1 {code} \r\n"
+                    "Content-Type: text/plain; charset=utf-8\r\n"
+                    f"Content-Length: {len(payload)}\r\n"
+                    "Connection: close\r\n\r\n"
+                ).encode("utf-8") + payload
+
         elif path == "/game" and method == "GET":
             body_bytes = race.page()
             response = (
