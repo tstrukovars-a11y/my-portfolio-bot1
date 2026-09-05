@@ -28,6 +28,7 @@ router = Router()
 
 ORDERS_URL = "https://export.advcake.ru/partner/offer"
 OFFERS_URL = "https://api.advcake.ru/offers"
+LANDINGS_URL = "https://api.advcake.ru/landings"
 MAX_DAYS = 7            # столько отдаёт выгрузка за один запрос
 TIMEOUT = 30
 
@@ -161,6 +162,27 @@ async def offers():
     return out, None
 
 
+async def landings(offer_id):
+    """Номера лендингов оффера: выгрузка может ждать именно их"""
+    if not offer_id:
+        return []
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        text, error = await _get(client, LANDINGS_URL,
+                                 {"pass": _key(), "offer_id": offer_id, "type": "json"})
+    if error:
+        return []
+    rows, error = parse(text)
+    if error:
+        return []
+    out = []
+    for row in rows or []:
+        get = _pick if isinstance(row, dict) else _field
+        ident = get(row, ("id", "landing_id"))
+        if ident:
+            out.append(ident)
+    return out
+
+
 async def fetch(days: int = MAX_DAYS, values=()):
     """(текст ответа, ошибка). values — чем можно назвать оффер."""
     key = _key()
@@ -204,12 +226,13 @@ async def fetch(days: int = MAX_DAYS, values=()):
             # Группируем по тексту ответа, а не по попытке: одинаковых
             # «Invalid offer» может быть десяток, а важно, что ответов разных
             # всего два — по ним и видно, куда копать.
-            errors.setdefault(error, tag)
+            errors.setdefault(error, []).append(tag)
 
     if not errors:
         return None, "AdvCake не ответил"
-    return None, "; ".join(f"«{text}» ({tag})"
-                           for text, tag in list(errors.items())[:4])
+    return None, "; ".join(
+        f"«{text}» ({', '.join(tags[:3])}{'…' if len(tags) > 3 else ''})"
+        for text, tags in list(errors.items())[:4])
 
 
 async def report(days: int = MAX_DAYS) -> str:
@@ -223,7 +246,11 @@ async def report(days: int = MAX_DAYS) -> str:
 
     rows, failed = [], []
     for ident, alias, name in found[:10]:
-        text, error = await fetch(days, (ident, alias, name))
+        values = [ident, alias, name]
+        # Лендинги пробуем следом: «offer» может означать не оффер каталога,
+        # а конкретную посадочную страницу — их номера видны в кабинете.
+        values += [v for v in await landings(ident) if v not in values][:3]
+        text, error = await fetch(days, values)
         if error:
             failed.append(f"{name}: {error}")
             continue
