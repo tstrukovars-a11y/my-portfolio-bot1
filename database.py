@@ -909,6 +909,34 @@ async def pending_matches():
         return []
 
 
+async def alert_subscribers(match_id: str):
+    """[(user_id, title, tour)] тех, кому ещё предстоит напомнить о матче"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT user_id, title, tour FROM {SCHEMA}.match_alerts "
+                "WHERE match_id = $1 AND NOT sent", match_id)
+        return [(r["user_id"], r["title"], r["tour"]) for r in rows]
+    except Exception as e:
+        logging.error(f"Подписчики матча недоступны: {e}")
+        return []
+
+
+async def close_alerts(match_id: str) -> int:
+    """Закрыть напоминания о матче — он отменён либо уже не состоится"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            done = await conn.execute(
+                f"UPDATE {SCHEMA}.match_alerts SET sent = TRUE "
+                "WHERE match_id = $1 AND NOT sent", match_id)
+        return int(done.rsplit(" ", 1)[-1]) if done else 0
+    except Exception as e:
+        logging.error(f"Напоминания не закрыты: {e}")
+        return 0
+
+
 async def update_alert_time(match_id: str, starts_at) -> int:
     """Новое время начала для всех подписок на матч. Возвращает число строк."""
     if starts_at is not None and starts_at.tzinfo is not None:

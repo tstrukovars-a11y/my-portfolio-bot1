@@ -698,7 +698,63 @@ def _with_count(markup, data: str, title: str, total: int):
 # ДОСТАВКА
 # =====================================================================
 
-async def refresh_times() -> int:
+# Слова, которыми источник помечает несостоявшийся матч. Проверяем по ним,
+# а не по исчезновению из расписания: пропасть матч может и потому, что его
+# перенесли на другой день, — а это не отмена.
+CANCELLED = ("cancel", "postponed", "walkover", "abandoned", "suspended")
+
+# Источник пишет по-английски, а сообщение уходит читателю.
+# Фразы целиком, а не одним словом: «матч» + «соперник снялся» в одну
+# строку не склеивается.
+WHY = {
+    "cancel": "Матч отменён.",
+    "postponed": "Матч перенесли на другой день.",
+    "walkover": "Соперник снялся — матча не будет.",
+    "abandoned": "Матч прервали и не доиграли.",
+    "suspended": "Матч остановлен.",
+}
+
+
+def _why(state: str) -> str:
+    low = (state or "").lower()
+    for word, russian in WHY.items():
+        if word in low:
+            return russian
+    return "Матч отменён."
+
+
+def _cancelled(match) -> bool:
+    state = (match.get("state") or "").lower()
+    return any(word in state for word in CANCELLED)
+
+
+async def _tell_cancelled(bot: Bot, match_id: str, state: str):
+    """Сказать подписчикам, что матча не будет, и закрыть напоминания"""
+    people = await database.alert_subscribers(match_id)
+    if not people:
+        return 0
+    for user_id, title, tour in people:
+        text = (f"🚫 <b>{html.escape(title or 'Матч')}</b>\n\n"
+                f"{_why(state)} Напоминание снимаю — когда матч поставят "
+                f"заново, он снова появится в расписании.")
+        try:
+            await bot.send_message(
+                user_id, text,
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                    InlineKeyboardButton(
+                        text=f"🗓 Сетка {tennis_live.TOURS.get(tour, {}).get('title', '')}".strip(),
+                        url=tennis_live.TOURS.get(tour, {}).get(
+                            "draws", tennis_live.TOURS["atp"]["draws"]))]]))
+        except TelegramForbiddenError:
+            logging.info(f"Отмена: {user_id} заблокировал бота")
+        except Exception as e:
+            logging.warning(f"Отмена {user_id} не ушла: {e}")
+        await asyncio.sleep(0.1)
+    await database.close_alerts(match_id)
+    return len(people)
+
+
+async def refresh_times(bot: Bot = None) -> int:
     """Сверить время начала у матчей, о которых ещё не напомнили.
 
     Теннисное расписание плавает: корт освобождается, когда доиграет
@@ -710,19 +766,28 @@ async def refresh_times() -> int:
     if not waiting:
         return 0
 
-    fresh = {}
+    fresh, dead = {}, {}
     for tour in {t for _, t in waiting}:
         try:
             data = await tennis_live.fetch_scoreboard(tour)
             for match in tennis_live._singles(data, tour, big_only=True):
+                if not match.get("id"):
+                    continue
+                if _cancelled(match):
+                    dead[match["id"]] = match.get("state") or ""
+                    continue
                 when = _starts(match)
-                if match.get("id") and when:
+                if when:
                     fresh[match["id"]] = when
         except Exception as e:
             logging.warning(f"Расписание {tour} не сверилось: {e}")
 
     moved = 0
     for match_id, _ in waiting:
+        if match_id in dead:
+            if bot:
+                await _tell_cancelled(bot, match_id, dead[match_id])
+            continue
         when = fresh.get(match_id)
         if when and await database.update_alert_time(match_id, when):
             moved += 1
@@ -744,7 +809,7 @@ async def alerts_scheduler(bot: Bot):
             # Сверяем время раз в десять минут: чаще незачем, а реже можно
             # не успеть заметить перенос.
             if ticks % 10 == 0:
-                await refresh_times()
+                await refresh_times(bot)
             ticks += 1
 
             lead = await _lead()
