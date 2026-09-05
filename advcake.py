@@ -134,7 +134,7 @@ ALIAS_FIELDS = ("alias", "offer_alias", "code", "name")
 # им не подошло. Поэтому перебираем разумные пары «имя параметра — значение»
 # и запоминаем сработавшую: гадать один раз лучше, чем каждый запрос.
 PARAM_NAMES = ("offer", "offer_id", "offer_alias", "id")
-_working = {"param": None, "index": None}
+_working = {"url": None, "param": None, "index": None}
 
 
 async def offers_raw():
@@ -170,35 +170,46 @@ async def fetch(days: int = MAX_DAYS, values=()):
     base = {"pass": key, "days": max(1, min(MAX_DAYS, days))}
     values = [v for v in values if v]
 
-    # Запоминаем не только имя параметра, но и каким из значений он сработал:
-    # иначе на следующем запросе перебор начинался заново.
+    # Запоминаем и имя параметра, и каким значением он сработал, и адрес:
+    # иначе перебор начинался заново на каждом запросе.
     tries = []
-    if _working["param"] and _working["index"] is not None \
-            and _working["index"] < len(values):
-        tries.append((_working["param"], _working["index"]))
+    if _working["param"] is not None and _working["index"] is not None:
+        tries.append((_working["url"], _working["param"], _working["index"]))
+    for index in range(len(values)):
+        # Номер оффера может стоять и прямо в адресе: /partner/offer/957
+        tries.append((f"{ORDERS_URL}/{values[index]}", None, None))
     for name in PARAM_NAMES:
         for index in range(len(values)):
-            if (name, index) not in tries:
-                tries.append((name, index))
-    tries.append((None, None))   # вдруг без оффера тоже отвечают
+            tries.append((ORDERS_URL, name, index))
+    tries.append((ORDERS_URL, None, None))
 
-    last = None
+    seen, errors = set(), {}
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        for name, index in tries:
+        for url, name, index in tries:
+            if (url, name, index) in seen:
+                continue
+            seen.add((url, name, index))
             params = dict(base)
             if name is not None:
                 params[name] = values[index]
-            text, error = await _get(client, ORDERS_URL, params)
-            if error:
-                last = error
-                continue
-            _, answer_error = parse(text)
-            if answer_error:
-                last = answer_error
-                continue
-            _working["param"], _working["index"] = name, index
-            return text, None
-    return None, last or "AdvCake не ответил"
+            text, error = await _get(client, url, params)
+            if not error:
+                _, error = parse(text)
+            if not error:
+                _working.update(url=url, param=name, index=index)
+                return text, None
+            tag = (f"{name}={values[index]}" if name is not None
+                   else (f"в адресе {url.rsplit('/', 1)[-1]}"
+                         if url != ORDERS_URL else "без оффера"))
+            # Группируем по тексту ответа, а не по попытке: одинаковых
+            # «Invalid offer» может быть десяток, а важно, что ответов разных
+            # всего два — по ним и видно, куда копать.
+            errors.setdefault(error, tag)
+
+    if not errors:
+        return None, "AdvCake не ответил"
+    return None, "; ".join(f"«{text}» ({tag})"
+                           for text, tag in list(errors.items())[:4])
 
 
 async def report(days: int = MAX_DAYS) -> str:
