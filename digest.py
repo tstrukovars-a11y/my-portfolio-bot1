@@ -296,6 +296,21 @@ async def _buy_row(section: str, title: str):
             for b in row] or None
 
 
+async def _weather_row():
+    """«Какая погода» под утренним выпуском.
+
+    Кнопка-ссылка, а не callback: читатель мог прийти из репоста и о боте
+    не знать — по ссылке он попадает туда сразу, вместе с параметром.
+    Погоды в самом посте нет и быть не может: она у каждого своя.
+    """
+    username = await database.get_setting(BOT_KEY)
+    if not username:
+        return None
+    return [InlineKeyboardButton(
+        text="🌦 Какая погода?",
+        url=f"https://t.me/{username.lstrip('@')}?start=weather")]
+
+
 async def _offer_row(section: str):
     offer = OFFERS.get(section)
     username = await database.get_setting(BOT_KEY)
@@ -1003,11 +1018,16 @@ async def publish_slot(bot: Bot, force: str = None) -> str:
         except Exception as e:
             logging.warning(f"Дайджест: курсы к утру не подоспели: {e}")
         text = "\n\n".join(parts)
+        rows = [row for row in (await _weather_row(),
+                                await _club_row("morning", bot)) if row]
         try:
-            sent = await bot.send_message(chat, text[:MAX_MESSAGE],
-                                          message_thread_id=thread,
-                                          parse_mode="Markdown",
-                                          disable_web_page_preview=True)
+            sent = await bot.send_message(
+                chat, text[:MAX_MESSAGE],
+                message_thread_id=thread,
+                parse_mode="Markdown",
+                disable_web_page_preview=True,
+                reply_markup=(InlineKeyboardMarkup(inline_keyboard=rows)
+                              if rows else None))
         except Exception as e:
             logging.error(f"Дайджест: утренний выпуск не вышел: {e}")
             return f"ошибка: {e}"
