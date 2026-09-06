@@ -192,6 +192,17 @@ async def init_db():
             PRIMARY KEY (user_id, match_id)
         )""")
 
+        # Прогнозы на матч. Кнопка в канале одна на всех, а мнение у
+        # каждого своё: храним выбор по человеку, показываем — долю.
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.match_picks (
+            user_id BIGINT NOT NULL,
+            match_id TEXT NOT NULL,
+            side SMALLINT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, match_id)
+        )""")
+
         # 3. Таблицы для контента (рецепты и книги)
         await conn.execute(f"""
         CREATE TABLE IF NOT EXISTS {SCHEMA}.recipes (
@@ -907,6 +918,44 @@ async def pending_matches():
     except Exception as e:
         logging.error(f"Ожидающие напоминания недоступны: {e}")
         return []
+
+
+async def save_pick(match_id: str, user_id: int, side: int):
+    """Прогноз читателя. Передумал — засчитываем последний ответ.
+
+    Возвращает (голоса за первого, голоса за второго) либо None, если
+    записать не вышло: молча «сохранено» говорить нельзя.
+    """
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"INSERT INTO {SCHEMA}.match_picks (user_id, match_id, side) "
+                "VALUES ($1, $2, $3) "
+                "ON CONFLICT (user_id, match_id) DO UPDATE SET side = $3",
+                user_id, match_id, int(side))
+            row = await conn.fetchrow(
+                f"SELECT COUNT(*) FILTER (WHERE side = 0) AS a, "
+                f"COUNT(*) FILTER (WHERE side = 1) AS b "
+                f"FROM {SCHEMA}.match_picks WHERE match_id = $1", match_id)
+        return (row["a"], row["b"]) if row else (0, 0)
+    except Exception as e:
+        logging.error(f"Прогноз не сохранился: {e}")
+        return None
+
+
+async def pick_counts(match_id: str):
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                f"SELECT COUNT(*) FILTER (WHERE side = 0) AS a, "
+                f"COUNT(*) FILTER (WHERE side = 1) AS b "
+                f"FROM {SCHEMA}.match_picks WHERE match_id = $1", match_id)
+        return (row["a"], row["b"]) if row else (0, 0)
+    except Exception as e:
+        logging.error(f"Прогнозы недоступны: {e}")
+        return 0, 0
 
 
 async def alert_subscribers(match_id: str):

@@ -94,6 +94,42 @@ def _notable(match) -> bool:
     return False
 
 
+def _names(match):
+    """Два коротких имени по отдельности — для кнопок прогноза"""
+    out = []
+    for side in (match.get("sides") or [])[:2]:
+        raw = ((side.get("athlete") or {}).get("displayName") or "")
+        out.append(players_ru.short(raw) if raw else "")
+    return out if len(out) == 2 and all(out) else None
+
+
+# Пока голосов мало, доля врёт: один человек — это «100 % за Рублёва».
+# До этого числа показываем просто имена.
+PICK_MIN = 5
+
+
+def _pick_labels(match_id: str, names, counts) -> list:
+    """Кнопки прогноза с долями, когда доли уже что-то значат"""
+    total = sum(counts)
+    rows = []
+    for i, name in enumerate(names):
+        share = ""
+        if total >= PICK_MIN:
+            share = f" · {round(counts[i] * 100 / total)}%"
+        rows.append(InlineKeyboardButton(
+            text=f"{name[:22]}{share}", callback_data=f"tpick_{match_id}_{i}"))
+    return rows
+
+
+async def _pick_row(match):
+    """Строка «кто победит» под матчем дня"""
+    names = _names(match)
+    if not names or not match.get("id"):
+        return None
+    counts = await database.pick_counts(match["id"])
+    return _pick_labels(match["id"], names, counts)
+
+
 async def _today(tour: str):
     """Матчи сегодняшнего дня, которые ещё не сыграны.
 
@@ -257,6 +293,17 @@ async def publish_schedule(bot: Bot, chat: int, thread=None) -> str:
             f"Нажмите на матч — пришлю ссылку на трансляцию в личные "
             f"сообщения, {('за ' + str(lead) + ' ' + _minutes_word(lead) + ' до начала') if lead else 'к началу'}.")
 
+        # Прогноз — только на один матч поста, самый заметный. Две кнопки
+        # к каждому из десяти превратили бы пост в стену: спрашивать надо
+        # там, где человеку и правда интересно ответить.
+        top = matches[0] if matches else None
+        picks = await _pick_row(top) if top else None
+        if picks:
+            lines.append(f"\nА кто победит в матче "
+                         f"{html.escape(_title(top))}? Нажмите — покажу, "
+                         f"что думают остальные.")
+            rows.append(picks)
+
         # Сетка — последней строкой кнопок: список матчей на сегодня
         # отвечает «что смотреть», сетка — «кто с кем дальше».
         rows.append([InlineKeyboardButton(
@@ -315,6 +362,39 @@ def _result_line(match) -> str:
     return pair + (f"  <code>{html.escape(score)}</code>" if score else "")
 
 
+async def _pick_verdict(match) -> str:
+    """Чем кончилось голосование под вчерашним постом.
+
+    Ради этой строчки прогноз и затевался: нажать «кто победит» интересно
+    только тогда, когда назавтра узнаёшь, угадала ли толпа.
+    """
+    names = _names(match)
+    if not names or not match.get("id"):
+        return ""
+    counts = await database.pick_counts(match["id"])
+    total = sum(counts)
+    if total < PICK_MIN:
+        return ""
+
+    sides = match.get("sides") or []
+    if len(sides) < 2:
+        return ""
+    won = 0 if sides[0].get("winner") else (1 if sides[1].get("winner") else None)
+    if won is None:
+        return ""
+
+    favourite = 0 if counts[0] >= counts[1] else 1
+    share = round(counts[favourite] * 100 / total)
+    # Имя ставим после двоеточия, а не в середину фразы: «ставили на
+    # Рублёв» — то, что выходит при подстановке, склонять фамилии
+    # автоматически нельзя.
+    if counts[0] == counts[1]:
+        return f"<i>Прогноз читателей: голоса разделились поровну ({total}).</i>"
+    verdict = "Угадали." if favourite == won else "Не угадали."
+    return (f"<i>Прогноз читателей: {html.escape(names[favourite])} — "
+            f"{share}% из {total}. {verdict}</i>")
+
+
 async def publish_results(bot: Bot, chat: int, thread=None) -> str:
     """Итоги вчерашнего дня — утром, пока результаты ещё новость"""
     shift = await _shift()
@@ -338,6 +418,9 @@ async def publish_results(bot: Bot, chat: int, thread=None) -> str:
             line = _result_line(m)
             if line:
                 lines.append(line)
+                verdict = await _pick_verdict(m)
+                if verdict:
+                    lines.append(verdict)
         blocks.append("\n".join(lines))
 
     if not blocks:
@@ -555,6 +638,71 @@ async def _open_bot(call: CallbackQuery, payload: str, fallback: str) -> None:
         await call.answer(url=url)
     else:
         await call.answer(fallback, show_alert=True)
+
+
+def _name_on(button) -> str:
+    """Имя с кнопки прогноза без доли — доля на ней могла уже устареть"""
+    return (button.text or "").split(" · ")[0]
+
+
+@router.callback_query(F.data.startswith("tpick_"))
+async def take_pick(call: CallbackQuery):
+    """Прогноз читателя под постом канала.
+
+    Кнопка общая, ответ личный: в окошке человек видит своё мнение и
+    расклад, на самой кнопке проценты обновляются для всех.
+    """
+    try:
+        match_id, raw = call.data[len("tpick_"):].rsplit("_", 1)
+        side = int(raw)
+    except ValueError:
+        await call.answer()
+        return
+
+    counts = await database.save_pick(match_id, call.from_user.id, side)
+    if counts is None:
+        await call.answer("Не получилось сохранить голос, попробуйте ещё раз.",
+                          show_alert=True)
+        return
+
+    # Имена берём с самих кнопок: матч мог уже уйти из сегодняшнего
+    # расписания, а пост остаётся, и голосовать по нему продолжают.
+    row = next((r for r in (call.message.reply_markup.inline_keyboard if
+                            call.message and call.message.reply_markup else [])
+                if r and (r[0].callback_data or "").startswith("tpick_")), None)
+    names = [_name_on(b) for b in row] if row and len(row) == 2 else None
+
+    total = sum(counts)
+    mine = names[side] if names else "этого игрока"
+    # «Ваш выбор: Рублёв», а не «вы за Рублёва»: фамилию в винительном
+    # падеже автоматически не поставить — Швёнтек и Медведев склоняются
+    # по-разному, а часть имён вообще не склоняется.
+    if total < PICK_MIN:
+        await call.answer(
+            f"Ваш выбор: {mine}.\n\nПока голосов: {total}. Покажу расклад, "
+            f"когда наберётся {PICK_MIN}.", show_alert=True)
+    else:
+        share = round(counts[side] * 100 / total)
+        await call.answer(
+            f"Ваш выбор: {mine}.\n\nТак же думают {share}% — из {total} "
+            f"{_votes_word(total)}.", show_alert=True)
+
+    if not names:
+        return
+    fresh = _pick_labels(match_id, names, counts)
+    keyboard = [fresh if r is row else r
+                for r in call.message.reply_markup.inline_keyboard]
+    try:
+        await call.message.edit_reply_markup(
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
+    except Exception:
+        pass          # разметка могла не измениться — это не ошибка
+
+
+def _votes_word(n: int) -> str:
+    if 11 <= n % 100 <= 14:
+        return "проголосовавших"
+    return {1: "проголосовавшего"}.get(n % 10, "проголосовавших")
 
 
 @router.callback_query(F.data.startswith("tmatch_"))
