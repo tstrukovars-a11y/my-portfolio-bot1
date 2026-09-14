@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>Теннис</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root{
+    --bg:#0e1420; --court:#1c4f8a; --out:#14395f; --line:#eaf1f8;
+    --ink:#f2f3f5; --dim:#9aa0ad; --ball:#d6f24a; --accent:#48b0ff; --bad:#ff5a5a;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--ink);
+    font:16px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    user-select:none;touch-action:none}
+  #wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center}
+  canvas{display:block;touch-action:none}
+
+  .hud{position:fixed;top:calc(env(safe-area-inset-top) + 12px);left:0;right:0;
+    display:none;justify-content:space-between;padding:0 18px;
+    font-variant-numeric:tabular-nums;pointer-events:none}
+  .hud.on{display:flex}
+  .hud b{font-size:26px;font-weight:700;text-shadow:0 1px 3px rgba(0,0,0,.6)}
+  .hud span{display:block;font-size:11px;letter-spacing:.08em;text-transform:uppercase;
+    color:#cfd6e0;text-shadow:0 1px 3px rgba(0,0,0,.6)}
+  .hud .right{text-align:right}
+
+  .panel{position:fixed;inset:0;display:none;flex-direction:column;
+    align-items:center;justify-content:center;gap:16px;padding:28px;
+    background:rgba(14,20,32,.94);backdrop-filter:blur(6px);text-align:center}
+  .panel.on{display:flex}
+  .panel h1{font-size:30px;font-weight:700;letter-spacing:-.02em}
+  .panel p{color:var(--dim);max-width:19em;font-size:15px}
+  .big{font-size:58px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums}
+  .best,.saved{color:var(--dim);font-size:14px}
+  .lbl{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
+  button{appearance:none;border:0;border-radius:14px;padding:15px 34px;
+    font-size:17px;font-weight:600;color:#08111c;background:var(--accent);
+    cursor:pointer;transition:transform .08s}
+  button:active{transform:scale(.97)}
+  button.ghost{background:transparent;color:var(--dim);
+    box-shadow:inset 0 0 0 1px #3a4152;padding:12px 26px;font-size:15px}
+  .levels{display:flex;gap:10px}
+  .lv{padding:10px 18px;border-radius:12px;font-size:15px;color:var(--dim);
+    box-shadow:inset 0 0 0 1px #3a4152;cursor:pointer}
+  .lv.on{color:#08111c;background:var(--ball);box-shadow:none;font-weight:600}
+  .hint{color:var(--dim);font-size:13px;line-height:1.5}
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="cv"></canvas></div>
+
+<div class="hud" id="hud">
+  <div><span>Розыгрыш</span><b id="score">0</b></div>
+  <div class="right"><span>Рекорд</span><b id="hi">0</b></div>
+</div>
+
+<div class="panel on" id="start">
+  <h1>🎾 Теннис</h1>
+  <p>Отбивайте мяч ракеткой внизу. Каждый удар — очко, с каждым ударом мяч быстрее.</p>
+  <div class="lbl">Соперник</div>
+  <div class="levels" id="levels"></div>
+  <button id="go">Подача</button>
+  <div class="hint">Ведите пальцем по экрану — или стрелками.<br>Край ракетки закручивает мяч.</div>
+</div>
+
+<div class="panel" id="over">
+  <h1 id="verdict">Мяч за линией</h1>
+  <div class="big" id="final">0</div>
+  <div class="best" id="bestline"></div>
+  <div class="saved" id="saved"></div>
+  <button id="again">Ещё гейм</button>
+  <button class="ghost" id="close">Выйти</button>
+</div>
+
+<script>
+"use strict";
+const tg = window.Telegram && window.Telegram.WebApp;
+if (tg){ tg.ready(); tg.expand(); }
+const $ = id => document.getElementById(id);
+
+// localStorage в мини-приложении иногда закрыт — рекорд тогда живёт
+// только на сервере, и падать из-за этого игра не должна.
+const store = {
+  get(k){ try { return localStorage.getItem(k); } catch(e){ return null; } },
+  set(k, v){ try { localStorage.setItem(k, v); } catch(e){} }
+};
+
+const cv = $("cv"), ctx = cv.getContext("2d");
+let W = 0, H = 0, DPR = 1;
+
+function resize(){
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  // Портретное поле: корт длиннее, чем шире, как настоящий.
+  const availW = window.innerWidth, availH = window.innerHeight;
+  W = Math.min(availW, Math.round(availH * 0.62));
+  H = availH;
+  cv.style.width = W + "px"; cv.style.height = H + "px";
+  cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+addEventListener("resize", resize);
+resize();
+
+// --- уровни соперника. Разница не в скорости мяча, а в том, насколько
+//     точно соперник за ним идёт: так проигрыш выглядит честным.
+const LEVELS = [
+  { name: "Новичок",  track: 0.055, err: 0.34, gain: 1.020 },
+  { name: "Клубный",  track: 0.085, err: 0.20, gain: 1.028 },
+  { name: "Мастер",   track: 0.125, err: 0.10, gain: 1.036 }
+];
+let level = +(store.get("tennis_level") || 1);
+if (!(level >= 0 && level < LEVELS.length)) level = 1;
+
+function drawLevels(){
+  const box = $("levels");
+  box.innerHTML = "";
+  LEVELS.forEach((lv, i) => {
+    const el = document.createElement("div");
+    el.className = "lv" + (i === level ? " on" : "");
+    el.textContent = lv.name;
+    el.onclick = () => { level = i; store.set("tennis_level", i); drawLevels(); };
+    box.appendChild(el);
+  });
+}
+drawLevels();
+
+// --- состояние
+let state = "menu", score = 0, best = +(store.get("tennis_best") || 0);
+let ball, me, foe, speed, shake = 0, trail = [];
+
+const R = () => Math.max(7, W * 0.022);          // радиус мяча
+const PADW = () => W * 0.26, PADH = () => Math.max(10, H * 0.016);
+
+function serve(toMe){
+  const r = R();
+  ball = {
+    x: W / 2, y: H / 2,
+    vx: (Math.random() * 2 - 1) * speed * 0.5,
+    vy: (toMe ? 1 : -1) * speed,
+    r
+  };
+  trail = [];
+}
+
+function reset(){
+  score = 0;
+  speed = H * 0.011;
+  me  = { x: W / 2, w: PADW() };
+  foe = { x: W / 2, w: PADW() };
+  serve(Math.random() < 0.5);
+}
+
+// --- корт
+function court(){
+  ctx.fillStyle = getComputedStyle(document.documentElement)
+    .getPropertyValue("--out").trim();
+  ctx.fillRect(0, 0, W, H);
+
+  const m = W * 0.06;
+  ctx.fillStyle = "#1c4f8a";
+  ctx.fillRect(m, m, W - m * 2, H - m * 2);
+
+  ctx.strokeStyle = "rgba(234,241,248,.75)";
+  ctx.lineWidth = Math.max(1.5, W * 0.006);
+  ctx.strokeRect(m, m, W - m * 2, H - m * 2);
+
+  // Линии подачи и центральная — без них корт читается как коробка.
+  const box = H * 0.22;
+  ctx.beginPath();
+  ctx.moveTo(m, H / 2 - box); ctx.lineTo(W - m, H / 2 - box);
+  ctx.moveTo(m, H / 2 + box); ctx.lineTo(W - m, H / 2 + box);
+  ctx.moveTo(W / 2, H / 2 - box); ctx.lineTo(W / 2, H / 2 + box);
+  ctx.stroke();
+
+  // Сетка
+  ctx.strokeStyle = "rgba(234,241,248,.35)";
+  ctx.lineWidth = 1;
+  for (let x = m; x <= W - m; x += Math.max(6, W * 0.028)){
+    ctx.beginPath(); ctx.moveTo(x, H / 2 - H * 0.012);
+    ctx.lineTo(x, H / 2 + H * 0.012); ctx.stroke();
+  }
+  ctx.strokeStyle = "rgba(234,241,248,.9)";
+  ctx.lineWidth = Math.max(2, H * 0.004);
+  ctx.beginPath(); ctx.moveTo(m, H / 2); ctx.lineTo(W - m, H / 2); ctx.stroke();
+}
+
+function racket(x, y, w, colour){
+  const h = PADH();
+  ctx.fillStyle = colour;
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(x - w / 2, y - h / 2, w, h, h / 2);
+  else ctx.rect(x - w / 2, y - h / 2, w, h);
+  ctx.fill();
+}
+
+function draw(){
+  ctx.save();
+  if (shake > 0){
+    ctx.translate((Math.random() - .5) * shake, (Math.random() - .5) * shake);
+    shake *= 0.86;
+    if (shake < 0.3) shake = 0;
+  }
+  court();
+
+  // След мяча — по нему видно направление, когда он летит быстро.
+  trail.forEach((p, i) => {
+    ctx.globalAlpha = (i + 1) / trail.length * 0.35;
+    ctx.fillStyle = "#d6f24a";
+    ctx.beginPath(); ctx.arc(p.x, p.y, ball.r * 0.7, 0, 7); ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+
+  racket(foe.x, H * 0.07, foe.w, "#ff8f6b");
+  racket(me.x,  H * 0.93, me.w,  "#48b0ff");
+
+  ctx.fillStyle = "#d6f24a";
+  ctx.beginPath(); ctx.arc(ball.x, ball.y, ball.r, 0, 7); ctx.fill();
+  ctx.restore();
+}
+
+// --- удар ракеткой: место касания задаёт угол. Центр — прямо, край —
+//     под острым углом, как закрученный удар.
+function hit(padX, padW, down){
+  const off = (ball.x - padX) / (padW / 2);       // -1 … 1
+  const clamped = Math.max(-1, Math.min(1, off));
+  const angle = clamped * 1.05;                   // до ~60°
+  const total = Math.hypot(ball.vx, ball.vy) * LEVELS[level].gain;
+  ball.vx = Math.sin(angle) * total;
+  ball.vy = (down ? 1 : -1) * Math.abs(Math.cos(angle) * total);
+  shake = 6;
+}
+
+// Быстрый мяч за кадр пролетает больше, чем толщина ракетки, и проверка
+// «мяч сейчас у ракетки» его пропускает: удар не засчитывается, и игрок
+// теряет очко ни за что. Поэтому смотрим, пересёк ли мяч линию ракетки
+// между прошлым кадром и этим, а сверху держим предел скорости.
+const MAXV = () => H * 0.032;
+
+function step(){
+  const lv = LEVELS[level];
+  const prevY = ball.y;
+
+  const v = Math.hypot(ball.vx, ball.vy), cap = MAXV();
+  if (v > cap){ ball.vx *= cap / v; ball.vy *= cap / v; }
+
+  ball.x += ball.vx;
+  ball.y += ball.vy;
+
+  trail.push({ x: ball.x, y: ball.y });
+  if (trail.length > 8) trail.shift();
+
+  const m = W * 0.06;
+  if (ball.x < m + ball.r){ ball.x = m + ball.r; ball.vx = Math.abs(ball.vx); }
+  if (ball.x > W - m - ball.r){ ball.x = W - m - ball.r; ball.vx = -Math.abs(ball.vx); }
+
+  // Соперник идёт к мячу с задержкой и промахом — иначе он непобедим.
+  const aim = ball.x + ball.vx * 6 + (Math.sin(ball.y * 0.01) * foe.w * lv.err);
+  foe.x += (aim - foe.x) * lv.track;
+  foe.x = Math.max(m + foe.w / 2, Math.min(W - m - foe.w / 2, foe.x));
+
+  const myY = H * 0.93, foeY = H * 0.07, h = PADH();
+
+  const myLine = myY - h / 2, foeLine = foeY + h / 2;
+
+  if (ball.vy > 0 && prevY + ball.r <= myLine && ball.y + ball.r >= myLine){
+    if (Math.abs(ball.x - me.x) <= me.w / 2 + ball.r){
+      ball.y = myY - h / 2 - ball.r;
+      hit(me.x, me.w, false);
+      score++;
+      $("score").textContent = score;
+      // Ракетка соперника медленно сужается: к двадцатому удару розыгрыш
+      // должен кончаться, иначе игра длится бесконечно.
+      foe.w = Math.max(PADW() * 0.45, foe.w * 0.985);
+    }
+  }
+
+  if (ball.vy < 0 && prevY - ball.r >= foeLine && ball.y - ball.r <= foeLine){
+    if (Math.abs(ball.x - foe.x) <= foe.w / 2 + ball.r){
+      ball.y = foeY + h / 2 + ball.r;
+      hit(foe.x, foe.w, true);
+    }
+  }
+
+  if (ball.y - ball.r > H){ over("Мяч за линией"); return; }
+  if (ball.y + ball.r < 0){
+    // Соперник не достал — очко и новая подача, розыгрыш продолжается.
+    score += 3;
+    $("score").textContent = score;
+    speed *= 1.02;
+    serve(true);
+  }
+}
+
+function tick(){
+  if (state !== "play") return;
+  step();
+  if (state === "play") draw();
+  requestAnimationFrame(tick);
+}
+
+function over(reason){
+  state = "over";
+  $("verdict").textContent = reason;
+  const record = score > best;
+  if (record){ best = score; store.set("tennis_best", best); }
+  $("final").textContent = score;
+  $("bestline").textContent = record ? "Новый рекорд" : "Рекорд: " + best;
+  $("saved").textContent = "";
+  $("hud").classList.remove("on");
+  $("over").classList.add("on");
+  send(score);
+}
+
+function play(){
+  $("start").classList.remove("on");
+  $("over").classList.remove("on");
+  $("hud").classList.add("on");
+  $("hi").textContent = best;
+  reset();
+  $("score").textContent = "0";
+  state = "play";
+  requestAnimationFrame(tick);
+}
+
+// --- отправка результата. initData подписан Telegram, сервер проверит
+//     подпись: без этого счёт мог бы прислать кто угодно и любой.
+async function send(value){
+  if (!tg || !tg.initData){ $("saved").textContent = "Результат сохранён только здесь"; return; }
+  try {
+    const r = await fetch("/tennis/score", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ initData: tg.initData, score: value })
+    });
+    const d = await r.json();
+    $("saved").textContent = d.status === "ok"
+      ? (d.place ? "В таблице вы " + d.place + "-й" : "Результат засчитан")
+      : "Результат не сохранился";
+  } catch(e){ $("saved").textContent = "Результат не сохранился"; }
+}
+
+// --- управление
+function moveTo(clientX){
+  if (state !== "play") return;
+  const rect = cv.getBoundingClientRect();
+  const m = W * 0.06;
+  me.x = Math.max(m + me.w / 2, Math.min(W - m - me.w / 2, clientX - rect.left));
+}
+addEventListener("pointerdown", e => moveTo(e.clientX));
+addEventListener("pointermove", e => moveTo(e.clientX), { passive: true });
+addEventListener("keydown", e => {
+  if (state === "play"){
+    const d = W * 0.06;
+    if (e.key === "ArrowLeft"  || e.key === "a") moveTo(me.x - d + cv.getBoundingClientRect().left);
+    if (e.key === "ArrowRight" || e.key === "d") moveTo(me.x + d + cv.getBoundingClientRect().left);
+  }
+  if (e.key === " " && state !== "play") play();
+});
+
+$("go").onclick = play;
+$("again").onclick = play;
+$("close").onclick = () => { if (tg) tg.close(); };
+
+// Первый экран рисуем сразу: пустой холст выглядит как не загрузившаяся игра.
+speed = H * 0.011;
+me = { x: W / 2, w: PADW() };
+foe = { x: W / 2, w: PADW() };
+ball = { x: W / 2, y: H / 2, vx: 0, vy: 0, r: R() };
+draw();
+</script>
+</body>
+</html>

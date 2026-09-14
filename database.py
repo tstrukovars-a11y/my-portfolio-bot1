@@ -611,6 +611,17 @@ async def init_db():
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""")
 
+        # 21б. Рекорды тенниса — своя таблица, а не общая с гонкой: очки
+        # там и тут считаются по-разному, и в одном списке они бы врали.
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.tennis_scores (
+            user_id BIGINT PRIMARY KEY,
+            name TEXT,
+            best INTEGER NOT NULL DEFAULT 0,
+            played INTEGER NOT NULL DEFAULT 0,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+
         # 22. Мультфильмы: хранится раскадровка, а не видео — она занимает
         # килобайты и проигрывается заново на каждом устройстве.
         await conn.execute(f"""
@@ -2253,6 +2264,43 @@ async def race_top(limit: int = 10):
         return [(r["user_id"], r["name"], r["best"]) for r in rows]
     except Exception as e:
         logging.error(f"Таблица рекордов недоступна: {e}")
+        return []
+
+
+async def save_tennis_score(user_id: int, name: str, score: int):
+    """Результат розыгрыша: (место в таблице, личный рекорд)"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            best = await conn.fetchval(
+                f"""INSERT INTO {SCHEMA}.tennis_scores (user_id, name, best, played)
+                    VALUES ($1, $2, $3, 1)
+                    ON CONFLICT (user_id) DO UPDATE
+                    SET best = GREATEST(tennis_scores.best, EXCLUDED.best),
+                        name = EXCLUDED.name,
+                        played = tennis_scores.played + 1,
+                        updated_at = CURRENT_TIMESTAMP
+                    RETURNING best""",
+                user_id, name, score)
+            place = await conn.fetchval(
+                f"SELECT COUNT(*) + 1 FROM {SCHEMA}.tennis_scores WHERE best > $1", best)
+        return place, best
+    except Exception as e:
+        logging.error(f"Не удалось сохранить результат тенниса: {e}")
+        return None, score
+
+
+async def tennis_top(limit: int = 10):
+    """(id, имя, рекорд) лучших игроков в теннис"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT user_id, name, best FROM {SCHEMA}.tennis_scores "
+                "ORDER BY best DESC, updated_at LIMIT $1", limit)
+        return [(r["user_id"], r["name"], r["best"]) for r in rows]
+    except Exception as e:
+        logging.error(f"Таблица рекордов тенниса недоступна: {e}")
         return []
 
 
