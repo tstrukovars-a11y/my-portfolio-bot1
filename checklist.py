@@ -11,9 +11,11 @@ import asyncio
 import html
 import json
 import logging
+from datetime import datetime
 
 from aiogram import Router, F, Bot
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import (Message, CallbackQuery, InlineKeyboardMarkup,
+                           InlineKeyboardButton)
 
 import config
 import database
@@ -213,6 +215,194 @@ async def cabinets(message: Message):
 
 
 # =====================================================================
+# ДОХОД С КНИГ
+# =====================================================================
+#
+# Считать его автоматически пока нечем: выгрузка заказов AdvCake на все
+# варианты параметра отвечает «Invalid offer», и пока их поддержка не
+# назовёт верный, цифру приходится брать глазами из кабинета.
+#
+# Поэтому экран устроен так: что бот знает сам — переходы по вашим
+# кнопкам — он показывает сразу; что знает только кабинет, вы вписываете
+# раз в месяц одной строкой. Смешивать их в общую сумму нельзя, это
+# разные вещи, и подписаны они порознь.
+#
+# Когда выгрузка заработает, заказы встанут в тот же экран третьим
+# блоком, а вписанное руками останется историей.
+
+INCOME_KEY = "book_income"        # список выплат в JSON
+
+# Ключевые слова магазинов: человек пишет «литрес», а не «litres.ru».
+SHOPS = {
+    "литрес": "Литрес",
+    "litres": "Литрес",
+    "читай": "Читай-город",
+    "chitai": "Читай-город",
+    "озон": "Ozon",
+    "ozon": "Ozon",
+    "лабиринт": "Лабиринт",
+    "wb": "Wildberries",
+}
+
+
+def _shop_name(word: str) -> str:
+    low = (word or "").strip().lower()
+    for key, name in SHOPS.items():
+        if low.startswith(key):
+            return name
+    return (word or "").strip()[:20].capitalize()
+
+
+async def _income() -> list:
+    raw = await database.get_setting(INCOME_KEY)
+    if not raw:
+        return []
+    try:
+        saved = json.loads(raw)
+        return saved if isinstance(saved, list) else []
+    except (ValueError, TypeError):
+        return []
+
+
+async def _save_income(items: list):
+    await database.set_setting(INCOME_KEY, json.dumps(items, ensure_ascii=False))
+
+
+def _money(value) -> str:
+    """1250.0 → «1 250 ₽»: разряды пробелом, копейки не нужны"""
+    try:
+        return f"{round(float(value)):,}".replace(",", " ") + " ₽"
+    except (TypeError, ValueError):
+        return "— ₽"
+
+
+def _income_menu() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🗄 Кабинеты", callback_data="admin_cabinets")],
+        [InlineKeyboardButton(text="👆 Переходы подробно", callback_data="admin_clicks")],
+    ])
+
+
+async def income_text() -> str:
+    """Доход одним экраном: переходы бот считает сам, выплаты — из кабинета"""
+    lines = ["💰 <b>Доход с партнёрских ссылок</b>", ""]
+
+    # 1. То, что видно и без кабинетов, с первого дня.
+    total, _, by_host, _ = await database.clicks_stats(30)
+    shops = [(host, n) for host, n in by_host if host]
+    lines.append("<b>Переходы за 30 дней</b>")
+    if shops:
+        lines += [f"{html.escape(host)} — {n}" for host, n in shops[:6]]
+    else:
+        lines.append("Пока ни одного.")
+    lines.append("")
+
+    # 2. То, что знает только кабинет.
+    paid = await _income()
+    lines.append("<b>Начислено по кабинетам</b>")
+    if paid:
+        by_month = {}
+        for item in paid:
+            by_month.setdefault(item.get("month") or "—", []).append(item)
+        for month in sorted(by_month, reverse=True)[:6]:
+            shops_line = ", ".join(
+                f"{html.escape(str(i.get('shop') or '—'))} {_money(i.get('amount'))}"
+                for i in by_month[month])
+            month_sum = sum(float(i.get("amount") or 0) for i in by_month[month])
+            lines.append(f"<b>{month}</b> · {_money(month_sum)}")
+            lines.append(f"    {shops_line}")
+        lines.append("")
+        every = sum(float(i.get("amount") or 0) for i in paid)
+        lines.append(f"Всего за всё время: <b>{_money(every)}</b>")
+    else:
+        lines.append("Пока ничего не вписано.")
+
+    lines.append("")
+    lines.append("Вписать: <code>/доход литрес 1250</code>")
+    lines.append("За другой месяц: <code>/доход литрес 1250 2026-08</code>")
+    lines.append("Убрать: <code>/доход удалить литрес 2026-08</code>")
+    return "\n".join(lines)
+
+
+@router.message(F.text.regexp(r"^/(доход|income)\b"))
+async def income_command(message: Message):
+    if not config.is_admin(message.from_user.id):
+        return
+    parts = message.text.split()
+
+    if len(parts) >= 3 and parts[1].lower() in ("удалить", "del", "-"):
+        shop = _shop_name(parts[2])
+        month = parts[3] if len(parts) > 3 else datetime.now().strftime("%Y-%m")
+        items = await _income()
+        left = [i for i in items
+                if not (i.get("shop") == shop and i.get("month") == month)]
+        if len(left) == len(items):
+            await message.answer(f"Записи «{html.escape(shop)} {month}» нет.")
+            return
+        await _save_income(left)
+        await message.answer(f"✅ Убрала: {html.escape(shop)}, {month}")
+        return
+
+    if len(parts) >= 3:
+        shop = _shop_name(parts[1])
+        try:
+            amount = float(parts[2].replace(",", ".").replace(" ", ""))
+        except ValueError:
+            await message.answer(
+                "Сумма должна быть числом: <code>/доход литрес 1250</code>")
+            return
+        month = parts[3] if len(parts) > 3 else datetime.now().strftime("%Y-%m")
+        # Запись за тот же магазин и месяц заменяется, а не копится: в
+        # кабинете сумма за месяц растёт, и вписывать её будут не раз.
+        items = [i for i in await _income()
+                 if not (i.get("shop") == shop and i.get("month") == month)]
+        items.append({"shop": shop, "month": month, "amount": amount})
+        await _save_income(items)
+        await message.answer(
+            f"✅ {html.escape(shop)}, {month}: {_money(amount)}\n\n"
+            f"Весь доход: <code>/доход</code>")
+        return
+
+    await message.answer(await income_text(), reply_markup=_income_menu())
+
+
+@router.callback_query(F.data == "admin_income")
+async def income_screen(call: CallbackQuery):
+    if not config.is_admin(call.from_user.id):
+        await call.answer()
+        return
+    await call.answer()
+    await call.message.answer(await income_text(), reply_markup=_income_menu())
+
+
+@router.callback_query(F.data == "admin_clicks")
+async def clicks_screen(call: CallbackQuery):
+    if not config.is_admin(call.from_user.id):
+        await call.answer()
+        return
+    await call.answer()
+    await call.message.answer(await clicks_text(30))
+
+
+@router.callback_query(F.data == "admin_cabinets")
+async def cabinets_screen(call: CallbackQuery):
+    if not config.is_admin(call.from_user.id):
+        await call.answer()
+        return
+    await call.answer()
+    items = await _cabinets()
+    if not items:
+        await call.message.answer("Кабинетов пока нет.\n\n"
+                                  "Добавить: <code>/kab + Литрес https://…</code>")
+        return
+    await call.message.answer(
+        "🗄 <b>Кабинеты партнёрских программ</b>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=i["name"][:40], url=i["url"])]
+            for i in items]))
+
+
+# =====================================================================
 # НАПОМИНАНИЕ О ВЫПЛАТАХ
 # =====================================================================
 #
@@ -255,7 +445,10 @@ async def remind(bot: Bot) -> str:
             "Проверьте начисления за прошлый месяц: партнёрские программы "
             "считают вознаграждение сами и о нём не сообщают."
             + numbers +
-            "\n\nОтключить: <code>/kab напоминание нет</code>",
+            "\n\nУвидели сумму — впишите, чтобы она осталась в истории: "
+            "<code>/доход литрес 1250</code>\n"
+            "Весь доход: <code>/доход</code>\n\n"
+            "Отключить: <code>/kab напоминание нет</code>",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
     except Exception as e:
         logging.error(f"Напоминание о кабинетах не ушло: {e}")
@@ -286,19 +479,12 @@ async def scheduler(bot: Bot):
 # ПЕРЕХОДЫ ПО КНОПКАМ
 # =====================================================================
 
-@router.message(F.text.startswith("/clicks"))
-async def clicks(message: Message):
+async def clicks_text(days: int = 30) -> str:
     """Своя статистика переходов — она есть с первого дня, без сетей"""
-    if not config.is_admin(message.from_user.id):
-        return
-    parts = message.text.split()
-    days = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 30
-
     total, by_section, by_host, top = await database.clicks_stats(days)
     if not total:
-        return await message.answer(
-            f"👆 За {days} дн. переходов не было.\n\n"
-            "Считаются нажатия на кнопки магазинов под публикациями.")
+        return (f"👆 За {days} дн. переходов не было.\n\n"
+                "Считаются нажатия на кнопки магазинов под публикациями.")
 
     lines = [f"👆 <b>Переходы за {days} дн.</b>", "", f"Всего: <b>{total}</b>"]
     if by_section:
@@ -310,4 +496,13 @@ async def clicks(message: Message):
     if top:
         lines += ["", "<b>Что нажимали</b>"]
         lines += [f"{html.escape(t[:40])} — {n}" for t, n in top]
-    await message.answer("\n".join(lines))
+    return "\n".join(lines)
+
+
+@router.message(F.text.startswith("/clicks"))
+async def clicks(message: Message):
+    if not config.is_admin(message.from_user.id):
+        return
+    parts = message.text.split()
+    days = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 30
+    await message.answer(await clicks_text(days))

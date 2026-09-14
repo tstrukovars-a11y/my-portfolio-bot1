@@ -60,13 +60,17 @@ CHEATSHEET = (
     "<code>/genetics_edit 4</code> — переименовать или дописать главу\n"
     "<code>/genetics_retitle</code> — пересчитать все заголовки\n\n"
     "<b>Служебное</b>\n"
-    "<code>/admin</code> — это меню\n\n"
+    "<code>/admin</code> — это меню\n"
+    "<code>/доход</code> — заработок с партнёрских ссылок, <code>/доход литрес 1250</code> — вписать\n"
+    "<code>/clicks</code> — переходы по кнопкам магазинов\n"
+    "<code>/kab</code> — кабинеты партнёрских программ\n\n"
     "<i>Видно только вам.</i>"
 )
 
 
 def _admin_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💰 Доход", callback_data="admin_income")],
         [InlineKeyboardButton(text="🔖 Шпаргалка", callback_data="admin_cheatsheet")],
         [InlineKeyboardButton(text="🔑 Пароли разделов", callback_data="admin_passwords")],
         [InlineKeyboardButton(text="👥 Посетители", callback_data="admin_visitors_0")],
