@@ -3032,6 +3032,30 @@ async def book_titles(category: str):
         return []
 
 
+async def search_books(query: str, limit: int = 3):
+    """(id, первая строка, ссылка) книг подборки по куску названия.
+
+    Ищем по всему тексту, а не только по названию: читатель помнит книгу
+    то по автору, то по теме, и «привычки» должны находить «Атомные
+    привычки» так же, как «Клир».
+    """
+    words = (query or "").strip()
+    if len(words) < 3:
+        return []
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT id, text_content, buy_url FROM {SCHEMA}.books "
+                "WHERE text_content ILIKE $1 ORDER BY id LIMIT $2",
+                f"%{words[:60]}%", limit)
+        return [(r["id"], (r["text_content"] or "").split("\n")[0][:70],
+                 r["buy_url"] or "") for r in rows]
+    except Exception as e:
+        logging.error(f"Поиск книг не сработал: {e}")
+        return []
+
+
 async def books_all():
     """(id, категория, текст, обложка, номер поста) — для выкладки в канал"""
     try:

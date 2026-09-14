@@ -244,21 +244,34 @@ def _search_query(title: str) -> str:
     return quote(title.replace(" — ", " ").replace("—", " ").strip(), safe="")
 
 
-async def _shop_template(section: str):
-    """(подпись, шаблон) оффера раздела либо (None, None).
+async def _shop_templates(section: str):
+    """Все офферы раздела: [(подпись, шаблон)].
 
-    Подпись можно задать вручную через «Подпись | ссылка»: у банка она не
-    выводится из адреса, «Купить» там ни о чём.
+    Магазинов у раздела может быть несколько — бумага в одном, файл в
+    другом, и выбор между ними читателю как раз и нужен. Каждый пишется
+    своей строкой, поэтому настройка разбирается построчно; настройка из
+    одной строки ведёт себя ровно как раньше.
     """
     raw = await database.get_setting(SHOP_SECTION_KEY + section)
     if not raw and section == "books":
         raw = await database.get_setting(SHOP_KEY)      # прежняя настройка книг
-    if not raw:
-        return None, None
-    if "|" in raw:
-        label, url = raw.split("|", 1)
-        return label.strip() or None, url.strip()
-    return None, raw.strip()
+    out = []
+    for line in (raw or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if "|" in line:
+            label, url = line.split("|", 1)
+            out.append((label.strip() or None, url.strip()))
+        else:
+            out.append((None, line))
+    return out
+
+
+async def _shop_template(section: str):
+    """(подпись, шаблон) первого оффера раздела либо (None, None)"""
+    found = await _shop_templates(section)
+    return found[0] if found else (None, None)
 
 
 def _shop_url(template: str, title: str, section: str) -> str:
@@ -280,13 +293,13 @@ async def _buy_row(section: str, title: str):
         if own:
             row.append(InlineKeyboardButton(text=_shop_label(own), url=own))
 
-    label, template = await _shop_template(section)
-    if template:
+    for label, template in await _shop_templates(section):
         url = _shop_url(template, title, section)
         text = label or _shop_label(url)
         # Дубль одного магазина двумя кнопками читателю не нужен
-        if not row or text != row[0].text:
-            row.append(InlineKeyboardButton(text=text, url=url))
+        if any(text == b.text for b in row):
+            continue
+        row.append(InlineKeyboardButton(text=text, url=url))
 
     # Ведём через свой счётчик: сеть покажет заказы когда-нибудь, а клики
     # видны с первого дня. Пометки о рекламе считаются по исходной ссылке,
@@ -294,6 +307,23 @@ async def _buy_row(section: str, title: str):
     import links
     return [InlineKeyboardButton(text=b.text, url=links.wrap(b.url, section, title))
             for b in row] or None
+
+
+async def _find_row(section: str):
+    """«Найти любую книгу» — под книжным постом.
+
+    Подборка мала, а спрашивают и то, чего в ней нет. Кнопка уводит в
+    бота, где читатель ищет сам, — и покупает по той же партнёрской
+    ссылке, что и из поста.
+    """
+    if section != "books":
+        return None
+    username = await database.get_setting(BOT_KEY)
+    if not username:
+        return None
+    return [InlineKeyboardButton(
+        text="🔍 Найти любую книгу",
+        url=f"https://t.me/{username.lstrip('@')}?start=findbook")]
 
 
 async def _weather_row():
@@ -774,6 +804,10 @@ async def publish_next(bot: Bot, only: str = None, lead: str = None,
 
         if buy:
             rows.append(buy)
+
+        finder = await _find_row(section)
+        if finder:
+            rows.append(finder)
 
         club = await _club_row(section, bot)
         if club:

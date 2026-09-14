@@ -34,6 +34,7 @@ import art_shop
 import checklist
 import advcake
 import weather
+import book_find
 import inline_kb
 import planner
 
@@ -503,6 +504,7 @@ async def main():
     dp.include_router(books_seed.router)
     dp.include_router(tennis_alerts.router)
     dp.include_router(weather.router)
+    dp.include_router(book_find.router)
 
     dp.include_router(tennis_live.router)
     dp.include_router(travel.router)
