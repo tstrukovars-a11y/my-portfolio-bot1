@@ -412,9 +412,16 @@ def make_handle_ping(bot: Bot, dp: Dispatcher):
 
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 
-async def main():
-    # Бот обязан подниматься даже с недоступной базой: язык и навигация работают
-    # из памяти процесса, а в логах остаётся явная причина сбоя.
+async def warm_up(bot: Bot):
+    """Долгая часть запуска: база, картинки, рейтинг, ключи.
+
+    Вынесена из main и запускается уже после того, как открыт порт.
+    Render проверяет порт сразу после старта, а здесь секунд двадцать
+    работы с внешней базой: раньше деплой всё это время писал «No open
+    ports detected» и мог не дождаться.
+    """
+    # Бот обязан подниматься даже с недоступной базой: язык и навигация
+    # работают из памяти процесса, а в логах остаётся явная причина сбоя.
     try:
         await database.init_db()
     except Exception as e:
@@ -436,11 +443,35 @@ async def main():
 
     logging.info(await translator.check_key())
 
-    # Фоновая задача: подтягивает свежие заголовки при старте, затем каждые 24 часа
-    # Индексу нужен Claude для оценки тона; без ключа составляющая просто отключится
-    asyncio.create_task(news_fetcher.news_scheduler(
-        database, country_index, block2_creative.claude_client))
+    # Своё имя бот спрашивает у Telegram, а не ждёт, пока его впишут
+    # руками: на нём держатся глубокие ссылки из канала, и опечатка
+    # означала бы кнопки, ведущие в никуда.
+    try:
+        me = await bot.get_me()
+        if me.username:
+            await database.set_setting("bot_username", me.username)
+            logging.info(f"Глубокие ссылки ведут на @{me.username}")
+    except Exception as e:
+        logging.warning(f"Имя бота не определилось: {e}")
 
+    # Если база молчит — сказать владельцу сразу, а не ждать, пока он
+    # наткнётся на это сам через неделю. Бот без базы выглядит рабочим:
+    # меню открывается, сообщения приходят, а ничего не сохраняется.
+    try:
+        if not (await database.health())["ok"] and config.ADMIN_ID:
+            import admin
+            await bot.send_message(
+                config.ADMIN_ID,
+                "⚠️ <b>Бот запустился без базы данных.</b>\n\n"
+                "Сейчас не сохраняется ничего: подписки, голоса, настройки, "
+                "загруженные картинки.\n\n" + await admin.db_report())
+    except Exception as e:
+        logging.warning(f"Не удалось предупредить о базе: {e}")
+
+    logging.info("Разогрев закончен: база, картинки и рейтинг на месте")
+
+
+async def main():
     # ВАЖНО: параметр называется `default`, а не `default_properties`.
     # Неизвестные аргументы aiogram молча проглатывает в **kwargs, из-за чего
     # раньше режим разметки по умолчанию вообще не применялся.
@@ -549,36 +580,20 @@ async def main():
     server = await asyncio.start_server(make_handle_ping(bot, dp), "0.0.0.0", port)
     logging.info(f"Ping & API & Webhook server started on port {port}")
 
+    # Порт занят — теперь можно заняться долгим. Порядок важен: Render
+    # ждёт открытого порта, а не готовности базы.
+    asyncio.create_task(warm_up(bot))
+
+    # Свежие заголовки при старте, затем каждые сутки. Индексу нужен
+    # Claude для оценки тона; без ключа составляющая просто отключится.
+    asyncio.create_task(news_fetcher.news_scheduler(
+        database, country_index, block2_creative.claude_client))
+
     # Публикация в канал: запускаем после создания бота — раньше объекта ещё нет
     asyncio.create_task(digest.scheduler(bot))
     asyncio.create_task(tennis_alerts.alerts_scheduler(bot))
     asyncio.create_task(tennis_rank.scheduler())
     asyncio.create_task(checklist.scheduler(bot))
-
-    # Своё имя бот спрашивает у Telegram, а не ждёт, пока его впишут руками:
-    # на нём держатся глубокие ссылки из канала, и опечатка в нём означала бы
-    # кнопки, ведущие в никуда.
-    try:
-        me = await bot.get_me()
-        if me.username:
-            await database.set_setting("bot_username", me.username)
-            logging.info(f"Глубокие ссылки ведут на @{me.username}")
-    except Exception as e:
-        logging.warning(f"Имя бота не определилось: {e}")
-
-    # Если база молчит — сказать владельцу сразу, а не ждать, пока он
-    # наткнётся на это сам через неделю. Бот без базы выглядит рабочим:
-    # меню открывается, сообщения приходят, а ничего не сохраняется.
-    try:
-        if not (await database.health())["ok"] and config.ADMIN_ID:
-            import admin
-            await bot.send_message(
-                config.ADMIN_ID,
-                "⚠️ <b>Бот запустился без базы данных.</b>\n\n"
-                "Сейчас не сохраняется ничего: подписки, голоса, настройки, "
-                "загруженные картинки.\n\n" + await admin.db_report())
-    except Exception as e:
-        logging.warning(f"Не удалось предупредить о базе: {e}")
 
     # Меню собирается синхронно и в базу сходить не может, поэтому ссылку на
     # канал подкладываем один раз при старте.
