@@ -185,8 +185,14 @@ async def _build_pool():
     last_error = None
     for dsn, ssl_note, ssl_mode in candidates:
         try:
+            # Бесплатный Postgres на Render даёт мало соединений сразу
+            # всем, кто в него ходит, а база у ботов общая. Держим малый
+            # пул и отпускаем простаивающие: лишние соединения тут не
+            # ускоряют, а отнимают.
             _pool = await asyncpg.create_pool(
-                dsn, min_size=1, max_size=5, init=_init_connection, ssl=ssl_mode
+                dsn, min_size=1, max_size=3, init=_init_connection,
+                ssl=ssl_mode, command_timeout=30,
+                max_inactive_connection_lifetime=300,
             )
             # Создание пула само по себе ничего не доказывает: соединения
             # открываются по мере надобности, и отказ вылезает потом —
