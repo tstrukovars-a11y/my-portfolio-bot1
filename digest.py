@@ -517,6 +517,26 @@ async def _build(section: str, item_id: int):
     return None
 
 
+def _fit(text: str, tail: str, has_media: bool) -> str:
+    """Собрать пост так, чтобы хвост с пометками уцелел целиком.
+
+    Хвост — это маркировка рекламы и прощание; он короткий и обязан
+    остаться при объявлении. Длинным бывает описание, его и укорачиваем.
+    """
+    limit = MAX_CAPTION if has_media else MAX_MESSAGE
+    if len(text) + len(tail) <= limit:
+        return text + tail
+
+    room = limit - len(tail) - 1
+    if room < 200:          # пометки сами длиннее поста — резать нечего
+        return (text + tail)[:limit]
+    cut = text[:room]
+    edge = max(cut.rfind("\n"), cut.rfind(" "))
+    if edge > room // 2:
+        cut = cut[:edge]
+    return cut.rstrip() + "…" + tail
+
+
 def _split_caption(caption: str) -> tuple[str, str]:
     """Подпись под медиа и остаток. Режем по последнему переводу строки или
     пробелу, чтобы слово не разрывалось посередине."""
@@ -780,17 +800,24 @@ async def publish_next(bot: Bot, only: str = None, lead: str = None,
         buy = await _buy_row(section, title)
 
         body = (text or title or "").strip()
-        caption = f"{head}\n\n{body}"
+
+        tail = ""
         if buy:
             # Своя строка на каждый магазин: у Литреса свой ИНН и erid, у
             # Читай-города свой, и валить их в одну пометку нельзя.
             import links
             marks = [m for m in [await _ad_mark(links.unwrap(b.url)) for b in buy] if m]
             if marks:
-                caption += "\n\n" + "\n".join(dict.fromkeys(marks))
+                tail += "\n\n" + "\n".join(dict.fromkeys(marks))
         if farewell:
-            caption += f"\n\n{farewell}"
-        caption += await _ad_block()
+            tail += f"\n\n{farewell}"
+        tail += await _ad_block()
+
+        # Пометка о рекламе обязана стоять в самом объявлении. Четыре
+        # магазина дают четыре строки, и длинное описание выталкивало их
+        # во второе сообщение — то есть реклама оставалась без маркировки.
+        # Поэтому режем описание, а не пометку.
+        caption = _fit(f"{head}\n\n{body}", tail, bool(photo or video))
 
         rows = []
         # Ссылку чиним перед тем, как ставить в кнопку: материалы, ввезённые
