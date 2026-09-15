@@ -24,10 +24,18 @@ def _dsn_candidates() -> list:
     """
     if not DATABASE_URL:
         return []
-    if "sslmode=" in DATABASE_URL:
-        return [DATABASE_URL]
-    sep = "&" if "?" in DATABASE_URL else "?"
-    return [f"{DATABASE_URL}{sep}sslmode=require", DATABASE_URL]
+
+    # Даже когда sslmode уже вписан в адрес, держим наготове вариант с
+    # require: база может начать требовать SSL позже, чем её прописали, —
+    # и тогда единственный кандидат оставлял бота без записи вовсе.
+    import re as _re
+    bare = _re.sub(r"[?&]sslmode=[^&]*", "", DATABASE_URL)
+    sep = "&" if "?" in bare else "?"
+    secure = f"{bare}{sep}sslmode=require"
+
+    order = [DATABASE_URL, secure, bare] if "sslmode=" in DATABASE_URL \
+        else [secure, bare]
+    return list(dict.fromkeys(order))
 
 _pool = None
 
@@ -121,6 +129,11 @@ async def get_pool():
             _pool = await asyncpg.create_pool(
                 dsn, min_size=1, max_size=5, init=_init_connection
             )
+            # Создание пула само по себе ничего не доказывает: соединения
+            # открываются по мере надобности, и отказ вылезает потом —
+            # посреди работы, когда запасного варианта уже не пробуют.
+            async with _pool.acquire() as probe:
+                await probe.fetchval("SELECT 1")
             _pool_failure_logged = False
             logging.info(f"Подключение к базе установлено ({ssl_note}): {describe_db_target()}")
             return _pool
@@ -137,6 +150,49 @@ async def get_pool():
         )
         _pool_failure_logged = True
     raise last_error
+
+
+CONNECTION_WORDS = ("ssl", "connection", "closed", "terminated", "timeout",
+                    "authorization", "too many clients")
+
+
+def is_connection_error(error: Exception) -> bool:
+    """Похоже ли на обрыв связи, а не на ошибку в запросе.
+
+    Запрос с опечаткой повторять бессмысленно, а оборванное соединение —
+    ровно то, что чинится второй попыткой.
+    """
+    return any(word in f"{type(error).__name__} {error}".lower()
+               for word in CONNECTION_WORDS)
+
+
+async def reset_pool():
+    """Забыть пул: следующий вызов соберёт его заново и переберёт адреса"""
+    global _pool
+    old, _pool = _pool, None
+    if old is not None:
+        try:
+            await old.close()
+        except Exception:
+            pass
+
+
+async def retry_write(where: str, action):
+    """Выполнить запись, а при обрыве связи — пересобрать пул и повторить.
+
+    База на Render может сменить требования к SSL или просто перезапуститься:
+    старые соединения тогда живы, а новые не открываются, и запись падает,
+    хотя чтение работает. Одна повторная попытка это закрывает.
+    """
+    try:
+        return await action()
+    except Exception as e:
+        if not is_connection_error(e):
+            raise
+        logging.warning(f"{where}: связь с базой оборвалась ({e}). Пересобираю пул.")
+        note_error(f"{where} — пересобрала пул", e)
+        await reset_pool()
+        return await action()
 
 
 async def measure_latency() -> float:
@@ -884,7 +940,7 @@ async def toggle_alert(user_id: int, match_id: str, tour: str,
     if starts_at is not None and starts_at.tzinfo is not None:
         starts_at = starts_at.astimezone(timezone.utc).replace(tzinfo=None)
 
-    try:
+    async def write():
         pool = await get_pool()
         async with pool.acquire() as conn:
             gone = await conn.execute(
@@ -901,6 +957,9 @@ async def toggle_alert(user_id: int, match_id: str, tour: str,
                 f"SELECT COUNT(*) FROM {SCHEMA}.match_alerts WHERE match_id = $1",
                 match_id)
         return added, total
+
+    try:
+        return await retry_write("напоминание", write)
     except Exception as e:
         # None, а не False: «не сохранилось» и «снято» — разные вещи, и
         # читателю надо сказать правду.
@@ -919,7 +978,7 @@ async def ensure_alert(user_id: int, match_id: str, tour: str,
     """
     if starts_at is not None and starts_at.tzinfo is not None:
         starts_at = starts_at.astimezone(timezone.utc).replace(tzinfo=None)
-    try:
+    async def write():
         pool = await get_pool()
         async with pool.acquire() as conn:
             await conn.execute(
@@ -930,8 +989,12 @@ async def ensure_alert(user_id: int, match_id: str, tour: str,
                 "SET starts_at = EXCLUDED.starts_at, sent = FALSE",
                 user_id, match_id, tour, title, starts_at)
         return True
+
+    try:
+        return await retry_write("напоминание из бота", write)
     except Exception as e:
         logging.error(f"Напоминание не включено: {e}")
+        note_error("напоминание из бота", e)
         return None
 
 
@@ -2405,15 +2468,20 @@ async def get_setting(key: str, default: str = None):
 
 async def set_setting(key: str, value: str) -> bool:
     _settings_cache[key] = value
-    try:
+
+    async def write():
         pool = await get_pool()
         async with pool.acquire() as conn:
             await conn.execute(
                 f"INSERT INTO {SCHEMA}.settings (key, value) VALUES ($1, $2) "
                 "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", key, value)
         return True
+
+    try:
+        return await retry_write(f"настройка {key}", write)
     except Exception as e:
         logging.error(f"Не удалось сохранить настройку {key}: {type(e).__name__}: {e}")
+        note_error(f"настройка {key}", e)
         return False
 
 
