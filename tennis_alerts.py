@@ -567,6 +567,7 @@ async def alerts_status(message: Message):
                      + (f" ({when.strftime('%d.%m %H:%M')} UTC)" if when else "")
                      + f"\n<code>{html.escape(database.LAST_ERROR['what'])}</code>\n")
 
+    lines.append(f"Связь с базой: {database.POOL_MODE['how']}")
     lines.append(f"Сейчас по UTC: <code>{now_utc.strftime('%d.%m %H:%M')}</code>")
     lines.append(f"По часам канала: <code>{(now_utc + shift).strftime('%d.%m %H:%M')}</code>")
     if db_now is not None:

@@ -7,37 +7,61 @@ from datetime import datetime, timedelta, timezone
 import asyncpg
 
 # Render даёт строку вида postgres://..., приводим к схеме postgresql:// для совместимости
-DATABASE_URL = os.getenv("DATABASE_URL", "")
+# Пробелы и перевод строки в переменной окружения — обычное дело при
+# копировании адреса мышью, а asyncpg от них спотыкается молча.
+DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 
-def _dsn_candidates() -> list:
-    """Строки подключения в порядке проверки.
+def _ssl_context():
+    """Шифрование без проверки сертификата — то же, что делает sslmode=require.
 
-    Внешний адрес базы (External Database URL у Render, Neon и прочие облака)
-    принимает только SSL, а asyncpg сам его не включает и падает с
-    «SSL/TLS required». Внутренний адрес Render, наоборот, может SSL не
-    предлагать вовсе. sslmode=prefer не спасает: он молча откатывается на
-    открытое соединение и упирается в отказ сервера. Поэтому пробуем сначала с
-    SSL, затем без — что сработает, то и запомним.
+    Облачные базы (Render, Neon, Supabase) подписывают сертификаты своим
+    центром, и строгая проверка рвёт соединение там, где сама база считает
+    его нормальным. Шифрование при этом остаётся: перехватить переписку с
+    базой нельзя, не проверяется только то, чей именно сертификат.
+    """
+    import ssl
+    context = ssl.create_default_context()
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    return context
+
+
+def _dsn_candidates() -> list:
+    """[(адрес, как называть, ssl)] в порядке проверки.
+
+    Внешний адрес базы (External Database URL у Render, Neon и прочие
+    облака) принимает только шифрованное соединение, а asyncpg сам его не
+    включает и падает с «SSL/TLS required». Внутренний адрес Render,
+    наоборот, шифрование может не предлагать вовсе.
+
+    Раньше мы управляли этим через sslmode в самой строке подключения, и
+    это подвело: строку разбирают по-разному, а при sslmode=disable в
+    адресе запасного варианта не оставалось совсем. Теперь шифрование
+    задаётся параметром ssl — asyncpg понимает его однозначно.
     """
     if not DATABASE_URL:
         return []
 
-    # Даже когда sslmode уже вписан в адрес, держим наготове вариант с
-    # require: база может начать требовать SSL позже, чем её прописали, —
-    # и тогда единственный кандидат оставлял бота без записи вовсе.
+    # sslmode из адреса вырезаем: шифрованием управляем параметром ssl, а
+    # два источника правды спорили бы между собой. Заодно это чинит случай,
+    # когда в адресе стоит sslmode=disable, а база требует шифрование.
     import re as _re
     bare = _re.sub(r"[?&]sslmode=[^&]*", "", DATABASE_URL)
-    sep = "&" if "?" in bare else "?"
-    secure = f"{bare}{sep}sslmode=require"
 
-    order = [DATABASE_URL, secure, bare] if "sslmode=" in DATABASE_URL \
-        else [secure, bare]
-    return list(dict.fromkeys(order))
+    # Сначала шифрованное соединение, потом открытое. Именно в таком
+    # порядке: облачная база чаще требует SSL, чем не умеет его вовсе,
+    # а «SSL/TLS required» получается как раз при попытке без него.
+    return [(bare, "шифрованное", _ssl_context()),
+            (bare, "открытое", None)]
 
 _pool = None
+
+# Каким способом удалось подключиться — видно в /tennis_alerts, чтобы не
+# гадать, шифруется ли соединение.
+POOL_MODE = {"how": "ещё не подключались"}
 
 # Язык пользователя дублируется в памяти процесса. Это страховка: если база
 # недоступна (истёк бесплатный Postgres на Render, не резолвится хост,
@@ -123,11 +147,10 @@ async def get_pool():
         raise RuntimeError("DATABASE_URL не задан")
 
     last_error = None
-    for dsn in candidates:
-        ssl_note = "с SSL" if "sslmode=require" in dsn else "без SSL"
+    for dsn, ssl_note, ssl_mode in candidates:
         try:
             _pool = await asyncpg.create_pool(
-                dsn, min_size=1, max_size=5, init=_init_connection
+                dsn, min_size=1, max_size=5, init=_init_connection, ssl=ssl_mode
             )
             # Создание пула само по себе ничего не доказывает: соединения
             # открываются по мере надобности, и отказ вылезает потом —
@@ -135,11 +158,20 @@ async def get_pool():
             async with _pool.acquire() as probe:
                 await probe.fetchval("SELECT 1")
             _pool_failure_logged = False
+            POOL_MODE["how"] = ssl_note
             logging.info(f"Подключение к базе установлено ({ssl_note}): {describe_db_target()}")
             return _pool
         except Exception as e:
             last_error = e
             logging.warning(f"Подключение {ssl_note} не удалось: {e}")
+            # Неудачный пул надо закрыть: иначе он останется висеть с
+            # мёртвыми соединениями, а следующий кандидат создаст ещё один.
+            if _pool is not None:
+                try:
+                    await _pool.close()
+                except Exception:
+                    pass
+                _pool = None
 
     # Адрес пишем только при первом сбое: иначе каждая кнопка засыпает логи
     # одной и той же строкой, а найти причину всё равно нельзя.
