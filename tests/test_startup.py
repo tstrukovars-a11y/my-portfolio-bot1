@@ -103,3 +103,22 @@ def test_every_router_is_included():
 
     forgotten = sorted(has_router - included)
     assert not forgotten, f"роутеры не подключены: {forgotten}"
+
+
+def test_admin_buttons_have_handlers():
+    """Кнопка без обработчика молчит при нажатии — и это незаметно."""
+    import re
+
+    import admin
+
+    source = "\n".join((ROOT / f"{name}.py").read_text(encoding="utf-8")
+                       for name in MODULES)
+    for row in admin._admin_menu().inline_keyboard:
+        for button in row:
+            data = button.callback_data
+            if not data:
+                continue
+            handled = (f'F.data == "{data}"' in source
+                       or re.search(rf'F\.data\.startswith\(\s*"{data[:6]}',
+                                    source))
+            assert handled, f"кнопка «{button.text}» ({data}) без обработчика"

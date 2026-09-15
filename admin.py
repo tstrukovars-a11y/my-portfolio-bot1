@@ -64,6 +64,7 @@ CHEATSHEET = (
     "<code>/db</code> — состояние базы, <code>/db заново</code> — переподключиться\n"
     "<code>/план</code> — план публикаций, <code>/запасы</code> — на сколько дней хватит\n"
     "<code>/команды</code> — все команды бота\n"
+    "<code>/zvat</code> — приглашения в канал: общее, для партнёра, по каналам\n"
     "<code>/доход</code> — заработок с партнёрских ссылок, <code>/доход литрес 1250</code> — вписать\n"
     "<code>/clicks</code> — переходы по кнопкам магазинов\n"
     "<code>/kab</code> — кабинеты партнёрских программ\n\n"
@@ -172,6 +173,7 @@ def _admin_menu() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🗄 База данных", callback_data="admin_db")],
         [InlineKeyboardButton(text="🗓 План публикаций", callback_data="admin_plan")],
         [InlineKeyboardButton(text="📦 Запасы контента", callback_data="planstock")],
+        [InlineKeyboardButton(text="📨 Приглашения", callback_data="admin_invite")],
         [InlineKeyboardButton(text="⌨️ Команды", callback_data="admin_commands")],
         [InlineKeyboardButton(text="🔖 Шпаргалка", callback_data="admin_cheatsheet")],
         [InlineKeyboardButton(text="🔑 Пароли разделов", callback_data="admin_passwords")],

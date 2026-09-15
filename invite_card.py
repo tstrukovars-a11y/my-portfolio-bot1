@@ -12,8 +12,8 @@ import logging
 import os
 
 from aiogram import Router, F, Bot
-from aiogram.types import (Message, InlineKeyboardMarkup, InlineKeyboardButton,
-                           FSInputFile)
+from aiogram.types import (Message, CallbackQuery, InlineKeyboardMarkup,
+                           InlineKeyboardButton, FSInputFile)
 
 import config
 import database
@@ -274,6 +274,27 @@ async def _publish(message: Message, bot: Bot, where: str):
         logging.info(f"Закрепить приглашение не вышло: {e}")
 
     await message.answer(f"✅ Отправила в «{html.escape(title)}»{pinned}.")
+
+
+@router.callback_query(F.data == "admin_invite")
+async def invite_screen(call: CallbackQuery):
+    """То же меню, что у /zvat, — из служебного раздела"""
+    if not config.is_admin(call.from_user.id):
+        await call.answer()
+        return
+    await call.answer()
+    url = await database.get_setting(LINK_KEY)
+    if not url:
+        await call.message.answer(
+            "❌ Сначала задайте ссылку на «Акцент»: "
+            "<code>/channel https://t.me/accent_hub</code>")
+        return
+    await call.message.answer(
+        "📣 <b>Приглашения в «Акцент»</b>\n\n"
+        "Общее — пересылать куда угодно. Для чужого канала — отдать "
+        "партнёру. Остальные пять уходят в ваши же каналы, у каждого "
+        "своя первая фраза.",
+        reply_markup=_menu())
 
 
 @router.callback_query(F.data.startswith("invcard_"))
