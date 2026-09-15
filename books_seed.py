@@ -412,8 +412,24 @@ async def affiliate(plain: str):
 
     for label, template in await digest._shop_templates("books"):
         parts = urlparse(template)
+
+        # Второй вид партнёрской ссылки: она ведёт прямо в магазин, а
+        # партнёра выдаёт параметр — у Литреса это lfrom. Тогда страницу
+        # книги не подставляют внутрь, а наоборот: метку переносят на
+        # адрес книги.
         if _host(template) == host:
-            continue          # это и так прямая ссылка магазина, не сеть
+            marks = {k: v[0] for k, v in
+                     parse_qs(parts.query, keep_blank_values=True).items()
+                     if "{q}" not in (v[0] or "") and "{sub}" not in (v[0] or "")}
+            if not marks:
+                continue
+            book = urlparse(plain)
+            merged = {k: v[0] for k, v in
+                      parse_qs(book.query, keep_blank_values=True).items()}
+            merged.update(marks)
+            ready = urlunparse(book._replace(query=urlencode(merged)))
+            return _fill(ready), (label or host)
+
         params = parse_qs(parts.query, keep_blank_values=True)
         for name, values in params.items():
             inside = unquote(values[0] or "")
@@ -575,6 +591,64 @@ async def _ask_next(message: Message):
         f"страницы из магазина.\n"
         f"<i>Осталось {len(left)}, готово {stats['done']} из {stats['total']}</i>",
         reply_markup=_link_kb())
+
+
+@router.message(F.text.regexp(r"^/book_links\s+(шаблон|проверка|check)"))
+async def check_templates(message: Message):
+    """Почему заворачивание не работает — по самим шаблонам раздела.
+
+    Спрашивать у владельца «покажите вашу ссылку» плохо: она длинная, в
+    ней партнёрский номер, и переписывать её в переписку незачем. Бот
+    видит её сам и может сказать, годится она для подстановки или нет.
+    """
+    if not config.is_admin(message.from_user.id):
+        return
+
+    from urllib.parse import urlparse, parse_qs, unquote
+    import digest
+
+    templates = await digest._shop_templates("books")
+    lines = ["🔧 <b>Шаблоны магазинов для книг</b>", ""]
+    if not templates:
+        await message.answer(
+            "У раздела книг нет ни одного шаблона — заворачивать не во что.\n\n"
+            "Задать: <code>/digest shop books 📱 Литрес | ссылка</code>")
+        return
+
+    for label, template in templates:
+        lines.append(f"<b>{html.escape(label or _host(template))}</b>")
+        lines.append(f"Сеть: <code>{html.escape(_host(template))}</code>")
+
+        found = []
+        for name, values in parse_qs(urlparse(template).query,
+                                     keep_blank_values=True).items():
+            inside = unquote(values[0] or "")
+            if inside.startswith("http"):
+                found.append(f"{name} → {_host(inside)}")
+        marks = [k for k, v in parse_qs(urlparse(template).query,
+                                        keep_blank_values=True).items()
+                 if "{q}" not in (v[0] or "") and "{sub}" not in (v[0] or "")]
+        if found:
+            lines.append("Адрес магазина внутри: <code>"
+                         + html.escape(", ".join(found)) + "</code>")
+            lines.append("✅ Подставлю страницу книги внутрь ссылки.")
+        elif _host(template) in SHOP_HOSTS and marks:
+            lines.append("Метка партнёра: <code>"
+                         + html.escape(", ".join(marks)) + "</code>")
+            lines.append("✅ Перенесу метку на адрес книги.")
+        else:
+            lines.append("❌ Ни адреса магазина внутри, ни партнёрской метки — "
+                         "подставить книгу некуда. Такая ссылка ведёт только "
+                         "на поиск и денег не принесёт.")
+        lines.append("")
+
+    # Живая проверка на настоящем адресе: словами можно ошибиться, делом нет.
+    sample = "https://www.litres.ru/book/proverka-123/"
+    ready, shop = await affiliate(sample)
+    lines.append("<b>Проба на адресе книги с Литреса</b>")
+    lines.append(f"→ {html.escape(shop)}: <code>{html.escape(ready[:90])}…</code>"
+                 if ready else "→ завернуть не вышло")
+    await message.answer("\n".join(lines))
 
 
 @router.message(F.text.regexp(r"^/book_links\s+(обновить|перезавернуть|rewrap)"))
