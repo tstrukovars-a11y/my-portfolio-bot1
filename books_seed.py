@@ -644,18 +644,27 @@ async def _ask_next(message: Message):
 
     book_id, title, first, second = left[0]
     await database.set_setting(CURSOR_KEY, str(book_id))
-    # Показываем магазины, а не адреса: адрес длинный и в сообщении только
-    # мешает, а решение принимается по магазину.
-    shops = [_shop_of(u) for u in (first, second) if u]
-    now_line = f"Сейчас: {html.escape(' и '.join(shops))}\n" if shops else ""
+
+    # Показываем адрес целиком, а не имя магазина: решение «пропустить или
+    # переписать» принимается по самой ссылке — видно, есть ли в ней
+    # партнёрский хвост и на ту ли книгу она ведёт.
+    now_lines = []
+    for url in (first, second):
+        if not url:
+            continue
+        tail = tail_of(url)
+        mark = f" · метка {tail}" if tail else " · ⚠️ без хвоста"
+        now_lines.append(f"{_shop_of(url)}{mark}\n<code>{html.escape(url)}</code>")
+    now = ("Сейчас:\n" + "\n\n".join(now_lines) + "\n\n") if now_lines \
+        else "Ссылки пока нет.\n\n"
+
     await message.answer(
         f"📚 <b>{html.escape(title)}</b>\n\n"
-        f"{now_line}"
-        f"Пришлите ссылку на эту книгу — годится и готовая партнёрская "
-        f"из кабинета, и обычный адрес страницы.\n"
-        f"«Пропустить» — оставить прежнюю.\n"
+        f"{now}"
+        f"Пришлите новую ссылку — она заменит прежнюю.\n"
+        f"«Пропустить» — оставить как есть.\n"
         f"<i>Осталось {len(left)}, готово {stats['done']} из {stats['total']}</i>",
-        reply_markup=_link_kb())
+        reply_markup=_link_kb(), disable_web_page_preview=True)
 
 
 @router.message(F.text.regexp(r"^/book_links\s+(шаблон|проверка|check)"))
