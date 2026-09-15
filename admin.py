@@ -68,9 +68,97 @@ CHEATSHEET = (
 )
 
 
+# Что делать при типичных отказах базы. Текст ошибки понятен тому, кто
+# писал драйвер; владельцу нужен следующий шаг, а не диагноз на латыни.
+DB_HINTS = (
+    ("closed in the middle",
+     "Соединение обрывается сразу после установки. Так ведёт себя "
+     "приостановленная или истёкшая база на Render — реже упёршаяся в "
+     "предел подключений.\n\n"
+     "<b>Что смотреть:</b> Render → ваша база Postgres → статус. "
+     "Available — живая; Suspended или Expired — работать не будет, "
+     "нужна новая база и новый адрес в переменной DATABASE_URL."),
+    ("too many clients",
+     "Кончились свободные подключения к базе. Обычно это соседние боты "
+     "на той же бесплатной базе. Помогает перезапуск сервиса, а по-"
+     "хорошему — своя база."),
+    ("password authentication failed",
+     "Адрес живой, но пароль не подошёл: базу пересоздавали, а "
+     "DATABASE_URL остался прежним. Скопируйте свежий адрес из Render "
+     "целиком."),
+    ("does not exist",
+     "Базы с таким именем нет — вероятно, её удалили. Нужна новая и "
+     "новый адрес."),
+    ("name or service not known",
+     "Хост не находится. Адрес устарел — возьмите новый из Render."),
+    ("timeout",
+     "База не отвечает вовремя. Если статус в Render — Available, "
+     "попробуйте перезапустить сервис бота."),
+)
+
+
+def db_verdict(attempts) -> str:
+    """Человеческое объяснение по тексту ошибок, если оно есть"""
+    joined = " ".join(f"{how} {why}" for how, why in attempts).lower()
+    for mark, text in DB_HINTS:
+        if mark in joined:
+            return f"💡 {text}"
+    return ""
+
+
+async def db_report() -> str:
+    """Состояние базы одним экраном — с ответом «что делать», а не только
+    «что случилось»."""
+    state = await database.health()
+    lines = ["🗄 <b>База данных</b>", ""]
+    lines.append(f"Адрес: <code>{html.escape(database.describe_db_target())}</code>")
+    lines.append(f"Связь: {database.POOL_MODE['how']}")
+
+    if state["ok"]:
+        lines.append("✅ Отвечает.")
+        missing = [n for n, there in state["tables"].items() if not there]
+        lines.append("⚠️ Нет таблиц: " + ", ".join(missing) if missing
+                     else "Таблицы на месте.")
+        if state.get("now"):
+            lines.append(f"Время базы: <code>{state['now'].strftime('%d.%m %H:%M')}</code>")
+    else:
+        lines.append("❌ Не отвечает.")
+        for how, why in state.get("attempts") or []:
+            lines.append(f"• {how}: <code>{html.escape(why)}</code>")
+        if not state.get("attempts"):
+            lines.append(f"<code>{html.escape(state['error'])}</code>")
+        verdict = db_verdict(state.get("attempts") or [])
+        if verdict:
+            lines += ["", verdict]
+
+    if database.LAST_ERROR["what"]:
+        when = database.LAST_ERROR["when"]
+        lines += ["", "Последняя ошибка"
+                  + (f" ({when.strftime('%d.%m %H:%M')} UTC)" if when else "")
+                  + f":\n<code>{html.escape(database.LAST_ERROR['what'])}</code>"]
+    return "\n".join(lines)
+
+
+@router.message(F.text == "/db")
+async def db_command(message: Message):
+    if not config.is_admin(message.from_user.id):
+        return
+    await message.answer(await db_report())
+
+
+@router.callback_query(F.data == "admin_db")
+async def db_screen(call: CallbackQuery):
+    if not config.is_admin(call.from_user.id):
+        await call.answer()
+        return
+    await call.answer()
+    await call.message.answer(await db_report())
+
+
 def _admin_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💰 Доход", callback_data="admin_income")],
+        [InlineKeyboardButton(text="🗄 База данных", callback_data="admin_db")],
         [InlineKeyboardButton(text="🔖 Шпаргалка", callback_data="admin_cheatsheet")],
         [InlineKeyboardButton(text="🔑 Пароли разделов", callback_data="admin_passwords")],
         [InlineKeyboardButton(text="👥 Посетители", callback_data="admin_visitors_0")],

@@ -530,44 +530,6 @@ async def _handle_match_start(message: Message, bot: Bot):
                    _full_title(match), _starts(match))
 
 
-# Что делать при типичных отказах базы. Текст ошибки понятен тому, кто
-# писал драйвер; владельцу нужен следующий шаг, а не диагноз на латыни.
-DB_HINTS = (
-    ("closed in the middle",
-     "Соединение обрывается сразу после установки. Так ведёт себя "
-     "приостановленная или истёкшая база на Render — реже упёршаяся в "
-     "предел подключений.\n\n"
-     "<b>Что смотреть:</b> Render → ваша база Postgres → статус. "
-     "Available — живая; Suspended или Expired — работать не будет, "
-     "нужна новая база и новый адрес в переменной DATABASE_URL."),
-    ("too many clients",
-     "Кончились свободные подключения к базе. Обычно это соседние боты "
-     "на той же бесплатной базе. Помогает перезапуск сервиса, а по-"
-     "хорошему — своя база."),
-    ("password authentication failed",
-     "Адрес живой, но пароль не подошёл: базу пересоздавали, а "
-     "DATABASE_URL остался прежним. Скопируйте свежий адрес из Render "
-     "целиком."),
-    ("does not exist",
-     "Базы с таким именем нет — вероятно, её удалили. Нужна новая и "
-     "новый адрес."),
-    ("name or service not known",
-     "Хост не находится. Адрес устарел — возьмите новый из Render."),
-    ("timeout",
-     "База не отвечает вовремя. Если статус в Render — Available, "
-     "попробуйте перезапустить сервис бота."),
-)
-
-
-def _db_verdict(attempts) -> str:
-    """Человеческое объяснение по тексту ошибок, если оно есть"""
-    joined = " ".join(f"{how} {why}" for how, why in attempts).lower()
-    for mark, text in DB_HINTS:
-        if mark in joined:
-            return f"💡 {text}"
-    return ""
-
-
 @router.message(F.text.startswith("/tennis_alerts"))
 async def alerts_status(message: Message):
     """Что с напоминаниями прямо сейчас — по записям, а не по ощущениям.
@@ -601,7 +563,8 @@ async def alerts_status(message: Message):
             lines.append(f"Адрес: <code>{html.escape(state['target'])}</code>")
         if state.get("driver"):
             lines.append(f"Драйвер asyncpg: <code>{html.escape(str(state['driver']))}</code>")
-        verdict = _db_verdict(state.get("attempts") or [])
+        import admin
+        verdict = admin.db_verdict(state.get("attempts") or [])
         if verdict:
             lines.append("")
             lines.append(verdict)

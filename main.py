@@ -436,6 +436,20 @@ async def main():
     except Exception as e:
         logging.warning(f"Имя бота не записалось: {e}")
 
+    # Если база молчит — сказать владельцу сразу, а не ждать, пока он
+    # наткнётся на это сам через неделю. Бот без базы выглядит рабочим:
+    # меню открывается, сообщения приходят, а ничего не сохраняется.
+    try:
+        if not (await database.health())["ok"] and config.ADMIN_ID:
+            import admin
+            await bot.send_message(
+                config.ADMIN_ID,
+                "⚠️ <b>Бот запустился без базы данных.</b>\n\n"
+                "Сейчас не сохраняется ничего: подписки, голоса, настройки, "
+                "загруженные картинки.\n\n" + await admin.db_report())
+    except Exception as e:
+        logging.warning(f"Не удалось предупредить о базе: {e}")
+
     # Свои картинки разделов — до первого показа меню.
     await banners.load()
 
