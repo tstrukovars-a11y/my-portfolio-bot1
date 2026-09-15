@@ -430,6 +430,7 @@ async def affiliate(plain: str):
 MODE_KEY = "book_links_user"      # кто сейчас вводит
 CURSOR_KEY = "book_links_cursor"  # какую книгу назвали последней
 SKIP_KEY = "book_links_skipped"   # что пропустили за эту сессию
+ALL_KEY = "book_links_all"        # идём по всем книгам, а не только пустым
 # Сессия на полдня. Полтора часа было мало: ссылку на каждую книгу надо
 # сначала сделать в кабинете магазина, а это ходьба туда-сюда с перерывами.
 # Сессия истекала посреди работы, и присланная ссылка уходила в никуда.
@@ -451,6 +452,7 @@ async def _mode_off():
     await database.set_setting(MODE_KEY, "")
     await database.set_setting(CURSOR_KEY, "")
     await database.set_setting(SKIP_KEY, "")
+    await database.set_setting(ALL_KEY, "")
 
 
 async def _skipped() -> set:
@@ -479,9 +481,22 @@ async def _mode_active(user_id: int) -> bool:
         return False
 
 
+async def _books_for_session():
+    """Какие книги показывать: только пустые или все подряд.
+
+    «Все» нужны, когда ссылки уже заведены, но их надо заменить: магазин
+    сменил адреса, или прежние ссылки были не партнёрскими.
+    """
+    if (await database.get_setting(ALL_KEY) or "") != "1":
+        return [(i, t, "") for i, t in await database.books_without_link()]
+    have = await database.books_with_link()
+    empty = [(i, t, "") for i, t in await database.books_without_link()]
+    return sorted(have + empty, key=lambda row: row[0])
+
+
 async def _ask_next(message: Message):
-    """Назвать следующую книгу без ссылки либо завершить"""
-    all_left = await database.books_without_link()
+    """Назвать следующую книгу либо завершить"""
+    all_left = await _books_for_session()
     skipped = await _skipped()
     left = [b for b in all_left if b[0] not in skipped]
     stats = await database.books_link_stats()
@@ -497,26 +512,83 @@ async def _ask_next(message: Message):
             f"✅ Готово: ссылки есть у {stats['done']} книг из {stats['total']}.{tail}")
         return
 
-    book_id, title = left[0]
+    book_id, title, current = left[0]
     await database.set_setting(CURSOR_KEY, str(book_id))
+    # Если ссылка уже есть — показываем магазин, чтобы было видно, что
+    # именно заменяем: сам адрес длинный и в сообщении только мешает.
+    now_line = (f"Сейчас: {html.escape(_host(current) or 'ссылка есть')}\n"
+                if current else "")
     await message.answer(
         f"📚 <b>{html.escape(title)}</b>\n\n"
+        f"{now_line}"
         f"Пришлите ссылку на эту книгу — годится обычный адрес "
         f"страницы из магазина.\n"
         f"<i>Осталось {len(left)}, готово {stats['done']} из {stats['total']}</i>",
         reply_markup=_link_kb())
 
 
+@router.message(F.text.regexp(r"^/book_links\s+(обновить|перезавернуть|rewrap)"))
+async def rewrap_links(message: Message):
+    """Перезавернуть уже введённые ссылки в партнёрские.
+
+    Ссылки заводились до того, как бот научился заворачивать их сам:
+    часть из них — обычные адреса магазина, и покупка по ним не
+    засчитывается. Проходим по всем и чиним молча — руками это тридцать
+    походов в кабинет.
+    """
+    if not config.is_admin(message.from_user.id):
+        return
+
+    books = await database.books_with_link()
+    if not books:
+        await message.answer("Книг со ссылками нет — заводить нечего.")
+        return
+
+    changed, already, skipped = 0, 0, []
+    for book_id, title, link in books:
+        ready, shop = await affiliate(link)
+        if not ready:
+            # Либо уже партнёрская, либо магазин без шаблона.
+            if any(host in _host(link) for host in SHOP_HOSTS):
+                skipped.append(title)
+            else:
+                already += 1
+            continue
+        if ready == link:
+            already += 1
+            continue
+        if await database.set_book_link(book_id, ready):
+            changed += 1
+
+    lines = [f"🔗 <b>Перезавернула ссылки</b>", "",
+             f"Обновлено: <b>{changed}</b>",
+             f"Уже были партнёрскими: {already}"]
+    if skipped:
+        lines += ["", f"⚠️ Остались обычными: {len(skipped)} — для их магазина "
+                      f"нет шаблона в <code>/digest shop</code>:"]
+        lines += [f"· {html.escape(t)}" for t in skipped[:6]]
+    await message.answer("\n".join(lines))
+
+
 @router.message(F.text.startswith("/book_links"))
 async def book_links(message: Message):
     if not config.is_admin(message.from_user.id):
         return
+    parts = message.text.split()
+    every = len(parts) > 1 and parts[1].lower() in ("все", "всё", "all", "заново")
+
     await _mode_on(message.from_user.id)
     await database.set_setting(SKIP_KEY, "")
+    await database.set_setting(ALL_KEY, "1" if every else "")
     stats = await database.books_link_stats()
+    where = ("Иду по всем книгам подряд — присланная ссылка заменит прежнюю."
+             if every else
+             "Иду по книгам без ссылок. Пройти все подряд и заменить "
+             "готовые — <code>/book_links все</code>")
     await message.answer(
         "🔗 <b>Партнёрские ссылки на книги</b>\n\n"
-        f"Сейчас со ссылками: {stats['done']} из {stats['total']}.\n\n"
+        f"Сейчас со ссылками: {stats['done']} из {stats['total']}.\n"
+        f"{where}\n\n"
         "Буду называть книгу — присылайте ссылку. Годится обычный адрес "
         "страницы книги из Литреса или Читай-города: в партнёрскую заверну "
         "сама. "
