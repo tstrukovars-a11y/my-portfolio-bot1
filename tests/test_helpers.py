@@ -71,3 +71,32 @@ def test_shop_name_from_a_human_word():
     assert checklist._shop_name("литрес") == "Литрес"
     assert checklist._shop_name("ЧИТАЙ") == "Читай-город"
     assert checklist._shop_name("книжный") == "Книжный"
+
+
+# --- приглашение в канал ----------------------------------------------
+
+def test_invite_card_starts_with_the_reason_reader_is_here():
+    """Общее «подпишитесь» не работает: у каждого канала своя причина."""
+    import invite_card
+    from conftest import run
+
+    books = run(invite_card._card("книги"))
+    food = run(invite_card._card("еда"))
+    assert books.startswith("Эту книжную полку")
+    assert food.startswith("Эти рецепты")
+    assert books.endswith(invite_card.CLOSING)
+
+
+def test_invite_card_fits_a_photo_caption():
+    """Карточка идёт подписью под знаком — предел 1024 символа."""
+    import invite_card
+    from conftest import run
+
+    for where in invite_card.TARGETS:
+        assert len(run(invite_card._card(where))) <= 1024, where
+
+
+def test_invite_mark_exists():
+    import os
+    import invite_card
+    assert os.path.exists(invite_card.MARK)
