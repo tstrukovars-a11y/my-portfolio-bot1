@@ -81,3 +81,53 @@ def test_plan_does_not_steal_the_calendar_command():
         code = f.read()
     assert '"^/(план|plan)' not in code
     assert "/(план|контент)" in code
+
+
+# --- запасы -----------------------------------------------------------
+
+def test_stock_marks_by_urgency():
+    assert cp._stock_mark(0) == "🔴"
+    assert cp._stock_mark(cp.CRITICAL) == "🔴"
+    assert cp._stock_mark(cp.LOW) == "⚠️"
+    assert cp._stock_mark(cp.LOW + 1) == "✅"
+
+
+def test_days_word_agrees_with_the_number():
+    assert cp._days_word(1) == "1 день"
+    assert cp._days_word(2) == "2 дня"
+    assert cp._days_word(5) == "5 дней"
+    assert cp._days_word(11) == "11 дней"
+    assert cp._days_word(21) == "21 день"
+
+
+def _fake_stock(monkeypatch, values):
+    import asyncio
+
+    import database
+
+    monkeypatch.setattr(database, "section_stock",
+                        lambda s: asyncio.sleep(0, result=values.get(s, (0, 0, 0))))
+    monkeypatch.setattr(database, "count_puzzles",
+                        lambda: asyncio.sleep(0, result=0))
+    monkeypatch.setattr(database, "published_puzzle_ids",
+                        lambda: asyncio.sleep(0, result=[]))
+
+
+def test_empty_section_is_not_shown(monkeypatch):
+    """Раздела без материалов вовсе не бывает «на исходе» — его просто нет."""
+    _fake_stock(monkeypatch, {"books": (0, 0, 0), "genetics": (40, 12, 28)})
+    rows = run(cp.stock())
+    assert [title for _, title, *_ in rows] == ["🧬 Генетика"]
+
+
+def test_running_out_is_reported(monkeypatch):
+    _fake_stock(monkeypatch, {"books": (29, 27, 2), "genetics": (40, 12, 28)})
+    text = run(cp.stock_text())
+    assert "🔴" in text
+    assert "2 дня" in text
+    assert "Скоро закончится" in text
+
+
+def test_enough_everywhere_says_so(monkeypatch):
+    _fake_stock(monkeypatch, {"books": (29, 1, 28), "genetics": (40, 1, 39)})
+    assert "хватает больше чем на неделю" in run(cp.stock_text())

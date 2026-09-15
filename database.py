@@ -2147,6 +2147,33 @@ async def next_candidates(section: str, limit: int = 12):
         return []
 
 
+async def section_stock(section: str):
+    """(всего, уже вышло, осталось) материалов раздела.
+
+    Раздел выходит раз в день, поэтому «осталось» — это ещё и число
+    дней, которые он проживёт без пополнения. Знать это заранее важнее,
+    чем узнать в день, когда публиковать стало нечего.
+    """
+    source = DIGEST_SOURCES.get(section)
+    if not source:
+        return 0, 0, 0
+    table, condition = source
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            total = await conn.fetchval(
+                f"SELECT COUNT(*) FROM {SCHEMA}.{table} WHERE {condition}") or 0
+            used = await conn.fetchval(
+                f"""SELECT COUNT(*) FROM {SCHEMA}.{table}
+                    WHERE {condition} AND id IN (
+                        SELECT item_id FROM {SCHEMA}.digest_log
+                        WHERE section = $1)""", section) or 0
+        return total, used, max(0, total - used)
+    except Exception as e:
+        logging.error(f"Запасы раздела {section} недоступны: {e}")
+        return 0, 0, 0
+
+
 async def mark_published(section: str, item_id: int, message_id: int = None) -> bool:
     try:
         pool = await get_pool()

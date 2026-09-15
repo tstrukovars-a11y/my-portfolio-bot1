@@ -105,6 +105,86 @@ async def gaps() -> list:
 
 
 # ---------------------------------------------------------------------
+# ЗАПАСЫ: НА СКОЛЬКО ДНЕЙ ХВАТИТ
+# ---------------------------------------------------------------------
+#
+# Каждый раздел канала выходит раз в день и берёт следующий
+# неопубликованный материал. Значит, число невыпущенных — это прямо
+# число дней, которые раздел проживёт. Когда материал кончается, канал
+# начинает повторяться, и заметно это становится позже, чем хотелось бы.
+
+STOCK = (
+    ("books", "📚 Книги", "/books_seed"),
+    ("genetics", "🧬 Генетика", "/genetics"),
+    ("travel", "🌍 Путешествия", "/spots"),
+    ("recipes", "🍳 Рецепты", "/recipes"),
+)
+
+LOW = 7        # неделя — время успеть пополнить
+CRITICAL = 3   # три дня — уже горит
+
+
+def _stock_mark(left: int) -> str:
+    if left <= CRITICAL:
+        return "🔴"
+    if left <= LOW:
+        return "⚠️"
+    return "✅"
+
+
+async def stock() -> list:
+    """[(значок, раздел, осталось, всего, команда)] по всем разделам"""
+    out = []
+    for section, title, command in STOCK:
+        total, _, left = await database.section_stock(section)
+        if not total:
+            continue
+        out.append((_stock_mark(left), title, left, total, command))
+
+    try:
+        bank = await database.count_puzzles()
+        used = len(await database.published_puzzle_ids())
+        left = max(0, bank - used)
+        if bank:
+            out.append((_stock_mark(left), "🧩 Задачи дня", left, bank,
+                        "/puzzles"))
+    except Exception as e:
+        logging.warning(f"Запас задач не посчитался: {e}")
+    return out
+
+
+async def stock_text() -> str:
+    rows = await stock()
+    if not rows:
+        lines = ["📦 <b>Запасы контента</b>", "", "Материалов пока нет вовсе."]
+        return "\n".join(lines)
+
+    lines = ["📦 <b>Запасы контента</b>", "",
+             "<i>Раздел выходит раз в день, поэтому «осталось» — это "
+             "и есть число дней.</i>", ""]
+    for mark, title, left, total, command in rows:
+        lines.append(f"{mark} <b>{title}</b> — {left} из {total}, "
+                     f"это {_days_word(left)}")
+        if left <= LOW:
+            lines.append(f"    пополнить: <code>{command}</code>")
+
+    soon = [t for m, t, *_ in rows if m != "✅"]
+    if soon:
+        lines += ["", f"⚠️ Скоро закончится: {', '.join(soon)}. "
+                      f"Когда материал кончается, канал начинает повторяться."]
+    else:
+        lines += ["", "✅ Всем разделам хватает больше чем на неделю."]
+    return "\n".join(lines)
+
+
+def _days_word(n: int) -> str:
+    if 11 <= n % 100 <= 14:
+        return f"{n} дней"
+    return {1: f"{n} день", 2: f"{n} дня", 3: f"{n} дня",
+            4: f"{n} дня"}.get(n % 10, f"{n} дней")
+
+
+# ---------------------------------------------------------------------
 # ФАКТЫ ДЛЯ ПУБЛИКАЦИЙ
 # ---------------------------------------------------------------------
 
@@ -195,6 +275,8 @@ def _menu(week: str) -> InlineKeyboardMarkup:
     rows = [[InlineKeyboardButton(text=f"✍️ {name}",
                                   callback_data=f"plantpl_{key}")]
             for key, (name, _) in TEMPLATES.items()]
+    rows.append([InlineKeyboardButton(text="📦 Запасы контента",
+                                      callback_data="planstock")])
     rows.append([InlineKeyboardButton(text="🧾 Что править",
                                       callback_data="plangaps")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -230,6 +312,14 @@ async def screen() -> str:
                   for mark, text, cmd in holes]
     else:
         lines.append("✅ Дыр в содержимом нет.")
+
+    # Строка о запасах — в самом плане, а не только по кнопке: раздел,
+    # которому осталось три дня, должен попасться на глаза сам.
+    low = [f"{title} — {_days_word(left)}"
+           for mark, title, left, _, _ in await stock() if mark != "✅"]
+    if low:
+        lines += ["", "📦 <b>Заканчивается</b>", *[f"{m}" for m in low],
+                  "Подробно: <code>/запасы</code>"]
 
     lines += ["", "Отметить вышедшее: <code>/план готово пн</code>",
               "Снять отметку: <code>/план не пн</code>"]
@@ -305,6 +395,22 @@ async def template_button(call: CallbackQuery):
     await call.answer()
     if key in TEMPLATES:
         await call.message.answer(await filled(key))
+
+
+@router.message(F.text.regexp(r"^/(запасы|stock)"))
+async def stock_command(message: Message):
+    if not config.is_admin(message.from_user.id):
+        return
+    await message.answer(await stock_text())
+
+
+@router.callback_query(F.data == "planstock")
+async def stock_button(call: CallbackQuery):
+    if not config.is_admin(call.from_user.id):
+        await call.answer()
+        return
+    await call.answer()
+    await call.message.answer(await stock_text())
 
 
 @router.callback_query(F.data == "plangaps")
