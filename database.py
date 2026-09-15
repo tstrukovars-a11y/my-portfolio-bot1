@@ -52,6 +52,37 @@ SCHEMA = "vizitka_bot"
 FINANCE_SCHEMA = "finance"
 
 
+# Последняя ошибка базы — в памяти процесса, а не в самой базе: когда
+# падает база, записать причину в неё невозможно, а именно тогда она и
+# нужна. Владелец видит её командой, не залезая в логи Render.
+LAST_ERROR = {"when": None, "what": ""}
+
+
+def note_error(where: str, error: Exception):
+    from datetime import datetime as _dt, timezone as _tz
+    LAST_ERROR["when"] = _dt.now(_tz.utc)
+    LAST_ERROR["what"] = f"{where}: {type(error).__name__}: {str(error)[:200]}"
+
+
+async def health() -> dict:
+    """Жива ли база и есть ли нужные таблицы — для разбора поломок"""
+    out = {"ok": False, "error": "", "now": None, "tables": {}}
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            out["now"] = await conn.fetchval("SELECT NOW()")
+            for name in ("match_alerts", "match_picks", "settings"):
+                # Приведение к text обязательно: без него asyncpg не может
+                # определить тип параметра и падает на самой проверке.
+                out["tables"][name] = await conn.fetchval(
+                    "SELECT to_regclass($1::text) IS NOT NULL", f"{SCHEMA}.{name}")
+        out["ok"] = True
+    except Exception as e:
+        out["error"] = f"{type(e).__name__}: {str(e)[:200]}"
+        note_error("health", e)
+    return out
+
+
 async def _init_connection(conn):
     """Выполняется при каждом новом соединении: гарантирует существование схемы"""
     await conn.execute(f"CREATE SCHEMA IF NOT EXISTS {SCHEMA}")
@@ -874,6 +905,7 @@ async def toggle_alert(user_id: int, match_id: str, tour: str,
         # None, а не False: «не сохранилось» и «снято» — разные вещи, и
         # читателю надо сказать правду.
         logging.error(f"Напоминание не сохранено: {e}")
+        note_error("напоминание", e)
         return None, 0
 
 
@@ -1051,6 +1083,7 @@ async def alerts_overview(limit: int = 12):
         return [dict(r) for r in rows], now, waiting
     except Exception as e:
         logging.error(f"Обзор напоминаний недоступен: {e}")
+        note_error("обзор напоминаний", e)
         return [], None, 0
 
 

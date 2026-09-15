@@ -541,12 +541,32 @@ async def alerts_status(message: Message):
     if not config.is_admin(message.from_user.id):
         return
 
+    state = await database.health()
     rows, db_now, waiting = await database.alerts_overview(12)
     shift = await _shift()
     lead = await _lead()
     now_utc = datetime.now(timezone.utc)
 
     lines = ["🔔 <b>Напоминания о матчах</b>", ""]
+
+    # База — первое, что надо знать: без неё не работает вообще ничего,
+    # а выглядит это как «кнопка не сработала».
+    if not state["ok"]:
+        lines.append(f"❌ <b>База не отвечает</b>\n<code>"
+                     f"{html.escape(state['error'])}</code>\n")
+    else:
+        missing = [n for n, there in state["tables"].items() if not there]
+        if missing:
+            lines.append("❌ <b>Нет таблиц:</b> " + ", ".join(missing)
+                         + "\nОни создаются при запуске — значит, запуск "
+                           "оборвался на полпути.\n")
+
+    if database.LAST_ERROR["what"]:
+        when = database.LAST_ERROR["when"]
+        lines.append(f"⚠️ <b>Последняя ошибка базы</b>"
+                     + (f" ({when.strftime('%d.%m %H:%M')} UTC)" if when else "")
+                     + f"\n<code>{html.escape(database.LAST_ERROR['what'])}</code>\n")
+
     lines.append(f"Сейчас по UTC: <code>{now_utc.strftime('%d.%m %H:%M')}</code>")
     lines.append(f"По часам канала: <code>{(now_utc + shift).strftime('%d.%m %H:%M')}</code>")
     if db_now is not None:
@@ -621,10 +641,12 @@ async def test_command(message: Message, bot: Bot):
         message.from_user.id, match_id, tour, title, starts)
 
     if added is None:
+        why = database.LAST_ERROR.get("what") or "причина не записалась"
         await message.answer(
             "☝️ Образец пришёл, но <b>запись в базу не удалась</b> — "
-            "значит, боевые напоминания тоже не сохранятся. Причина в "
-            "логах Render по слову «Напоминание не сохранено».")
+            "значит, боевые напоминания тоже не сохранятся.\n\n"
+            f"<code>{html.escape(why)}</code>\n\n"
+            "Подробности о базе: <code>/tennis_alerts</code>")
         return
     await message.answer(
         "✅ Образец отправлен.\n"
