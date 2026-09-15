@@ -77,6 +77,20 @@ DAY = (
     "🍳 <b>20:30</b> — что приготовить на ужин"
 )
 
+# Пост для чужого канала. Его публикует другой человек, поэтому он
+# написан от третьего лица: «мы» и «наш» в чужом канале выдают чужой
+# текст. Кнопок здесь нет и быть не может — инлайн-кнопку в чужом канале
+# ставит только бот-администратор этого канала, а у нас его там нет.
+# Поэтому ссылка идёт строкой, её видно и по ней нажимают.
+PARTNER = (
+    "<b>«Акцент» — журнал для тех, кто ведёт своё дело</b>\n\n"
+    "Каждый день коротко: что случилось в мире и сколько стоит доллар, "
+    "какую книгу прочитать и почему, куда съездить и что приготовить "
+    "вечером.\n\n"
+    "Без воды, без рассылок, семь коротких сообщений в день.\n\n"
+    "👉 {url}"
+)
+
 CLOSING = ("Без рассылок и без «доброго времени суток». "
            "Семь коротких сообщений в день — и можно отписаться в любой момент.")
 
@@ -105,7 +119,9 @@ async def _markup(share: bool = False) -> InlineKeyboardMarkup:
 
 def _menu() -> InlineKeyboardMarkup:
     rows = [[InlineKeyboardButton(text="🧭 Общее приглашение",
-                                  callback_data="invcard_общее")]]
+                                  callback_data="invcard_общее")],
+            [InlineKeyboardButton(text="🤝 Пост для чужого канала",
+                                  callback_data="invcard_обмен")]]
     rows += [[InlineKeyboardButton(text=title, callback_data=f"invcard_{name}")]
              for name, (_, title, _) in TARGETS.items()]
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -154,6 +170,10 @@ async def invite_card(message: Message, bot: Bot):
         await _general(message)
         return
 
+    if where in ("обмен", "партнёр", "партнер", "чужой"):
+        await _partner(message)
+        return
+
     if where not in TARGETS:
         await message.answer(
             "📣 <b>Приглашение в «Акцент»</b>\n\n"
@@ -168,6 +188,31 @@ async def invite_card(message: Message, bot: Bot):
         return
 
     await _preview(message, where)
+
+
+async def _partner(message: Message):
+    """Готовый пост для чужого канала — по договорённости.
+
+    Отдаём три вещи сразу: сам текст, которым можно поделиться, картинку
+    файлом (её партнёр приложит к посту) и короткую записку о том, что
+    ему сказать. Иначе договорённость упирается в «а пришлите материалы».
+    """
+    url = await database.get_setting(LINK_KEY)
+    text = PARTNER.format(url=url)
+
+    await message.answer(text, disable_web_page_preview=False)
+    await message.answer_document(
+        FSInputFile(MARK), caption="Картинка к посту — приложить к тексту выше.")
+    await message.answer(
+        "☝️ <b>Готовый пост для чужого канала.</b>\n\n"
+        "Перешлите партнёру оба сообщения: текст он вставит к себе как "
+        "свой, картинку приложит. Кнопок в нём намеренно нет — в чужом "
+        "канале их может поставить только бот-администратор этого канала.\n\n"
+        "⚖️ Если размещение по обмену или за деньги, это реклама: "
+        "маркировку и токен получает рекламодатель, то есть вы. "
+        "Взаимный пост друг у друга — тот же случай, уточните у своего ОРД.\n\n"
+        "Своими словами: <code>/zvat текст …</code> меняет общее "
+        "приглашение; этот пост правится в коде — скажите, и перепишу.")
 
 
 async def _general(message: Message):
@@ -241,6 +286,9 @@ async def pick_target(call, bot: Bot):
     await call.answer()
     if where == "общее":
         await _general(call.message)
+        return
+    if where == "обмен":
+        await _partner(call.message)
         return
     if where not in TARGETS:
         return

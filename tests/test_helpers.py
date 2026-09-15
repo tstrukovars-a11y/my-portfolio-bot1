@@ -115,3 +115,19 @@ def test_general_invite_is_used_and_can_be_replaced(settings):
 def test_general_invite_fits_a_caption():
     import invite_card
     assert len(invite_card.GENERAL) <= 1024
+
+
+def test_partner_post_has_no_first_person():
+    """Пост публикует другой человек: «мы» и «наш» выдают чужой текст."""
+    import invite_card
+    body = invite_card.PARTNER.lower()
+    for word in (" мы ", " наш", " нас "):
+        assert word not in body, word
+
+
+def test_partner_post_carries_the_link_as_text():
+    """Кнопку в чужом канале поставить нельзя — ссылка должна быть в тексте."""
+    import invite_card
+    ready = invite_card.PARTNER.format(url="https://t.me/accent_hub")
+    assert "https://t.me/accent_hub" in ready
+    assert len(ready) <= 1024
