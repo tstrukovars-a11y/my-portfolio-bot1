@@ -130,8 +130,20 @@ async def _pick_row(match):
     return _pick_labels(match["id"], names, counts)
 
 
+# До какого часа завтрашнего дня матчи считаются «нашими».
+#
+# Расписание выходит утром. Матч, который начинается в шесть утра
+# следующего дня, в сегодняшний анонс не попадал, а завтрашний выходит
+# уже после его начала — и он терялся молча. Австралия и Азия играют
+# ровно в эти часы, так что терялось не редкое исключение.
+#
+# Граница — полдень: к этому времени утренний выпуск давно вышел, и
+# дальше матч подхватывает обычное расписание.
+TOMORROW_UNTIL = 12
+
+
 async def _today(tour: str):
-    """Матчи сегодняшнего дня, которые ещё не сыграны.
+    """Матчи, которые ещё предстоят: сегодняшние и раннее утро завтра.
 
     Источник отдаёт турнир целиком: на «Шлеме» это три недели и три сотни
     матчей. Отбора по дате не было, и в расписание лезли матчи недельной
@@ -142,6 +154,7 @@ async def _today(tour: str):
     shift = await _shift()
     local_now = datetime.now(timezone.utc) + shift
     today = local_now.date()
+    tomorrow = today + timedelta(days=1)
 
     data = await tennis_live.fetch_scoreboard(tour)
     out = []
@@ -152,9 +165,15 @@ async def _today(tour: str):
         if not when:
             continue
         local = when + shift
-        # Начавшийся три часа назад и до сих пор не закрытый матч —
-        # это брошенная запись источника, а не то, что стоит анонсировать.
-        if local.date() != today or local < local_now - timedelta(hours=3):
+
+        if local.date() == today:
+            # Начавшийся три часа назад и до сих пор не закрытый матч —
+            # это брошенная запись источника, а не то, что стоит анонсировать.
+            if local < local_now - timedelta(hours=3):
+                continue
+        elif local.date() == tomorrow and local.hour < TOMORROW_UNTIL:
+            match["tomorrow"] = True
+        else:
             continue
         out.append(match)
     out.sort(key=lambda m: m.get("date") or "")
@@ -274,6 +293,10 @@ async def publish_schedule(bot: Bot, chat: int, thread=None) -> str:
                 lines.append(f"\n<b>{html.escape(event)}</b>" if event else "")
             when = _starts(m)
             clock = (when + shift).strftime("%H:%M") if when else "—"
+            # Ранний матч следующего дня подписываем: «06:30» без пометки
+            # читается как сегодняшнее утро, которое уже прошло.
+            if m.get("tomorrow"):
+                clock = f"завтра {clock}"
             title = _title(m)
             rnd = players_ru.rnd(m.get("round") or "")
             lines.append(f"{clock} · {html.escape(_with_flags(m))}"

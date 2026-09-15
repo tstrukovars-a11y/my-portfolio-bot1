@@ -80,3 +80,44 @@ def test_two_names_or_nothing():
                        {"athlete": {"displayName": "Daniil Medvedev"}}]}
     assert ta._names(match) == ["А. Рублёв", "Д. Медведев"]
     assert ta._names({"sides": []}) is None
+
+
+# --- раннее утро следующего дня ---------------------------------------
+
+def test_early_morning_tomorrow_is_still_ours(monkeypatch):
+    """Матч в шесть утра терялся: сегодня рано, а завтрашний анонс поздно."""
+    import asyncio
+    from datetime import datetime, timedelta, timezone
+
+    import tennis_live
+
+    now = datetime(2026, 9, 16, 17, 0, tzinfo=timezone.utc)   # 20:00 у канала
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now
+
+    monkeypatch.setattr(ta, "datetime", Clock)
+    monkeypatch.setattr(ta, "_shift",
+                        lambda: asyncio.sleep(0, result=timedelta(hours=3)))
+
+    def at(hours):
+        return (now + timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%MZ")
+
+    matches = [
+        {"id": "brosh", "date": at(-5), "completed": False},   # начался давно
+        {"id": "today", "date": at(2), "completed": False},    # сегодня 22:00
+        {"id": "early", "date": at(10), "completed": False},   # завтра 06:00
+        {"id": "late", "date": at(20), "completed": False},    # завтра 16:00
+        {"id": "done", "date": at(1), "completed": True},
+    ]
+    monkeypatch.setattr(tennis_live, "_singles",
+                        lambda data, tour, big_only=False: matches)
+    monkeypatch.setattr(tennis_live, "fetch_scoreboard",
+                        lambda tour, force=False: asyncio.sleep(0, result={}))
+
+    got = asyncio.run(ta._today("atp"))
+    assert [m["id"] for m in got] == ["today", "early"]
+    assert got[1].get("tomorrow") is True
+    assert not got[0].get("tomorrow")
