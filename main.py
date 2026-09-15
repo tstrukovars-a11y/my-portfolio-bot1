@@ -425,31 +425,6 @@ async def main():
             f"    Проверьте, жива ли база Postgres на Render и совпадает ли DATABASE_URL."
         )
 
-    # Своё имя бот знает и сам — спрашивать его у владельца незачем.
-    # Без этой настройки не рисуются кнопки, ведущие в бота из канала:
-    # погода, поиск книги, заказ. Раньше её вводили руками и забывали.
-    try:
-        me = await bot.get_me()
-        if me.username and await database.get_setting("bot_username") != me.username:
-            await database.set_setting("bot_username", me.username)
-            logging.info(f"Имя бота записано: @{me.username}")
-    except Exception as e:
-        logging.warning(f"Имя бота не записалось: {e}")
-
-    # Если база молчит — сказать владельцу сразу, а не ждать, пока он
-    # наткнётся на это сам через неделю. Бот без базы выглядит рабочим:
-    # меню открывается, сообщения приходят, а ничего не сохраняется.
-    try:
-        if not (await database.health())["ok"] and config.ADMIN_ID:
-            import admin
-            await bot.send_message(
-                config.ADMIN_ID,
-                "⚠️ <b>Бот запустился без базы данных.</b>\n\n"
-                "Сейчас не сохраняется ничего: подписки, голоса, настройки, "
-                "загруженные картинки.\n\n" + await admin.db_report())
-    except Exception as e:
-        logging.warning(f"Не удалось предупредить о базе: {e}")
-
     # Свои картинки разделов — до первого показа меню.
     await banners.load()
 
@@ -590,6 +565,20 @@ async def main():
             logging.info(f"Глубокие ссылки ведут на @{me.username}")
     except Exception as e:
         logging.warning(f"Имя бота не определилось: {e}")
+
+    # Если база молчит — сказать владельцу сразу, а не ждать, пока он
+    # наткнётся на это сам через неделю. Бот без базы выглядит рабочим:
+    # меню открывается, сообщения приходят, а ничего не сохраняется.
+    try:
+        if not (await database.health())["ok"] and config.ADMIN_ID:
+            import admin
+            await bot.send_message(
+                config.ADMIN_ID,
+                "⚠️ <b>Бот запустился без базы данных.</b>\n\n"
+                "Сейчас не сохраняется ничего: подписки, голоса, настройки, "
+                "загруженные картинки.\n\n" + await admin.db_report())
+    except Exception as e:
+        logging.warning(f"Не удалось предупредить о базе: {e}")
 
     # Меню собирается синхронно и в базу сходить не может, поэтому ссылку на
     # канал подкладываем один раз при старте.
