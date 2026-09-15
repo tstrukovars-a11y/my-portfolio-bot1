@@ -858,23 +858,47 @@ async def book_link_one(message: Message):
     if len(parts) < 3 or not parts[1].isdigit():
         await message.answer(
             "Нужно так: <code>/book_link 12 https://…</code>\n"
-            "Снять ссылку: <code>/book_link 12 нет</code>")
+            "Снять одну: <code>/book_link 12 нет литрес</code>\n"
+            "Снять обе: <code>/book_link 12 нет</code>\n"
+            "Номера книг: <code>/book_links_show</code>")
         return
 
+    book_id = int(parts[1])
     value = parts[2].strip()
-    # Книга кончилась — ссылку снимаем, кнопка «Купить» просто исчезает.
-    # Это лучше, чем вести читателя на «нет в наличии».
+
+    # Книга кончилась — ссылку снимаем, кнопка просто исчезает. Это лучше,
+    # чем вести читателя на «нет в наличии». Ячеек две, поэтому можно
+    # снять одну: «/book_link 12 нет литрес».
     if value.lower() in ("нет", "-", "off", "убрать"):
-        ok = await database.set_book_link(int(parts[1]), "")
-        await message.answer("✅ Ссылка снята — кнопки «Купить» у этой книги "
-                             "больше нет" if ok else "❌ Книга не найдена")
+        first, second = await database.book_links_by_id(book_id)
+        shop = _shop_host(parts[3]) if len(parts) > 3 else ""
+        if len(parts) > 3 and not shop:
+            await message.answer(f"Не знаю магазин «{html.escape(parts[3])}».")
+            return
+
+        if not shop:
+            done = await database.set_book_link_slot(book_id, "", False)
+            await database.set_book_link_slot(book_id, "", True)
+            await message.answer("✅ Обе ссылки сняты — кнопок на саму книгу "
+                                 "больше нет" if done else "❌ Книга не найдена")
+            return
+
+        targets = [(u, i > 0) for i, u in enumerate((first, second))
+                   if u and _mentions(u, shop)]
+        if not targets:
+            await message.answer(f"У этой книги нет ссылки на {shop}.")
+            return
+        for _, second_slot in targets:
+            await database.set_book_link_slot(book_id, "", second_slot)
+        await message.answer(f"✅ Ссылка на {shop} снята. "
+                             f"Вторая кнопка осталась на месте.")
         return
 
     if not value.startswith("http"):
         await message.answer("Это не похоже на ссылку.")
         return
     value, note = await _ready_link(value)
-    placed = await save_link(int(parts[1]), value)
+    placed = await save_link(book_id, value)
     await message.answer(("✅ Сохранила" + note + placed) if placed is not None
                          else "❌ Книга с таким номером не найдена")
 
