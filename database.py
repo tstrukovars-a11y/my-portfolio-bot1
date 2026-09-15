@@ -61,7 +61,7 @@ _pool = None
 
 # Каким способом удалось подключиться — видно в /tennis_alerts, чтобы не
 # гадать, шифруется ли соединение.
-POOL_MODE = {"how": "ещё не подключались"}
+POOL_MODE = {"how": "ещё не подключались", "attempts": []}
 
 # Язык пользователя дублируется в памяти процесса. Это страховка: если база
 # недоступна (истёк бесплатный Postgres на Render, не резолвится хост,
@@ -118,6 +118,8 @@ async def health() -> dict:
         out["ok"] = True
     except Exception as e:
         out["error"] = f"{type(e).__name__}: {str(e)[:200]}"
+        out["attempts"] = list(POOL_MODE.get("attempts") or [])
+        out["target"] = describe_db_target()
         note_error("health", e)
     return out
 
@@ -153,6 +155,10 @@ async def get_pool():
     if not candidates:
         raise RuntimeError("DATABASE_URL не задан")
 
+    # Ошибку каждого способа запоминаем отдельно. Раньше наружу летела
+    # только последняя, и настоящая причина — почему не вышло шифрованное —
+    # оставалась в логах Render, куда никто не смотрит.
+    POOL_MODE["attempts"] = []
     last_error = None
     for dsn, ssl_note, ssl_mode in candidates:
         try:
@@ -170,6 +176,8 @@ async def get_pool():
             return _pool
         except Exception as e:
             last_error = e
+            POOL_MODE["attempts"].append(
+                (ssl_note, f"{type(e).__name__}: {str(e)[:160]}"))
             logging.warning(f"Подключение {ssl_note} не удалось: {e}")
             # Неудачный пул надо закрыть: иначе он останется висеть с
             # мёртвыми соединениями, а следующий кандидат создаст ещё один.

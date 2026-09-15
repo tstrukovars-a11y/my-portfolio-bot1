@@ -552,8 +552,16 @@ async def alerts_status(message: Message):
     # База — первое, что надо знать: без неё не работает вообще ничего,
     # а выглядит это как «кнопка не сработала».
     if not state["ok"]:
-        lines.append(f"❌ <b>База не отвечает</b>\n<code>"
-                     f"{html.escape(state['error'])}</code>\n")
+        lines.append("❌ <b>База не отвечает</b>")
+        # Показываем каждый способ отдельно: наружу летит ошибка последнего,
+        # а виновата обычно первая — и без неё чинят не то.
+        for how, why in state.get("attempts") or []:
+            lines.append(f"• {how}: <code>{html.escape(why)}</code>")
+        if not state.get("attempts"):
+            lines.append(f"<code>{html.escape(state['error'])}</code>")
+        if state.get("target"):
+            lines.append(f"Адрес: <code>{html.escape(state['target'])}</code>")
+        lines.append("")
     else:
         missing = [n for n, there in state["tables"].items() if not there]
         if missing:
