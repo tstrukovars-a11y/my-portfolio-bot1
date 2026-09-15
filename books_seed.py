@@ -1042,6 +1042,20 @@ async def links_bulk(message: Message):
         + f"\nВсего со ссылками: {stats['done']} из {stats['total']}.")
 
 
+@router.message(F.text == "/book_undo")
+async def book_restore(message: Message):
+    """Вернуть последнюю удалённую книгу — со ссылками и обложкой"""
+    if not config.is_admin(message.from_user.id):
+        return
+    title = await database.restore_book()
+    if not title:
+        await message.answer("Возвращать нечего: корзина пуста.")
+        return
+    await message.answer(
+        f"↩️ Вернула на полку: <b>{html.escape(title)}</b>\n\n"
+        f"Ссылки и обложка на месте — книга восстановлена целиком.")
+
+
 @router.message(F.text.regexp(r"^/book_del\s+\d+"))
 async def book_delete(message: Message):
     """Убрать книгу с полки — когда её нигде не купить.
@@ -1061,10 +1075,12 @@ async def book_delete(message: Message):
 
     text = f"🗑 Убрала с полки: <b>{html.escape(title)}</b>"
     if not msg_id:
-        await message.answer(text + "\n\nВ канале её не было.")
+        await message.answer(text + "\n\nВ канале её не было."
+                                    "\n\nНе ту убрали? <code>/book_undo</code>")
         return
     await message.answer(
-        text + "\n\nНо пост в канале-справочнике остался. Удалить и его?",
+        text + "\n\nНо пост в канале-справочнике остался. Удалить и его?"
+        "\n\nНе ту убрали? <code>/book_undo</code> — вернёт со ссылками.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(text="🗑 Удалить пост в канале",
                                  callback_data=f"bookpost_del_{msg_id}")]]))

@@ -3489,24 +3489,56 @@ async def get_book_by_id(book_id: int):
         return None
 
 
+BOOK_TRASH_KEY = "book_trash"     # последняя удалённая книга целиком
+
+
 async def delete_book(book_id: int):
     """Убрать книгу с полки. Возвращает (название, номер поста в канале).
 
-    Номер поста отдаём до удаления: строки уже не будет, а пост в канале
-    останется, и без номера его потом не найти.
+    Удалённую книгу кладём целиком в корзину — со ссылками, обложкой и
+    полкой. Промахнуться номером легко, а восстанавливать из файла-списка
+    значит потерять и ссылки, и обложку.
     """
     try:
         pool = await get_pool()
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
                 f"DELETE FROM {SCHEMA}.books WHERE id = $1 "
-                "RETURNING text_content, channel_msg_id", book_id)
+                "RETURNING category, text_content, cover_file_id, "
+                "buy_url, buy_url2, channel_msg_id", book_id)
         if not row:
             return None, None
+        await set_setting(BOOK_TRASH_KEY, json.dumps(dict(row), ensure_ascii=False))
         return (row["text_content"] or "").split("\n")[0][:70], row["channel_msg_id"]
     except Exception as e:
         logging.error(f"Книга не удалилась: {e}")
         return None, None
+
+
+async def restore_book():
+    """Вернуть последнюю удалённую книгу. (название) либо None."""
+    raw = await get_setting(BOOK_TRASH_KEY)
+    if not raw:
+        return None
+    try:
+        book = json.loads(raw)
+    except (ValueError, TypeError):
+        return None
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"INSERT INTO {SCHEMA}.books "
+                "(category, text_content, cover_file_id, buy_url, buy_url2, "
+                " channel_msg_id) VALUES ($1, $2, $3, $4, $5, $6)",
+                book.get("category"), book.get("text_content"),
+                book.get("cover_file_id"), book.get("buy_url"),
+                book.get("buy_url2"), book.get("channel_msg_id"))
+        await set_setting(BOOK_TRASH_KEY, "")
+        return (book.get("text_content") or "").split("\n")[0][:70]
+    except Exception as e:
+        logging.error(f"Книга не вернулась: {e}")
+        return None
 
 
 async def add_book(category: str, text_content: str, cover_file_id: str):
