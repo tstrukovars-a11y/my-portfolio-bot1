@@ -933,10 +933,88 @@ async def _news_country() -> str:
     return NEWS_ALIASES.get(raw.strip().lower(), raw.strip().lower())
 
 
+# Сводка новостей. По заголовкам никто не переходит — и правильно
+# делает: заголовок сам по себе не говорит, что случилось и при чём тут
+# читатель. Поэтому выше ссылок идут несколько строк о том, что стоит за
+# ними; ссылки остаются ниже для тех, кто захочет подробностей.
+SUMMARY_KEY = "digest_news_summary"      # «дата|текст» — чтобы не спрашивать дважды
+SUMMARY_MODEL = "claude-haiku-4-5-20251001"
+SUMMARY_MAX = 420
+
+SUMMARY_PROMPT = (
+    "Ты редактор делового телеграм-канала для предпринимателей, "
+    "говорящих по-русски и живущих в разных странах.\n\n"
+    "Из заголовков ниже сделай короткую сводку: 3–4 предложения о том, "
+    "что произошло и чем это касается человека, у которого своё дело.\n\n"
+    "Правила:\n"
+    "— пиши только о том, что есть в заголовках, ничего не додумывай;\n"
+    "— если заголовки между собой не связаны, назови главное и не "
+    "натягивай общую тему;\n"
+    "— никаких советов покупать, продавать или вкладывать — это реклама "
+    "финансовых услуг, её нельзя;\n"
+    "— без вступлений вроде «сегодня в новостях», сразу по делу;\n"
+    "— спокойный тон, никаких восклицаний и эмодзи;\n"
+    "— обычный текст без разметки."
+)
+
+
+async def _news_summary(headlines: str) -> str:
+    """Несколько строк о том, что стоит за заголовками. Пусто — не вышло."""
+    if not headlines.strip():
+        return ""
+
+    today = (await _local_now()).strftime("%Y-%m-%d")
+    saved = await database.get_setting(SUMMARY_KEY) or ""
+    if saved.startswith(today + "|"):
+        return saved.split("|", 1)[1]
+
+    try:
+        import block4_claude
+        client = block4_claude.claude_client
+    except Exception as e:
+        logging.warning(f"Сводка: клиент недоступен: {e}")
+        return ""
+    if client is None:
+        return ""
+
+    try:
+        answer = await client.messages.create(
+            model=SUMMARY_MODEL, max_tokens=SUMMARY_MAX,
+            system=SUMMARY_PROMPT,
+            messages=[{"role": "user", "content": headlines[:4000]}])
+        text = (answer.content[0].text or "").strip()
+    except Exception as e:
+        # Молчим в канале, но говорим владельцу: иначе сводка пропадёт
+        # незаметно и причина останется только в логах Render.
+        logging.error(f"Сводка новостей не собралась: {type(e).__name__}: {e}")
+        await database.set_setting(
+            "digest_last_error",
+            f"сводка новостей: {type(e).__name__}: {str(e)[:120]}")
+        return ""
+
+    if text:
+        await database.set_setting(SUMMARY_KEY, f"{today}|{text}")
+    return text
+
+
 async def _news_post() -> str:
-    """Утренние заголовки со ссылками. Пусто — значит выпуск не состоится:
-    «новостей нет» в новостном слоте хуже, чем его отсутствие."""
-    return await _news_text(await _news_country())
+    """Утренние новости: сводка, а под ней заголовки со ссылками.
+
+    Пусто — значит выпуск не состоится: «новостей нет» в новостном слоте
+    хуже, чем его отсутствие.
+    """
+    headlines = await _news_text(await _news_country())
+    if not headlines:
+        return ""
+
+    summary = await _news_summary(headlines)
+    if not summary:
+        return headlines
+    # Выпуск разбирается как Markdown: звёздочка или подчёркивание внутри
+    # сводки уронили бы всё сообщение, а не только строку.
+    import news_fetcher
+    return (f"{news_fetcher._escape_markdown(summary)}\n\n"
+            f"*Подробности:*\n{headlines}")
 
 
 def _sport_fact(index: int) -> str:
@@ -1328,6 +1406,12 @@ async def show_chat_id(message: Message):
                                ("sport", "🏅 Сюда — спортивные факты"))]
     rows.append([InlineKeyboardButton(
         text="📥 Сюда — вообще всё", callback_data=f"setmirror_all_{chat_id}_{thread or 0}")])
+    # Отдельной строкой и без дублирования постов: аватарка группе нужна
+    # чаще, чем пересылка, а искать её номер отдельной командой — работа
+    # на пустом месте.
+    rows.append([InlineKeyboardButton(
+        text="🖼 Поставить сюда аватарку клуба",
+        callback_data=f"clubpic_{chat_id}")])
 
     where = f"Чат <code>{chat_id}</code>" + (f", тема <code>{thread}</code>" if thread else "")
     await message.answer(
@@ -1496,6 +1580,25 @@ async def digest_command(message: Message, bot: Bot):
         await message.answer(
             f"✅ Пометка{where}: {html.escape(value) or 'снята'}\n\n"
             "Своя пометка магазину: <code>/digest note litres Реклама. ООО …</code>")
+        return
+
+    if command == "сводка" or command == "summary":
+        if len(parts) > 2 and parts[2].strip().lower() in ("заново", "reset"):
+            await database.set_setting(SUMMARY_KEY, "")
+            await message.answer("✅ Сводку соберу заново при следующем показе.")
+            return
+        headlines = await _news_text(await _news_country())
+        if not headlines:
+            await message.answer("Заголовков пока нет — сборщик обновляет "
+                                 "ленту раз в сутки.")
+            return
+        summary = await _news_summary(headlines)
+        await message.answer(
+            (f"📝 <b>Сводка на сегодня</b>\n\n{html.escape(summary)}"
+             if summary else
+             "Сводка не собралась — вероятно, не задан ключ Anthropic "
+             "или кончились средства на счёте. Заголовки выйдут без неё.")
+            + "\n\nСобрать заново: <code>/digest сводка заново</code>")
         return
 
     if command == "motto":
@@ -1682,6 +1785,7 @@ async def digest_command(message: Message, bot: Bot):
                  "<code>/digest bot имя_бота</code> — куда ведут кнопки заказа\n"
                  "<code>/digest club ссылка</code> — приглашение в группу под постами\n"
                  "<code>/digest motto</code> — фраза дня в утреннем выпуске\n"
+                 "<code>/digest сводка</code> — что бот скажет о новостях\n"
                  "<code>/digest shop https://…{q}…</code> — партнёрская ссылка на книги\n"
                  "<code>/digest note текст</code> — пометка о партнёрской ссылке\n"
                  "<code>/digest now</code> — опубликовать вне сетки\n"

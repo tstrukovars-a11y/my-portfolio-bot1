@@ -425,6 +425,17 @@ async def main():
             f"    Проверьте, жива ли база Postgres на Render и совпадает ли DATABASE_URL."
         )
 
+    # Своё имя бот знает и сам — спрашивать его у владельца незачем.
+    # Без этой настройки не рисуются кнопки, ведущие в бота из канала:
+    # погода, поиск книги, заказ. Раньше её вводили руками и забывали.
+    try:
+        me = await bot.get_me()
+        if me.username and await database.get_setting("bot_username") != me.username:
+            await database.set_setting("bot_username", me.username)
+            logging.info(f"Имя бота записано: @{me.username}")
+    except Exception as e:
+        logging.warning(f"Имя бота не записалось: {e}")
+
     # Свои картинки разделов — до первого показа меню.
     await banners.load()
 

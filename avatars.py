@@ -115,6 +115,25 @@ async def avatar_command(message: Message, bot: Bot):
         reply_markup=_menu())
 
 
+@router.callback_query(F.data.startswith("clubpic_"))
+async def club_here(call: CallbackQuery, bot: Bot):
+    """«Поставить сюда аватарку клуба» — из команды /id прямо в группе.
+
+    Так номер чата не приходится ни искать, ни переписывать: он уже есть
+    в самой кнопке.
+    """
+    if not config.is_admin(call.from_user.id):
+        await call.answer()
+        return
+    chat_id = call.data.split("_", 1)[1]
+    if not chat_id.lstrip("-").isdigit():
+        await call.answer()
+        return
+    await database.set_setting("club_chat", chat_id)
+    await call.answer("Ставлю…")
+    await call.message.answer(await _apply(bot, "клуб"))
+
+
 @router.callback_query(F.data.startswith("avatar_"))
 async def avatar_button(call: CallbackQuery, bot: Bot):
     if not config.is_admin(call.from_user.id):
