@@ -1,0 +1,4 @@
+# Для тестов. В рабочую сборку не ставится: Render читает только
+# requirements.txt, и тащить туда pytest незачем.
+-r requirements.txt
+pytest==9.1.1
