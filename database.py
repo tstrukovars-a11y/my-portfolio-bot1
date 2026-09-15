@@ -202,6 +202,10 @@ async def _build_pool():
             _pool_failure_logged = False
             POOL_MODE["how"] = ssl_note
             POOL_MODE["attempts"] = attempts
+            # Старая ошибка после удачного подключения только путает: она
+            # висела в отчёте как свежая, хотя относилась ко времени, когда
+            # база лежала.
+            LAST_ERROR["when"], LAST_ERROR["what"] = None, ""
             logging.info(f"Подключение к базе установлено ({ssl_note}): {describe_db_target()}")
             return _pool
         except Exception as e:
@@ -2523,6 +2527,38 @@ async def all_user_ids() -> list[tuple[int, str]]:
 _settings_cache: dict[str, str] = {}
 
 
+_unsaved_settings: set = set()
+_flushing = False
+
+
+async def _flush_settings():
+    """Дописать настройки, не легшие в базу, пока она молчала"""
+    global _flushing
+    if _flushing or not _unsaved_settings:
+        return
+    _flushing = True
+    try:
+        for key in list(_unsaved_settings):
+            value = _settings_cache.get(key)
+            if value is None:
+                _unsaved_settings.discard(key)
+                continue
+            try:
+                pool = await get_pool()
+                async with pool.acquire() as conn:
+                    await conn.execute(
+                        f"INSERT INTO {SCHEMA}.settings (key, value) VALUES ($1, $2) "
+                        "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+                        key, value)
+                _unsaved_settings.discard(key)
+                logging.info(f"Настройка {key} дописана после возвращения базы")
+            except Exception as e:
+                logging.warning(f"Настройка {key} всё ещё не пишется: {e}")
+                break
+    finally:
+        _flushing = False
+
+
 async def get_setting(key: str, default: str = None):
     """Значение из базы; при недоступности базы — последнее известное.
 
@@ -2556,11 +2592,19 @@ async def set_setting(key: str, value: str) -> bool:
         return True
 
     try:
-        return await retry_write(f"настройка {key}", write)
+        ok = await retry_write(f"настройка {key}", write)
     except Exception as e:
+        # Пока база лежит, настройка живёт в памяти процесса и работает.
+        # Но перезапуск её потеряет, поэтому помним, что она не легла, и
+        # дописываем, как только база ответит.
+        _unsaved_settings.add(key)
         logging.error(f"Не удалось сохранить настройку {key}: {type(e).__name__}: {e}")
         note_error(f"настройка {key}", e)
         return False
+
+    _unsaved_settings.discard(key)
+    await _flush_settings()
+    return ok
 
 
 # --- ПОСТЫ ТЕМАТИЧЕСКИХ КАНАЛОВ (база знаний по разделам) ---
