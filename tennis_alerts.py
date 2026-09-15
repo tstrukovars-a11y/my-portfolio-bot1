@@ -561,6 +561,8 @@ async def alerts_status(message: Message):
             lines.append(f"<code>{html.escape(state['error'])}</code>")
         if state.get("target"):
             lines.append(f"Адрес: <code>{html.escape(state['target'])}</code>")
+        if state.get("driver"):
+            lines.append(f"Драйвер asyncpg: <code>{html.escape(str(state['driver']))}</code>")
         lines.append("")
     else:
         missing = [n for n, there in state["tables"].items() if not there]

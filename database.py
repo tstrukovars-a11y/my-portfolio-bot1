@@ -63,6 +63,20 @@ _pool = None
 # гадать, шифруется ли соединение.
 POOL_MODE = {"how": "ещё не подключались", "attempts": []}
 
+# Пул собирает только один вызов за раз. Без замка десяток обработчиков,
+# столкнувшихся на упавшей базе, начинают собирать по своему пулу каждый:
+# отчёты о попытках перетирают друг друга, а база получает залп
+# подключений ровно тогда, когда ей и так плохо.
+_pool_lock = None
+
+
+def _lock():
+    global _pool_lock
+    if _pool_lock is None:
+        import asyncio as _asyncio
+        _pool_lock = _asyncio.Lock()
+    return _pool_lock
+
 # Язык пользователя дублируется в памяти процесса. Это страховка: если база
 # недоступна (истёк бесплатный Postgres на Render, не резолвится хост,
 # сменился DATABASE_URL), навигация по боту обязана продолжать работать —
@@ -120,6 +134,7 @@ async def health() -> dict:
         out["error"] = f"{type(e).__name__}: {str(e)[:200]}"
         out["attempts"] = list(POOL_MODE.get("attempts") or [])
         out["target"] = describe_db_target()
+        out["driver"] = getattr(asyncpg, "__version__", "?")
         note_error("health", e)
     return out
 
@@ -147,18 +162,26 @@ _pool_failure_logged = False
 
 async def get_pool():
     """Возвращает пул соединений, создаёт при первом обращении"""
-    global _pool, _pool_failure_logged
     if _pool is not None:
         return _pool
+    async with _lock():
+        # Пока ждали замок, пул мог собрать кто-то другой.
+        if _pool is not None:
+            return _pool
+        return await _build_pool()
+
+
+async def _build_pool():
+    global _pool, _pool_failure_logged
 
     candidates = _dsn_candidates()
     if not candidates:
         raise RuntimeError("DATABASE_URL не задан")
 
-    # Ошибку каждого способа запоминаем отдельно. Раньше наружу летела
-    # только последняя, и настоящая причина — почему не вышло шифрованное —
-    # оставалась в логах Render, куда никто не смотрит.
-    POOL_MODE["attempts"] = []
+    # Ошибки собираем в свой список и выкладываем целиком в конце. Раньше
+    # список пополнялся на ходу, и соседний вызов, начав свою попытку,
+    # затирал его на середине — в отчёт попадала половина правды.
+    attempts = []
     last_error = None
     for dsn, ssl_note, ssl_mode in candidates:
         try:
@@ -172,12 +195,12 @@ async def get_pool():
                 await probe.fetchval("SELECT 1")
             _pool_failure_logged = False
             POOL_MODE["how"] = ssl_note
+            POOL_MODE["attempts"] = attempts
             logging.info(f"Подключение к базе установлено ({ssl_note}): {describe_db_target()}")
             return _pool
         except Exception as e:
             last_error = e
-            POOL_MODE["attempts"].append(
-                (ssl_note, f"{type(e).__name__}: {str(e)[:160]}"))
+            attempts.append((ssl_note, f"{type(e).__name__}: {str(e)[:160]}"))
             logging.warning(f"Подключение {ssl_note} не удалось: {e}")
             # Неудачный пул надо закрыть: иначе он останется висеть с
             # мёртвыми соединениями, а следующий кандидат создаст ещё один.
@@ -187,6 +210,8 @@ async def get_pool():
                 except Exception:
                     pass
                 _pool = None
+
+    POOL_MODE["attempts"] = attempts
 
     # Адрес пишем только при первом сбое: иначе каждая кнопка засыпает логи
     # одной и той же строкой, а найти причину всё равно нельзя.
