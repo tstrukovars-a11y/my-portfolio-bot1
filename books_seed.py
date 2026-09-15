@@ -451,6 +451,7 @@ SKIP_KEY = "book_links_skipped"   # что пропустили за эту се
 ALL_KEY = "book_links_all"        # идём по всем книгам, а не только пустым
 FILTER_KEY = "book_links_shop"    # какой магазин правим, если не все
 DONE_KEY = "book_links_done"      # что уже заменили за эту сессию
+BROKEN = "~без хвоста"            # особый отбор: ссылки без партнёрской метки
 
 # Человек пишет «литрес», а в ссылке стоит домен. Список тот же, что у
 # заворачивания: чинить можно только то, что умеем заворачивать.
@@ -478,15 +479,27 @@ def is_affiliate(url: str) -> bool:
     вредно: в ней могут быть метки, которых нет в шаблоне, и подмена их
     шаблонными потеряет часть учёта.
     """
+    return bool(tail_of(url))
+
+
+def tail_of(url: str) -> str:
+    """Партнёрский хвост ссылки: имя метки либо пусто.
+
+    Метку легко потерять при копировании: на странице книги её нет, она
+    появляется только в ссылке из кабинета, и адрес из адресной строки
+    выглядит точно так же — но денег не приносит.
+    """
     from urllib.parse import urlparse, parse_qs
     if not url:
-        return False
+        return ""
     host = _host(url)
     if host and not any(shop in host for shop in SHOP_HOSTS):
-        return True              # ведёт не в магазин, а в сеть — значит, готова
-    keys = {k.lower() for k in parse_qs(urlparse(url).query,
-                                        keep_blank_values=True)}
-    return any(mark in key for key in keys for mark in PARTNER_MARKS)
+        return "переход через сеть"
+    for key in parse_qs(urlparse(url).query, keep_blank_values=True):
+        for mark in PARTNER_MARKS:
+            if mark in key.lower():
+                return key
+    return ""
 
 
 def _mentions(link: str, host: str) -> bool:
@@ -599,6 +612,10 @@ async def _books_for_session():
 
     every = await database.books_links_all()
     only = await database.get_setting(FILTER_KEY) or ""
+    if only == BROKEN:
+        # Только те, где хотя бы одна ссылка без партнёрского хвоста.
+        return [row for row in every
+                if any(u and not tail_of(u) for u in (row[2], row[3]))]
     if only:
         # Правим один магазин — книги без его ссылки сюда не относятся.
         return [row for row in every
@@ -764,6 +781,11 @@ async def book_links(message: Message):
         return
     parts = message.text.split()
     every = len(parts) > 1 and parts[1].lower() in ("все", "всё", "all", "заново")
+    # «/book_links хвосты» — пройти только те, где метка потерялась.
+    broken = len(parts) > 1 and parts[1].lower() in (
+        "хвосты", "хвост", "без", "broken")
+    if broken:
+        every = True
     # «/book_links литрес» — тоже проход по готовым, только одного магазина.
     only = _shop_host(parts[1]) if len(parts) > 1 else ""
     if not only and len(parts) > 2:
@@ -775,16 +797,20 @@ async def book_links(message: Message):
     await database.set_setting(SKIP_KEY, "")
     await database.set_setting(DONE_KEY, "")
     await database.set_setting(ALL_KEY, "1" if every else "")
-    await database.set_setting(FILTER_KEY, only)
+    await database.set_setting(FILTER_KEY, BROKEN if broken else only)
     stats = await database.books_link_stats()
-    if only:
+    if broken:
+        where = ("Иду по книгам, где в ссылке нет партнёрского хвоста — "
+                 "именно они денег не приносят.")
+    elif only:
         where = (f"Иду по книгам со ссылками на {only} — присланная заменит "
                  f"прежнюю.")
     elif every:
         where = "Иду по всем книгам подряд — присланная ссылка заменит прежнюю."
     else:
-        where = ("Иду по книгам без ссылок. Пройти все подряд и заменить "
-                 "готовые — <code>/book_links все</code>")
+        where = ("Иду по книгам без ссылок. Пройти все подряд — "
+                 "<code>/book_links все</code>, только потерявшие метку — "
+                 "<code>/book_links хвосты</code>")
     await message.answer(
         "🔗 <b>Партнёрские ссылки на книги</b>\n\n"
         f"Сейчас со ссылками: {stats['done']} из {stats['total']}.\n"
@@ -835,17 +861,25 @@ async def _ready_link(raw: str):
     Обычный адрес книги заворачиваем в партнёрский сами. Партнёрскую
     ссылку, сделанную в кабинете, оставляем как есть — она уже готова.
     """
-    if is_affiliate(raw):
-        return raw, ""
+    tail = tail_of(raw)
+    if tail:
+        # Хвост на месте — говорим какой: так ошибку видно сразу, а не на
+        # пятнадцатой книге.
+        return raw, f" · метка <code>{html.escape(tail)}</code>"
+
     ready, shop = await affiliate(raw)
     if ready:
-        return ready, f" и завернула в партнёрскую ссылку {shop}"
+        return ready, (f" и завернула в партнёрскую ссылку {shop} "
+                       f"(метка <code>{html.escape(tail_of(ready))}</code>)")
+
     if any(host in _host(raw) for host in SHOP_HOSTS):
-        # Прямой адрес магазина, а завернуть не во что: денег такая
-        # ссылка не принесёт, и молчать об этом нельзя.
-        return raw, ("\n\n⚠️ Это обычная ссылка магазина, не партнёрская — "
-                     "покупка по ней не засчитается. Задайте шаблон: "
-                     "<code>/digest shop books</code>")
+        # Прямой адрес магазина без хвоста: денег такая ссылка не
+        # принесёт, и молчать об этом нельзя.
+        return raw, ("\n\n⚠️ <b>В ссылке нет партнёрского хвоста</b> — "
+                     "покупка по ней не засчитается.\n"
+                     "Возьмите ссылку в кабинете магазина (в ней есть "
+                     "<code>?lfrom=…</code> или подобное) либо задайте "
+                     "шаблон: <code>/digest shop books</code>")
     return raw, ""
 
 
@@ -1010,11 +1044,27 @@ async def links_show(message: Message):
     lines = [f"🔗 Со ссылками: {stats['done']} из {stats['total']}", ""]
     if not every:
         lines.append("Книг пока нет.")
+
+    # Ссылка без партнёрского хвоста выглядит как рабочая и молча не
+    # приносит денег. Помечаем её прямо в списке — иначе замечаешь на
+    # пятнадцатой книге.
+    broken = 0
     for book_id, title, first, second in every[:60]:
-        shops = [_shop_of(u) for u in (first, second) if u]
-        mark = ", ".join(shops) if shops else "—"
+        marks = []
+        for url in (first, second):
+            if not url:
+                continue
+            if tail_of(url):
+                marks.append(_shop_of(url))
+            else:
+                marks.append(f"{_shop_of(url)} ⚠️ без хвоста")
+                broken += 1
         lines.append(f"<code>{book_id}</code> — {html.escape(title)}\n"
-                     f"      {html.escape(mark)}")
+                     f"      {html.escape(', '.join(marks)) if marks else '—'}")
+
+    if broken:
+        lines.insert(1, f"⚠️ <b>Без партнёрского хвоста: {broken}</b> — "
+                        f"такие ссылки денег не приносят.")
     if every:
         lines += ["", "Заменить: <code>/book_link 12 https://…</code>",
                   "Снять: <code>/book_link 12 нет</code>",
