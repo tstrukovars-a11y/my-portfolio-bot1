@@ -3489,6 +3489,26 @@ async def get_book_by_id(book_id: int):
         return None
 
 
+async def delete_book(book_id: int):
+    """Убрать книгу с полки. Возвращает (название, номер поста в канале).
+
+    Номер поста отдаём до удаления: строки уже не будет, а пост в канале
+    останется, и без номера его потом не найти.
+    """
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                f"DELETE FROM {SCHEMA}.books WHERE id = $1 "
+                "RETURNING text_content, channel_msg_id", book_id)
+        if not row:
+            return None, None
+        return (row["text_content"] or "").split("\n")[0][:70], row["channel_msg_id"]
+    except Exception as e:
+        logging.error(f"Книга не удалилась: {e}")
+        return None, None
+
+
 async def add_book(category: str, text_content: str, cover_file_id: str):
     """Сохраняет новую книгу (добавляется автоматически при публикации в канале)"""
     try:

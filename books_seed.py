@@ -1042,6 +1042,54 @@ async def links_bulk(message: Message):
         + f"\nВсего со ссылками: {stats['done']} из {stats['total']}.")
 
 
+@router.message(F.text.regexp(r"^/book_del\s+\d+"))
+async def book_delete(message: Message):
+    """Убрать книгу с полки — когда её нигде не купить.
+
+    Пост в канале при этом остаётся: удаление чужого сообщения — вещь
+    необратимая, и делать её молча, «заодно», нельзя. Предлагаем кнопкой.
+    """
+    if not config.is_admin(message.from_user.id):
+        return
+
+    book_id = int(message.text.split()[1])
+    title, msg_id = await database.delete_book(book_id)
+    if not title:
+        await message.answer("❌ Книги с таким номером нет. "
+                             "Номера — <code>/book_links_show</code>")
+        return
+
+    text = f"🗑 Убрала с полки: <b>{html.escape(title)}</b>"
+    if not msg_id:
+        await message.answer(text + "\n\nВ канале её не было.")
+        return
+    await message.answer(
+        text + "\n\nНо пост в канале-справочнике остался. Удалить и его?",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="🗑 Удалить пост в канале",
+                                 callback_data=f"bookpost_del_{msg_id}")]]))
+
+
+@router.callback_query(F.data.startswith("bookpost_del_"))
+async def delete_channel_post(call: CallbackQuery, bot):
+    if not config.is_admin(call.from_user.id):
+        await call.answer()
+        return
+    msg_id = call.data.rsplit("_", 1)[-1]
+    chat = await _channel()
+    if not (chat and msg_id.isdigit()):
+        await call.answer("Канал книг не задан", show_alert=True)
+        return
+    try:
+        await bot.delete_message(chat, int(msg_id))
+    except Exception as e:
+        await call.answer(f"Не вышло: {e}", show_alert=True)
+        return
+    await call.answer("Пост удалён")
+    await call.message.edit_text(
+        (call.message.html_text or "") + "\n\n✅ Пост в канале тоже удалён.")
+
+
 @router.message(F.text.startswith("/book_links_show"))
 async def links_show(message: Message):
     """Что уже введено, а что нет — с номерами для /book_link"""
