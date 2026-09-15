@@ -530,6 +530,58 @@ async def _handle_match_start(message: Message, bot: Bot):
                    _full_title(match), _starts(match))
 
 
+@router.message(F.text.startswith("/tennis_alerts"))
+async def alerts_status(message: Message):
+    """Что с напоминаниями прямо сейчас — по записям, а не по ощущениям.
+
+    Показывает и часы базы: выборка идёт сравнением с NOW() базы, и
+    расхождение часов выглядит как «подписка не сработала», хотя записи
+    на месте.
+    """
+    if not config.is_admin(message.from_user.id):
+        return
+
+    rows, db_now, waiting = await database.alerts_overview(12)
+    shift = await _shift()
+    lead = await _lead()
+    now_utc = datetime.now(timezone.utc)
+
+    lines = ["🔔 <b>Напоминания о матчах</b>", ""]
+    lines.append(f"Сейчас по UTC: <code>{now_utc.strftime('%d.%m %H:%M')}</code>")
+    lines.append(f"По часам канала: <code>{(now_utc + shift).strftime('%d.%m %H:%M')}</code>")
+    if db_now is not None:
+        lines.append(f"По часам базы: <code>{db_now.strftime('%d.%m %H:%M')}</code>")
+        # Записи сравниваются с часами базы: разошлись — рассылка молчит.
+        drift = abs((db_now.replace(tzinfo=None)
+                     - now_utc.replace(tzinfo=None)).total_seconds())
+        if drift > 300:
+            lines.append("⚠️ <b>Часы базы не совпадают с UTC</b> — из-за этого "
+                         "напоминания уходят не вовремя или не уходят вовсе.")
+    lines.append(f"Шлю за {lead} {_minutes_word(lead)} до начала.")
+    lines.append(f"Ждут отправки: <b>{waiting}</b>")
+    lines.append("")
+
+    if not rows:
+        lines.append("Записей нет вообще. Значит, ни одна кнопка «напомнить» "
+                     "не сохранилась — нажмите матч в канале и посмотрите снова.")
+    else:
+        lines.append("<b>Последние записи</b>")
+        for r in rows:
+            when = r.get("starts_at")
+            clock = ((when + shift).strftime("%d.%m %H:%M")
+                     if when else "время неизвестно")
+            mark = "✅" if r.get("sent") else "⏳"
+            lines.append(f"{mark} {clock} · {html.escape((r.get('title') or '—')[:40])}")
+        lines.append("")
+        lines.append("⏳ — ждёт отправки, ✅ — ушло либо закрыто.")
+        lines.append("«Время неизвестно» — матча не было в расписании в момент "
+                     "нажатия, такую запись планировщик не возьмёт.")
+
+    lines.append("")
+    lines.append("Проверить весь путь целиком: <code>/tennis_test</code>")
+    await message.answer("\n".join(lines))
+
+
 @router.message(F.text.startswith("/tennis_test"))
 async def test_command(message: Message, bot: Bot):
     """Проверка напоминаний целиком, а не на словах.

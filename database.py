@@ -1031,6 +1031,29 @@ async def due_alerts(within_minutes: int = 10):
         return []
 
 
+async def alerts_overview(limit: int = 12):
+    """Последние напоминания и часы самой базы — для разбора поломок.
+
+    Часы важны не меньше записей: starts_at хранится в UTC, а выбирается
+    сравнением с NOW() базы. Если база живёт не по UTC, записи есть, а
+    рассылка молчит — и понять это можно только увидев оба времени.
+    """
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"""SELECT user_id, match_id, tour, title, starts_at, sent
+                    FROM {SCHEMA}.match_alerts
+                    ORDER BY created_at DESC LIMIT $1""", limit)
+            now = await conn.fetchval("SELECT NOW()")
+            waiting = await conn.fetchval(
+                f"SELECT COUNT(*) FROM {SCHEMA}.match_alerts WHERE NOT sent")
+        return [dict(r) for r in rows], now, waiting
+    except Exception as e:
+        logging.error(f"Обзор напоминаний недоступен: {e}")
+        return [], None, 0
+
+
 async def mark_alert_sent(user_id: int, match_id: str) -> bool:
     try:
         pool = await get_pool()
