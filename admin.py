@@ -61,6 +61,7 @@ CHEATSHEET = (
     "<code>/genetics_retitle</code> — пересчитать все заголовки\n\n"
     "<b>Служебное</b>\n"
     "<code>/admin</code> — это меню\n"
+    "<code>/db</code> — состояние базы, <code>/db заново</code> — переподключиться\n"
     "<code>/доход</code> — заработок с партнёрских ссылок, <code>/доход литрес 1250</code> — вписать\n"
     "<code>/clicks</code> — переходы по кнопкам магазинов\n"
     "<code>/kab</code> — кабинеты партнёрских программ\n\n"
@@ -139,9 +140,17 @@ async def db_report() -> str:
     return "\n".join(lines)
 
 
-@router.message(F.text == "/db")
+@router.message(F.text.startswith("/db"))
 async def db_command(message: Message):
     if not config.is_admin(message.from_user.id):
+        return
+    parts = message.text.split()
+    # /db заново — пересобрать подключение, не дожидаясь передеплоя. База
+    # могла ожить (оплатили тариф, перезапустили), а бот держит в руках
+    # старый мёртвый пул и об этом не знает.
+    if len(parts) > 1 and parts[1].lower() in ("заново", "reconnect", "reset"):
+        await database.reset_pool()
+        await message.answer("Пересобираю подключение…\n\n" + await db_report())
         return
     await message.answer(await db_report())
 
