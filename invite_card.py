@@ -44,6 +44,27 @@ TARGETS = {
              "кто ведёт своё дело."),
 }
 
+# Общее приглашение — то, что пересылают в чужие чаты и каналы. Здесь
+# первой фразой не за что зацепиться темой, поэтому цепляемся за
+# состояние: человек и так листает ленту, вопрос лишь в том, остаётся ли
+# после этого что-нибудь в голове.
+#
+# Текст можно переписать из бота: чужие слова в своём канале всегда
+# звучат чужими, а лезть за этим в код — глупость.
+GENERAL_KEY = "invite_card_text"
+
+GENERAL = (
+    "🧭 <b>«Акцент» — журнал для тех, кто ведёт своё дело</b>\n\n"
+    "Быть в курсе — это не листать ленту до полуночи. Это знать главное "
+    "и идти дальше.\n\n"
+    "Здесь за семь минут в день вы узнаёте, что случилось в мире и "
+    "сколько стоит доллар, какую книгу стоит прочитать и почему, куда "
+    "съездить и что приготовить вечером. Без воды, без «доброго времени "
+    "суток» и без рассылок в три часа ночи.\n\n"
+    "Подписывайтесь — и завтра утром вы уже будете знать, что происходит."
+)
+
+
 # Что человек получает, подписавшись. Список по времени суток, а не по
 # темам: так видно, что канал живой каждый день, а не «иногда пишем».
 DAY = (
@@ -61,20 +82,33 @@ CLOSING = ("Без рассылок и без «доброго времени с
 
 
 async def _card(where: str) -> str:
+    if where == "общее":
+        return await database.get_setting(GENERAL_KEY) or GENERAL
     lead = TARGETS[where][2]
     return f"{lead}\n\n{DAY}\n\n{CLOSING}"
 
 
-async def _markup() -> InlineKeyboardMarkup:
+async def _markup(share: bool = False) -> InlineKeyboardMarkup:
     url = await database.get_setting(LINK_KEY)
-    return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="📣 Читать «Акцент»", url=url)]])
+    rows = [[InlineKeyboardButton(text="📣 Читать «Акцент»", url=url)]]
+    if share:
+        # Кнопка «Поделиться» открывает у нажавшего выбор чата с уже
+        # готовым текстом. Для приглашения, которое пересылают, это
+        # важнее всего: приглашать должны читатели, а не только автор.
+        from urllib.parse import quote
+        rows.append([InlineKeyboardButton(
+            text="↗️ Поделиться",
+            url=f"https://t.me/share/url?url={quote(url, safe='')}"
+                f"&text={quote('Журнал «Акцент» — коротко о том, что стоит знать', safe='')}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _menu() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=title, callback_data=f"invcard_{name}")]
-        for name, (_, title, _) in TARGETS.items()])
+    rows = [[InlineKeyboardButton(text="🧭 Общее приглашение",
+                                  callback_data="invcard_общее")]]
+    rows += [[InlineKeyboardButton(text=title, callback_data=f"invcard_{name}")]
+             for name, (_, title, _) in TARGETS.items()]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 @router.message(F.text.startswith("/zvat"))
@@ -90,8 +124,36 @@ async def invite_card(message: Message, bot: Bot):
             "<code>/channel https://t.me/accent_hub</code>")
         return
 
-    parts = message.text.split()
+    parts = message.text.split(maxsplit=2)
     where = parts[1].lower() if len(parts) > 1 else ""
+
+    # /zvat текст … — переписать общее приглашение своими словами.
+    if where in ("текст", "text"):
+        value = parts[2].strip() if len(parts) > 2 else ""
+        if value.lower() in ("сброс", "reset", "по умолчанию"):
+            await database.set_setting(GENERAL_KEY, "")
+            await message.answer("✅ Вернула мой текст. Посмотреть: "
+                                 "<code>/zvat общее</code>")
+            return
+        if not value:
+            await message.answer(
+                "Своими словами:\n<code>/zvat текст Ваш текст…</code>\n"
+                "Вернуть мой: <code>/zvat текст сброс</code>\n\n"
+                "Можно с разметкой: <code>&lt;b&gt;жирный&lt;/b&gt;</code>, "
+                "<code>&lt;i&gt;курсив&lt;/i&gt;</code>. Предел — 1024 знака.")
+            return
+        if len(value) > 1024:
+            await message.answer(f"Слишком длинно: {len(value)} знаков из 1024. "
+                                 f"Это подпись под картинкой, Telegram обрежет.")
+            return
+        await database.set_setting(GENERAL_KEY, value)
+        await message.answer("✅ Запомнила. Посмотреть: <code>/zvat общее</code>")
+        return
+
+    if where in ("общее", "общая", "всем", "general"):
+        await _general(message)
+        return
+
     if where not in TARGETS:
         await message.answer(
             "📣 <b>Приглашение в «Акцент»</b>\n\n"
@@ -106,6 +168,23 @@ async def invite_card(message: Message, bot: Bot):
         return
 
     await _preview(message, where)
+
+
+async def _general(message: Message):
+    """Приглашение без привязки к каналу — его пересылают.
+
+    Отправлять его самим некуда: адресат у него не задан. Поэтому просто
+    отдаём готовое сообщение владельцу, а дальше оно живёт пересылкой —
+    кнопки при этом сохраняются.
+    """
+    await message.answer_photo(
+        FSInputFile(MARK), caption=await _card("общее"),
+        reply_markup=await _markup(share=True))
+    await message.answer(
+        "☝️ Это общее приглашение. Перешлите его куда угодно — в чат, "
+        "канал, личную переписку: кнопки сохраняются при пересылке.\n\n"
+        "Переписать своими словами: <code>/zvat текст …</code>\n"
+        "В конкретный канал, с своей первой фразой: <code>/zvat</code>")
 
 
 async def _preview(message: Message, where: str):
@@ -159,8 +238,10 @@ async def pick_target(call, bot: Bot):
         await call.answer()
         return
     where = call.data.split("_", 1)[1]
-    if where not in TARGETS:
-        await call.answer()
-        return
     await call.answer()
+    if where == "общее":
+        await _general(call.message)
+        return
+    if where not in TARGETS:
+        return
     await _preview(call.message, where)

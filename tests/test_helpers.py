@@ -100,3 +100,18 @@ def test_invite_mark_exists():
     import os
     import invite_card
     assert os.path.exists(invite_card.MARK)
+
+
+def test_general_invite_is_used_and_can_be_replaced(settings):
+    """Общее приглашение переписывается из бота, без правки кода."""
+    import invite_card
+    from conftest import run
+
+    assert run(invite_card._card("общее")) == invite_card.GENERAL
+    settings[invite_card.GENERAL_KEY] = "Свой текст"
+    assert run(invite_card._card("общее")) == "Свой текст"
+
+
+def test_general_invite_fits_a_caption():
+    import invite_card
+    assert len(invite_card.GENERAL) <= 1024
