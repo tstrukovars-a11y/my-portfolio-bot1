@@ -99,7 +99,8 @@ def note_error(where: str, error: Exception):
 async def health() -> dict:
     """Жива ли база и есть ли нужные таблицы — для разбора поломок"""
     out = {"ok": False, "error": "", "now": None, "tables": {}}
-    try:
+
+    async def look():
         pool = await get_pool()
         async with pool.acquire() as conn:
             out["now"] = await conn.fetchval("SELECT NOW()")
@@ -108,6 +109,12 @@ async def health() -> dict:
                 # определить тип параметра и падает на самой проверке.
                 out["tables"][name] = await conn.fetchval(
                     "SELECT to_regclass($1::text) IS NOT NULL", f"{SCHEMA}.{name}")
+        return True
+
+    try:
+        # Через тот же повтор, что и записи: команда проверки заодно чинит
+        # зависший пул, а не просто сообщает, что он завис.
+        await retry_write("обзор базы", look)
         out["ok"] = True
     except Exception as e:
         out["error"] = f"{type(e).__name__}: {str(e)[:200]}"
