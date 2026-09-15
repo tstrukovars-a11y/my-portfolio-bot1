@@ -197,7 +197,9 @@ async def _buy_markup(text: str):
     import digest
     title = (text or "").split("\n")[0]
     row = await digest._buy_row("books", title)
-    return InlineKeyboardMarkup(inline_keyboard=[row]) if row else None
+    # Раскладку берём оттуда же: четыре кнопки в одну строку не помещаются.
+    return (InlineKeyboardMarkup(inline_keyboard=digest._pairs(row))
+            if row else None)
 
 
 async def _run(bot, chat: int, books, note: Message):
@@ -593,15 +595,15 @@ async def _books_for_session():
     сменил адреса, или прежние ссылки были не партнёрскими.
     """
     if (await database.get_setting(ALL_KEY) or "") != "1":
-        return [(i, t, "") for i, t in await database.books_without_link()]
+        return [(i, t, "", "") for i, t in await database.books_without_link()]
 
-    have = await database.books_with_link()
+    every = await database.books_links_all()
     only = await database.get_setting(FILTER_KEY) or ""
     if only:
-        # Правим один магазин — книги без ссылок сюда не относятся.
-        return [row for row in have if _mentions(row[2], only)]
-    empty = [(i, t, "") for i, t in await database.books_without_link()]
-    return sorted(have + empty, key=lambda row: row[0])
+        # Правим один магазин — книги без его ссылки сюда не относятся.
+        return [row for row in every
+                if _mentions(row[2], only) or _mentions(row[3], only)]
+    return every
 
 
 async def _ask_next(message: Message):
@@ -623,12 +625,12 @@ async def _ask_next(message: Message):
             f"✅ Готово: ссылки есть у {stats['done']} книг из {stats['total']}.{tail}")
         return
 
-    book_id, title, current = left[0]
+    book_id, title, first, second = left[0]
     await database.set_setting(CURSOR_KEY, str(book_id))
-    # Если ссылка уже есть — показываем магазин, чтобы было видно, что
-    # именно заменяем: сам адрес длинный и в сообщении только мешает.
-    now_line = (f"Сейчас: {html.escape(_shop_of(current) or 'ссылка есть')}\n"
-                if current else "")
+    # Показываем магазины, а не адреса: адрес длинный и в сообщении только
+    # мешает, а решение принимается по магазину.
+    shops = [_shop_of(u) for u in (first, second) if u]
+    now_line = f"Сейчас: {html.escape(' и '.join(shops))}\n" if shops else ""
     await message.answer(
         f"📚 <b>{html.escape(title)}</b>\n\n"
         f"{now_line}"
@@ -742,7 +744,7 @@ async def rewrap_links(message: Message):
         if ready == link:
             already += 1
             continue
-        if await database.set_book_link(book_id, ready):
+        if await save_link(book_id, ready) is not None:
             changed += 1
 
     lines = [f"🔗 <b>Перезавернула ссылки</b>"
@@ -795,6 +797,38 @@ async def book_links(message: Message):
     await _ask_next(message)
 
 
+async def save_link(book_id: int, url: str) -> str:
+    """Положить ссылку в ячейку того же магазина. Возвращает приписку.
+
+    Ячеек две — под бумагу и под файл. Если прислали ссылку магазина,
+    который уже записан, она заменяет его же; если нового — занимает
+    свободную ячейку. Так проход по книгам не требует помнить, какая
+    ссылка в какой ячейке лежит.
+    """
+    first, second = await database.book_links_by_id(book_id)
+    shop = _shop_of(url)
+
+    if first and _shop_of(first) == shop:
+        place = False
+    elif second and _shop_of(second) == shop:
+        place = True
+    elif not first:
+        place = False
+    elif not second:
+        place = True
+    else:
+        # Обе заняты чужими магазинами: меняем вторую, первую бережём —
+        # она заводилась раньше и, скорее всего, основная.
+        place = True
+
+    if not await database.set_book_link_slot(book_id, url, place):
+        return None          # не сохранилось — врать «готово» нельзя
+    other = second if not place else first
+    if other and _shop_of(other) != shop:
+        return f" · теперь две кнопки: {_shop_of(other)} и {shop}"
+    return ""
+
+
 async def _ready_link(raw: str):
     """(ссылка для кнопки, приписка для ответа).
 
@@ -840,8 +874,8 @@ async def book_link_one(message: Message):
         await message.answer("Это не похоже на ссылку.")
         return
     value, note = await _ready_link(value)
-    ok = await database.set_book_link(int(parts[1]), value)
-    await message.answer(("✅ Сохранила" + note) if ok
+    placed = await save_link(int(parts[1]), value)
+    await message.answer(("✅ Сохранила" + note + placed) if placed is not None
                          else "❌ Книга с таким номером не найдена")
 
 
@@ -911,11 +945,12 @@ async def link_got(message: Message, state: FSMContext):
         return
 
     link, note = await _ready_link(message.text.strip())
-    if await database.set_book_link(int(current), link):
-        await _done_add(int(current))
-        await message.answer("✅ Сохранила" + note)
-    else:
+    placed = await save_link(int(current), link)
+    if placed is None:
         await message.answer("❌ Не сохранилась — книга не найдена")
+    else:
+        await _done_add(int(current))
+        await message.answer("✅ Сохранила" + note + placed)
     await _ask_next(message)
 
 
@@ -931,7 +966,7 @@ async def links_bulk(message: Message):
             link, note = await _ready_link(parts[1].strip())
             if note.startswith(" и завернула"):
                 wrapped += 1
-            if await database.set_book_link(int(parts[0]), link):
+            if await save_link(int(parts[0]), link) is not None:
                 saved += 1
     stats = await database.books_link_stats()
     await message.answer(
@@ -945,20 +980,19 @@ async def links_show(message: Message):
     """Что уже введено, а что нет — с номерами для /book_link"""
     if not config.is_admin(message.from_user.id):
         return
-    left = await database.books_without_link()
-    have = await database.books_with_link()
+    every = await database.books_links_all()
     stats = await database.books_link_stats()
 
     lines = [f"🔗 Со ссылками: {stats['done']} из {stats['total']}", ""]
-    if left:
-        lines.append("<b>Без ссылки:</b>")
-        lines += [f"<code>{i}</code> — {html.escape(t)}" for i, t in left[:40]]
-        lines.append("")
-    if have:
-        lines.append("<b>Со ссылкой</b> — номер нужен, чтобы заменить:")
-        lines += [f"<code>{i}</code> — {html.escape(t)}" for i, t, _ in have[:40]]
-        lines += ["", "Заменить: <code>/book_link 12 https://…</code>",
-                  "Снять (книги нет в наличии): <code>/book_link 12 нет</code>"]
-    if not left and not have:
+    if not every:
         lines.append("Книг пока нет.")
+    for book_id, title, first, second in every[:60]:
+        shops = [_shop_of(u) for u in (first, second) if u]
+        mark = ", ".join(shops) if shops else "—"
+        lines.append(f"<code>{book_id}</code> — {html.escape(title)}\n"
+                     f"      {html.escape(mark)}")
+    if every:
+        lines += ["", "Заменить: <code>/book_link 12 https://…</code>",
+                  "Снять: <code>/book_link 12 нет</code>",
+                  "Пройти все подряд: <code>/book_links все</code>"]
     await message.answer("\n".join(lines))

@@ -289,8 +289,9 @@ async def _buy_row(section: str, title: str):
     """
     row = []
     if section == "books":
-        own = await database.get_book_link(title)
-        if own:
+        # Своих ссылок у книги может быть две — бумага в одном магазине,
+        # файл в другом. Обе ведут на саму книгу, а не на поиск.
+        for own in await database.get_book_links(title):
             row.append(InlineKeyboardButton(text=_shop_label(own), url=own))
 
     for label, template in await _shop_templates(section):
@@ -307,6 +308,13 @@ async def _buy_row(section: str, title: str):
     import links
     return [InlineKeyboardButton(text=b.text, url=links.wrap(b.url, section, title))
             for b in row] or None
+
+
+def _pairs(row):
+    """Кнопки по две в ряд: четыре в строке Telegram сжимает до огрызков"""
+    if not row:
+        return []
+    return [row[i:i + 2] for i in range(0, len(row), 2)]
 
 
 async def _find_row(section: str):
@@ -803,7 +811,7 @@ async def publish_next(bot: Bot, only: str = None, lead: str = None,
                 rows.append([InlineKeyboardButton(text=ref[1], url=url)])
 
         if buy:
-            rows.append(buy)
+            rows.extend(_pairs(buy))
 
         finder = await _find_row(section)
         if finder:
