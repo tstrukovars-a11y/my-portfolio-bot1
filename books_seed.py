@@ -431,6 +431,50 @@ MODE_KEY = "book_links_user"      # кто сейчас вводит
 CURSOR_KEY = "book_links_cursor"  # какую книгу назвали последней
 SKIP_KEY = "book_links_skipped"   # что пропустили за эту сессию
 ALL_KEY = "book_links_all"        # идём по всем книгам, а не только пустым
+FILTER_KEY = "book_links_shop"    # какой магазин правим, если не все
+
+# Человек пишет «литрес», а в ссылке стоит домен. Список тот же, что у
+# заворачивания: чинить можно только то, что умеем заворачивать.
+SHOP_WORDS = {
+    "литрес": "litres.ru", "litres": "litres.ru",
+    "читай": "chitai-gorod.ru", "читай-город": "chitai-gorod.ru",
+    "chitai": "chitai-gorod.ru",
+    "озон": "ozon.ru", "ozon": "ozon.ru",
+    "лабиринт": "labirint.ru", "labirint": "labirint.ru",
+    "book24": "book24.ru",
+}
+
+
+def _mentions(link: str, host: str) -> bool:
+    """Ссылка ведёт в этот магазин — прямо или внутри партнёрской.
+
+    После заворачивания домен магазина уходит внутрь параметра, и по
+    одному только хосту такую ссылку уже не найти: «обновить литрес»
+    переставало видеть как раз то, что само и завернуло.
+    """
+    from urllib.parse import unquote
+    return host in unquote(link or "").lower()
+
+
+def _shop_of(link: str) -> str:
+    """Какой магазин за ссылкой — даже если он спрятан внутри партнёрской.
+
+    Показывать «ad.advcake.ru» бессмысленно: это адрес сети, а человеку
+    надо знать, чья это книга — Литреса или Читай-города.
+    """
+    for host in SHOP_HOSTS:
+        if _mentions(link, host):
+            return host
+    return _host(link)
+
+
+def _shop_host(word: str) -> str:
+    """Домен магазина по слову человека. Пусто — слово не про магазин."""
+    low = (word or "").strip().lower()
+    for key, host in SHOP_WORDS.items():
+        if low.startswith(key):
+            return host
+    return ""
 # Сессия на полдня. Полтора часа было мало: ссылку на каждую книгу надо
 # сначала сделать в кабинете магазина, а это ходьба туда-сюда с перерывами.
 # Сессия истекала посреди работы, и присланная ссылка уходила в никуда.
@@ -453,6 +497,7 @@ async def _mode_off():
     await database.set_setting(CURSOR_KEY, "")
     await database.set_setting(SKIP_KEY, "")
     await database.set_setting(ALL_KEY, "")
+    await database.set_setting(FILTER_KEY, "")
 
 
 async def _skipped() -> set:
@@ -489,7 +534,12 @@ async def _books_for_session():
     """
     if (await database.get_setting(ALL_KEY) or "") != "1":
         return [(i, t, "") for i, t in await database.books_without_link()]
+
     have = await database.books_with_link()
+    only = await database.get_setting(FILTER_KEY) or ""
+    if only:
+        # Правим один магазин — книги без ссылок сюда не относятся.
+        return [row for row in have if _mentions(row[2], only)]
     empty = [(i, t, "") for i, t in await database.books_without_link()]
     return sorted(have + empty, key=lambda row: row[0])
 
@@ -516,7 +566,7 @@ async def _ask_next(message: Message):
     await database.set_setting(CURSOR_KEY, str(book_id))
     # Если ссылка уже есть — показываем магазин, чтобы было видно, что
     # именно заменяем: сам адрес длинный и в сообщении только мешает.
-    now_line = (f"Сейчас: {html.escape(_host(current) or 'ссылка есть')}\n"
+    now_line = (f"Сейчас: {html.escape(_shop_of(current) or 'ссылка есть')}\n"
                 if current else "")
     await message.answer(
         f"📚 <b>{html.escape(title)}</b>\n\n"
@@ -539,9 +589,21 @@ async def rewrap_links(message: Message):
     if not config.is_admin(message.from_user.id):
         return
 
+    parts = message.text.split()
+    only = _shop_host(parts[2]) if len(parts) > 2 else ""
+    if len(parts) > 2 and not only:
+        await message.answer(
+            f"Не знаю магазин «{html.escape(parts[2])}». "
+            f"Можно: {', '.join(sorted(set(SHOP_WORDS.values())))}")
+        return
+
     books = await database.books_with_link()
+    if only:
+        # Правим ссылки одного магазина: остальные не трогаем совсем,
+        # чтобы «обновить литрес» не переписало заодно Читай-город.
+        books = [b for b in books if _mentions(b[2], only)]
     if not books:
-        await message.answer("Книг со ссылками нет — заводить нечего.")
+        await message.answer("Таких ссылок нет — править нечего.")
         return
 
     changed, already, skipped = 0, 0, []
@@ -560,7 +622,8 @@ async def rewrap_links(message: Message):
         if await database.set_book_link(book_id, ready):
             changed += 1
 
-    lines = [f"🔗 <b>Перезавернула ссылки</b>", "",
+    lines = [f"🔗 <b>Перезавернула ссылки</b>"
+             + (f" · {only}" if only else ""), "",
              f"Обновлено: <b>{changed}</b>",
              f"Уже были партнёрскими: {already}"]
     if skipped:
@@ -576,15 +639,26 @@ async def book_links(message: Message):
         return
     parts = message.text.split()
     every = len(parts) > 1 and parts[1].lower() in ("все", "всё", "all", "заново")
+    # «/book_links литрес» — тоже проход по готовым, только одного магазина.
+    only = _shop_host(parts[1]) if len(parts) > 1 else ""
+    if not only and len(parts) > 2:
+        only = _shop_host(parts[2])
+    if only:
+        every = True
 
     await _mode_on(message.from_user.id)
     await database.set_setting(SKIP_KEY, "")
     await database.set_setting(ALL_KEY, "1" if every else "")
+    await database.set_setting(FILTER_KEY, only)
     stats = await database.books_link_stats()
-    where = ("Иду по всем книгам подряд — присланная ссылка заменит прежнюю."
-             if every else
-             "Иду по книгам без ссылок. Пройти все подряд и заменить "
-             "готовые — <code>/book_links все</code>")
+    if only:
+        where = (f"Иду по книгам со ссылками на {only} — присланная заменит "
+                 f"прежнюю.")
+    elif every:
+        where = "Иду по всем книгам подряд — присланная ссылка заменит прежнюю."
+    else:
+        where = ("Иду по книгам без ссылок. Пройти все подряд и заменить "
+                 "готовые — <code>/book_links все</code>")
     await message.answer(
         "🔗 <b>Партнёрские ссылки на книги</b>\n\n"
         f"Сейчас со ссылками: {stats['done']} из {stats['total']}.\n"
