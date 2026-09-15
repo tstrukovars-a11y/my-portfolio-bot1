@@ -368,6 +368,65 @@ async def take_cover(message: Message, state: FSMContext):
 # стирал его: следующая присланная ссылка не подходила ни одному
 # обработчику, и бот молчал.
 
+# Ходить в кабинет магазина за каждой из тридцати книг — работа, которой
+# быть не должно. Партнёрская ссылка почти всегда устроена одинаково:
+# адрес сети, а внутри, отдельным параметром, адрес страницы товара. Если
+# такой параметр в шаблоне раздела есть, мы просто подставляем в него
+# обычный адрес книги — и получаем то же, что выдал бы генератор ссылок.
+#
+# Заворачиваем только то, что похоже на адрес самого магазина: чужую
+# ссылку подставлять в свою партнёрскую нельзя.
+SHOP_HOSTS = ("litres.ru", "chitai-gorod.ru", "book24.ru", "labirint.ru",
+              "ozon.ru", "wildberries.ru")
+
+
+def _host(url: str) -> str:
+    from urllib.parse import urlparse
+    return urlparse(url or "").netloc.lower().removeprefix("www.")
+
+
+def _fill(url: str) -> str:
+    """Подставить метку раздела вместо {sub}.
+
+    После сборки адреса фигурные скобки оказываются в процентной
+    кодировке, поэтому меняем оба написания — иначе в ссылку уходит
+    буквальное «%7Bsub%7D», и статистика сети считает его именем метки.
+    """
+    for mark in ("{sub}", "%7Bsub%7D", "%7bsub%7d"):
+        url = url.replace(mark, "books")
+    return url
+
+
+async def affiliate(plain: str):
+    """(партнёрская ссылка, имя магазина) из обычного адреса книги.
+
+    Пусто — значит завернуть не во что: у раздела нет шаблона с адресом
+    этого магазина внутри.
+    """
+    from urllib.parse import urlparse, urlunparse, parse_qs, urlencode, unquote
+    import digest
+
+    host = _host(plain)
+    if not host or not any(shop in host for shop in SHOP_HOSTS):
+        return "", ""
+
+    for label, template in await digest._shop_templates("books"):
+        parts = urlparse(template)
+        if _host(template) == host:
+            continue          # это и так прямая ссылка магазина, не сеть
+        params = parse_qs(parts.query, keep_blank_values=True)
+        for name, values in params.items():
+            inside = unquote(values[0] or "")
+            # Параметр, в котором лежит адрес того же магазина, — и есть
+            # место для страницы книги.
+            if inside.startswith("http") and host in _host(inside):
+                params[name] = [plain]
+                query = urlencode({k: v[0] for k, v in params.items()})
+                ready = urlunparse(parts._replace(query=query))
+                return _fill(ready), (label or host)
+    return "", ""
+
+
 MODE_KEY = "book_links_user"      # кто сейчас вводит
 CURSOR_KEY = "book_links_cursor"  # какую книгу назвали последней
 SKIP_KEY = "book_links_skipped"   # что пропустили за эту сессию
@@ -442,7 +501,8 @@ async def _ask_next(message: Message):
     await database.set_setting(CURSOR_KEY, str(book_id))
     await message.answer(
         f"📚 <b>{html.escape(title)}</b>\n\n"
-        f"Пришлите партнёрскую ссылку на эту книгу.\n"
+        f"Пришлите ссылку на эту книгу — годится обычный адрес "
+        f"страницы из магазина.\n"
         f"<i>Осталось {len(left)}, готово {stats['done']} из {stats['total']}</i>",
         reply_markup=_link_kb())
 
@@ -457,10 +517,30 @@ async def book_links(message: Message):
     await message.answer(
         "🔗 <b>Партнёрские ссылки на книги</b>\n\n"
         f"Сейчас со ссылками: {stats['done']} из {stats['total']}.\n\n"
-        "Буду называть книгу — присылайте ссылку из кабинета магазина. "
+        "Буду называть книгу — присылайте ссылку. Годится обычный адрес "
+        "страницы книги из Литреса или Читай-города: в партнёрскую заверну "
+        "сама. "
         "Можно и списком: строки вида <code>номер ссылка</code>.\n"
         "Отдельная книга: <code>/book_link 12 https://…</code>")
     await _ask_next(message)
+
+
+async def _ready_link(raw: str):
+    """(ссылка для кнопки, приписка для ответа).
+
+    Обычный адрес книги заворачиваем в партнёрский сами. Партнёрскую
+    ссылку, сделанную в кабинете, оставляем как есть — она уже готова.
+    """
+    ready, shop = await affiliate(raw)
+    if ready:
+        return ready, f" и завернула в партнёрскую ссылку {shop}"
+    if any(host in _host(raw) for host in SHOP_HOSTS):
+        # Прямой адрес магазина, а завернуть не во что: денег такая
+        # ссылка не принесёт, и молчать об этом нельзя.
+        return raw, ("\n\n⚠️ Это обычная ссылка магазина, не партнёрская — "
+                     "покупка по ней не засчитается. Задайте шаблон: "
+                     "<code>/digest shop books</code>")
+    return raw, ""
 
 
 @router.message(F.text.regexp(r"^/book_link\s"))
@@ -487,8 +567,10 @@ async def book_link_one(message: Message):
     if not value.startswith("http"):
         await message.answer("Это не похоже на ссылку.")
         return
+    value, note = await _ready_link(value)
     ok = await database.set_book_link(int(parts[1]), value)
-    await message.answer("✅ Сохранила" if ok else "❌ Книга с таким номером не найдена")
+    await message.answer(("✅ Сохранила" + note) if ok
+                         else "❌ Книга с таким номером не найдена")
 
 
 @router.callback_query(F.data == "booklink_skip")
@@ -555,8 +637,10 @@ async def link_got(message: Message, state: FSMContext):
     if not (current or "").isdigit():
         await _ask_next(message)
         return
-    if await database.set_book_link(int(current), message.text.strip()):
-        await message.answer("✅ Сохранила")
+
+    link, note = await _ready_link(message.text.strip())
+    if await database.set_book_link(int(current), link):
+        await message.answer("✅ Сохранила" + note)
     else:
         await message.answer("❌ Не сохранилась — книга не найдена")
     await _ask_next(message)
@@ -567,15 +651,20 @@ async def links_bulk(message: Message):
     """Списком: «12 https://…» построчно"""
     if not config.is_admin(message.from_user.id):
         raise SkipHandler
-    saved = 0
+    saved, wrapped = 0, 0
     for line in message.text.splitlines():
         parts = line.split(maxsplit=1)
         if len(parts) == 2 and parts[0].isdigit():
-            if await database.set_book_link(int(parts[0]), parts[1].strip()):
+            link, note = await _ready_link(parts[1].strip())
+            if note.startswith(" и завернула"):
+                wrapped += 1
+            if await database.set_book_link(int(parts[0]), link):
                 saved += 1
     stats = await database.books_link_stats()
-    await message.answer(f"Сохранила ссылок: {saved}. "
-                         f"Всего со ссылками: {stats['done']} из {stats['total']}.")
+    await message.answer(
+        f"Сохранила ссылок: {saved}"
+        + (f", из них завернула в партнёрские: {wrapped}." if wrapped else ".")
+        + f"\nВсего со ссылками: {stats['done']} из {stats['total']}.")
 
 
 @router.message(F.text.startswith("/book_links_show"))
