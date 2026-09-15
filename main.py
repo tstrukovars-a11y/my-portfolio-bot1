@@ -459,7 +459,10 @@ async def warm_up(bot: Bot):
     # меню открывается, сообщения приходят, а ничего не сохраняется.
     try:
         if not (await database.health())["ok"] and config.ADMIN_ID:
-            import admin
+            # admin уже импортирован наверху. Локальный import делает имя
+            # локальным на всю функцию — именно так и сломался запуск:
+            # dp.include_router(admin.router) в другом месте функции вдруг
+            # перестал видеть модуль.
             await bot.send_message(
                 config.ADMIN_ID,
                 "⚠️ <b>Бот запустился без базы данных.</b>\n\n"
