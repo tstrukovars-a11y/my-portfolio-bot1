@@ -448,6 +448,7 @@ CURSOR_KEY = "book_links_cursor"  # какую книгу назвали пос�
 SKIP_KEY = "book_links_skipped"   # что пропустили за эту сессию
 ALL_KEY = "book_links_all"        # идём по всем книгам, а не только пустым
 FILTER_KEY = "book_links_shop"    # какой магазин правим, если не все
+DONE_KEY = "book_links_done"      # что уже заменили за эту сессию
 
 # Человек пишет «литрес», а в ссылке стоит домен. Список тот же, что у
 # заворачивания: чинить можно только то, что умеем заворачивать.
@@ -459,6 +460,31 @@ SHOP_WORDS = {
     "лабиринт": "labirint.ru", "labirint": "labirint.ru",
     "book24": "book24.ru",
 }
+
+
+# Метки, по которым видно, что ссылка уже партнёрская. Их ставят сами
+# магазины и сети: lfrom у Литреса, erid по закону о рекламе, остальное —
+# обычные пометки источника.
+PARTNER_MARKS = ("lfrom", "erid", "advcake", "partner", "affiliate", "aff_id",
+                 "utm_source", "utm_medium", "pp", "ref", "sub1")
+
+
+def is_affiliate(url: str) -> bool:
+    """Ссылка уже партнёрская — трогать её нельзя.
+
+    Сделанную руками в кабинете ссылку переделывать не просто незачем, а
+    вредно: в ней могут быть метки, которых нет в шаблоне, и подмена их
+    шаблонными потеряет часть учёта.
+    """
+    from urllib.parse import urlparse, parse_qs
+    if not url:
+        return False
+    host = _host(url)
+    if host and not any(shop in host for shop in SHOP_HOSTS):
+        return True              # ведёт не в магазин, а в сеть — значит, готова
+    keys = {k.lower() for k in parse_qs(urlparse(url).query,
+                                        keep_blank_values=True)}
+    return any(mark in key for key in keys for mark in PARTNER_MARKS)
 
 
 def _mentions(link: str, host: str) -> bool:
@@ -514,11 +540,29 @@ async def _mode_off():
     await database.set_setting(SKIP_KEY, "")
     await database.set_setting(ALL_KEY, "")
     await database.set_setting(FILTER_KEY, "")
+    await database.set_setting(DONE_KEY, "")
 
 
 async def _skipped() -> set:
     raw = await database.get_setting(SKIP_KEY) or ""
     return {int(x) for x in raw.split(",") if x.strip().isdigit()}
+
+
+async def _done() -> set:
+    """Что уже заменили за эту сессию.
+
+    В режиме «все» книга остаётся в списке и после замены — ссылка у неё
+    просто становится другой. Без этой отметки бот показывал бы первую
+    книгу по кругу, сколько её ни правь.
+    """
+    raw = await database.get_setting(DONE_KEY) or ""
+    return {int(x) for x in raw.split(",") if x.strip().isdigit()}
+
+
+async def _done_add(book_id: int):
+    ids = await _done()
+    ids.add(book_id)
+    await database.set_setting(DONE_KEY, ",".join(str(i) for i in sorted(ids)))
 
 
 async def _skip_add(book_id: int):
@@ -563,15 +607,16 @@ async def _books_for_session():
 async def _ask_next(message: Message):
     """Назвать следующую книгу либо завершить"""
     all_left = await _books_for_session()
-    skipped = await _skipped()
-    left = [b for b in all_left if b[0] not in skipped]
+    skipped, done = await _skipped(), await _done()
+    left = [b for b in all_left if b[0] not in skipped and b[0] not in done]
     stats = await database.books_link_stats()
 
     if not left:
         await _mode_off()
         tail = ""
-        if all_left:
-            tail = (f"\n\nПропущено книг: {len(all_left)}. Вернуться к ним — "
+        if skipped:
+            tail = (f"\n\nПропущено книг: {len(skipped)} — у них осталась "
+                    f"прежняя ссылка. Вернуться к ним — "
                     f"<code>/book_links</code>, посмотреть номера — "
                     f"<code>/book_links_show</code>.")
         await message.answer(
@@ -587,8 +632,9 @@ async def _ask_next(message: Message):
     await message.answer(
         f"📚 <b>{html.escape(title)}</b>\n\n"
         f"{now_line}"
-        f"Пришлите ссылку на эту книгу — годится обычный адрес "
-        f"страницы из магазина.\n"
+        f"Пришлите ссылку на эту книгу — годится и готовая партнёрская "
+        f"из кабинета, и обычный адрес страницы.\n"
+        f"«Пропустить» — оставить прежнюю.\n"
         f"<i>Осталось {len(left)}, готово {stats['done']} из {stats['total']}</i>",
         reply_markup=_link_kb())
 
@@ -682,6 +728,9 @@ async def rewrap_links(message: Message):
 
     changed, already, skipped = 0, 0, []
     for book_id, title, link in books:
+        if is_affiliate(link):
+            already += 1
+            continue
         ready, shop = await affiliate(link)
         if not ready:
             # Либо уже партнёрская, либо магазин без шаблона.
@@ -722,6 +771,7 @@ async def book_links(message: Message):
 
     await _mode_on(message.from_user.id)
     await database.set_setting(SKIP_KEY, "")
+    await database.set_setting(DONE_KEY, "")
     await database.set_setting(ALL_KEY, "1" if every else "")
     await database.set_setting(FILTER_KEY, only)
     stats = await database.books_link_stats()
@@ -751,6 +801,8 @@ async def _ready_link(raw: str):
     Обычный адрес книги заворачиваем в партнёрский сами. Партнёрскую
     ссылку, сделанную в кабинете, оставляем как есть — она уже готова.
     """
+    if is_affiliate(raw):
+        return raw, ""
     ready, shop = await affiliate(raw)
     if ready:
         return ready, f" и завернула в партнёрскую ссылку {shop}"
@@ -860,6 +912,7 @@ async def link_got(message: Message, state: FSMContext):
 
     link, note = await _ready_link(message.text.strip())
     if await database.set_book_link(int(current), link):
+        await _done_add(int(current))
         await message.answer("✅ Сохранила" + note)
     else:
         await message.answer("❌ Не сохранилась — книга не найдена")
