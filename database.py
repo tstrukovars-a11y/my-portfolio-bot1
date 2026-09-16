@@ -805,11 +805,15 @@ async def init_db():
             chat_id BIGINT NOT NULL,
             board TEXT NOT NULL DEFAULT '.........',
             turn TEXT NOT NULL DEFAULT 'X',
+            inline_id TEXT,
             x_id BIGINT, o_id BIGINT,
             x_name TEXT, o_name TEXT,
             finished BOOLEAN NOT NULL DEFAULT FALSE,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""")
+
+        await conn.execute(
+            f"ALTER TABLE {SCHEMA}.xo_games ADD COLUMN IF NOT EXISTS inline_id TEXT")
 
         # 22. Мультфильмы: хранится раскадровка, а не видео — она занимает
         # килобайты и проигрывается заново на каждом устройстве.
@@ -2517,18 +2521,40 @@ async def race_top(limit: int = 10):
 
 # --- КРЕСТИКИ-НОЛИКИ ---
 
-async def xo_new(chat_id: int):
-    """Новое поле. Возвращает игру словарём либо None."""
+XO_FIELDS = ("id, chat_id, inline_id, board, turn, x_id, o_id, "
+             "x_name, o_name, finished")
+
+
+async def xo_new(chat_id: int = None, inline_id: str = None):
+    """Новое поле. Возвращает игру словарём либо None.
+
+    Игра, отправленная через строку запроса, живёт не в чате, а в
+    сообщении: у неё нет chat_id, зато есть inline_id — по нему её потом
+    и находят.
+    """
     try:
         pool = await get_pool()
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
-                f"INSERT INTO {SCHEMA}.xo_games (chat_id) VALUES ($1) "
-                "RETURNING id, chat_id, board, turn, x_id, o_id, "
-                "x_name, o_name, finished", chat_id)
+                f"INSERT INTO {SCHEMA}.xo_games (chat_id, inline_id) "
+                f"VALUES ($1, $2) RETURNING {XO_FIELDS}", chat_id, inline_id)
         return dict(row) if row else None
     except Exception as e:
         logging.error(f"Поле не создалось: {e}")
+        return None
+
+
+async def xo_by_inline(inline_id: str):
+    """Поле пересланной игры. Создаётся при первом же касании."""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                f"SELECT {XO_FIELDS} FROM {SCHEMA}.xo_games "
+                "WHERE inline_id = $1", inline_id)
+        return dict(row) if row else None
+    except Exception as e:
+        logging.error(f"Поле не читается: {e}")
         return None
 
 
@@ -2537,8 +2563,7 @@ async def xo_get(game_id: int):
         pool = await get_pool()
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
-                f"SELECT id, chat_id, board, turn, x_id, o_id, x_name, "
-                f"o_name, finished FROM {SCHEMA}.xo_games WHERE id = $1",
+                f"SELECT {XO_FIELDS} FROM {SCHEMA}.xo_games WHERE id = $1",
                 game_id)
         return dict(row) if row else None
     except Exception as e:

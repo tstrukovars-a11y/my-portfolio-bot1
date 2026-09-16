@@ -115,3 +115,30 @@ def test_caption_escapes_names():
     bad["x_name"] = "<b>взлом</b>"
     assert "<b>взлом</b>" not in xo.caption(bad)
     assert "&lt;b&gt;" in xo.caption(bad)
+
+
+# --- игра, отправленная в чужой чат -----------------------------------
+
+def test_inline_board_has_no_game_number_yet():
+    """Партия заводится при первом касании, поэтому в кнопке только клетка."""
+    rows = xo.keyboard(inline=True).inline_keyboard
+    assert rows[0][0].callback_data == "xoi_0"
+    assert rows[2][2].callback_data == "xoi_8"
+
+
+def test_inline_board_has_no_replay_button():
+    """Кнопка «ещё партию» отправила бы новое сообщение, а его там нет."""
+    finished = game("XXX" + E * 6, finished=True)
+    rows = xo.keyboard(finished, inline=True).inline_keyboard
+    assert len(rows) == 3
+    assert all(b.callback_data.startswith("xoi_") for r in rows for b in r)
+
+
+def test_seat_is_taken_in_order():
+    g = game()
+    аня = type("U", (), {"id": 1, "first_name": "Аня", "last_name": None})()
+    борис = type("U", (), {"id": 2, "first_name": "Борис", "last_name": None})()
+    g["x_id"] = g["o_id"] = None
+    assert xo._seat(g, аня) == "X" and g["x_id"] == 1
+    assert xo._seat(g, борис) == "O" and g["o_id"] == 2
+    assert xo._seat(g, аня) == "X"      # уже сидит — место не меняется

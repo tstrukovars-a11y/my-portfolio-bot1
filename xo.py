@@ -15,7 +15,8 @@ import logging
 
 from aiogram import Router, F, Bot
 from aiogram.types import (Message, CallbackQuery, InlineKeyboardMarkup,
-                           InlineKeyboardButton)
+                           InlineKeyboardButton, InlineQuery,
+                           InlineQueryResultArticle, InputTextMessageContent)
 
 import config
 import database
@@ -80,8 +81,14 @@ def may_move(game: dict, user_id: int, cell: int, private: bool):
     return True, ""
 
 
-def keyboard(game: dict, highlight=()) -> InlineKeyboardMarkup:
-    board = game["board"]
+def keyboard(game: dict = None, highlight=(), inline: bool = False):
+    """Поле кнопками.
+
+    У игры, отправленной в чужой чат, номера ещё нет: она заводится при
+    первом касании. Поэтому там в кнопке только клетка — «xoi_4», а
+    найдётся игра по номеру сообщения.
+    """
+    board = game["board"] if game else EMPTY * 9
     rows = []
     for row in range(3):
         line = []
@@ -90,10 +97,10 @@ def keyboard(game: dict, highlight=()) -> InlineKeyboardMarkup:
             face = MARKS[board[i]]
             if i in highlight:
                 face = "🔶" if board[i] == "X" else "🔷"
-            line.append(InlineKeyboardButton(
-                text=face, callback_data=f"xo_{game['id']}_{i}"))
+            data = f"xoi_{i}" if inline else f"xo_{game['id']}_{i}"
+            line.append(InlineKeyboardButton(text=face, callback_data=data))
         rows.append(line)
-    if game.get("finished"):
+    if game and game.get("finished") and not inline:
         rows.append([InlineKeyboardButton(text="🔁 Ещё партию",
                                           callback_data="xo_new")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -130,26 +137,35 @@ def _name(user) -> str:
 
 
 @router.message(F.text.regexp(r"^/(крестики|xo|нолики)"))
-async def start_game(message: Message):
+async def start_game(message: Message, bot: Bot):
     """Новое поле. Работает и в группе, и в личке."""
     game = await database.xo_new(message.chat.id)
     if not game:
         await message.answer("Поле не создалось — база не отвечает.")
         return
-    await message.answer(caption(game), reply_markup=keyboard(game))
+
+    tail = ""
+    if message.chat.type == "private":
+        me = await bot.me()
+        tail = ("\n\n<i>Вы ходите за обоих. Чтобы сыграть с кем-то: "
+                + INLINE_HINT.format(bot=me.username) + "</i>")
+    await message.answer(caption(game) + tail, reply_markup=keyboard(game))
 
 
 @router.callback_query(F.data == "xo_open")
-async def open_from_menu(call: CallbackQuery):
+async def open_from_menu(call: CallbackQuery, bot: Bot):
     """Из меню игр — поле сразу, без объяснений: девять кнопок понятны."""
     game = await database.xo_new(call.message.chat.id)
     await call.answer()
     if not game:
         await call.message.answer("Поле не создалось — база не отвечает.")
         return
+    me = await bot.me()
     await call.message.answer(
-        caption(game) + "\n\n<i>В группе играют двое: первый нажавший — "
-        "крестики, второй — нолики. Здесь, в личке, вы ходите за обоих.</i>",
+        caption(game)
+        + "\n\n<i>Здесь, в личке, вы ходите за обоих — попробовать.\n"
+        + "В группе играют двое: первый нажавший — крестики, второй — нолики.\n"
+        + "Позвать кого-то: " + INLINE_HINT.format(bot=me.username) + "</i>",
         reply_markup=keyboard(game))
 
 
@@ -159,6 +175,87 @@ async def again(call: CallbackQuery):
     await call.answer("Новое поле")
     if game:
         await call.message.answer(caption(game), reply_markup=keyboard(game))
+
+
+# ---------------------------------------------------------------------
+# ИГРА, ОТПРАВЛЕННАЯ В ЧУЖОЙ ЧАТ
+# ---------------------------------------------------------------------
+#
+# Пересылать доску бессмысленно: пересланное сообщение принадлежит тому,
+# кто переслал, и бот не может его перерисовать — поле застынет на первом
+# ходу. Telegram для этого даёт строку запроса: человек набирает в любом
+# чате «@имя_бота», выбирает игру, и сообщение отправляется от имени бота.
+# Такое сообщение бот менять умеет — по inline_message_id.
+
+INLINE_HINT = ("Наберите в любом чате <code>@{bot}</code> и выберите "
+               "«Крестики-нолики» — поле появится прямо там.")
+
+
+@router.inline_query()
+async def offer_game(query: InlineQuery):
+    """Единственный результат — новое поле. Выбирать не из чего."""
+    await query.answer(
+        results=[InlineQueryResultArticle(
+            id="xo",
+            title="⭕️✖️ Крестики-нолики",
+            description="Поле на двоих прямо в этом чате",
+            input_message_content=InputTextMessageContent(
+                message_text=caption({"board": EMPTY * 9}),
+                parse_mode="HTML"),
+            reply_markup=keyboard(inline=True))],
+        cache_time=0, is_personal=False)
+
+
+@router.callback_query(F.data.regexp(r"^xoi_\d$"), F.inline_message_id)
+async def inline_move(call: CallbackQuery, bot: Bot):
+    inline_id = call.inline_message_id
+    game = await database.xo_by_inline(inline_id)
+    if not game:
+        # Первое касание — тогда и заводим партию.
+        game = await database.xo_new(inline_id=inline_id)
+    if not game:
+        await call.answer("Поле не создалось — попробуйте ещё раз",
+                          show_alert=True)
+        return
+
+    cell = int(call.data.split("_")[1])
+    allowed, why = may_move(game, call.from_user.id, cell, private=False)
+    if not allowed:
+        await call.answer(why)
+        return
+
+    mark = _seat(game, call.from_user)
+    game.update(board=place(game["board"], cell, mark),
+                turn=("O" if mark == "X" else "X"))
+    end = winner(game["board"])
+    game["finished"] = bool(end)
+
+    if not await database.xo_save(game):
+        await call.answer("Ход не сохранился, нажмите ещё раз", show_alert=True)
+        return
+
+    try:
+        await bot.edit_message_text(
+            inline_message_id=inline_id, text=caption(game),
+            reply_markup=keyboard(game, line_of(game["board"], end)
+                                  if end and end != "ничья" else (),
+                                  inline=True))
+    except Exception as e:
+        logging.info(f"Поле в чужом чате не перерисовалось: {e}")
+    await call.answer()
+
+
+def _seat(game: dict, user) -> str:
+    """Кто ходит — тот и садится за свободное место"""
+    if user.id == game.get("x_id"):
+        return "X"
+    if user.id == game.get("o_id"):
+        return "O"
+    if not game.get("x_id"):
+        game["x_id"], game["x_name"] = user.id, _name(user)
+        return "X"
+    game["o_id"], game["o_name"] = user.id, _name(user)
+    return "O"
 
 
 @router.callback_query(F.data.regexp(r"^xo_\d+_\d$"))
@@ -177,19 +274,8 @@ async def move(call: CallbackQuery):
         await call.answer(why, show_alert=False)
         return
 
-    # Кто ходит — тот и садится за свободное место.
-    mark = game["turn"]
-    if not private:
-        if call.from_user.id == game.get("x_id"):
-            mark = "X"
-        elif call.from_user.id == game.get("o_id"):
-            mark = "O"
-        elif not game.get("x_id"):
-            mark = "X"
-            game["x_id"], game["x_name"] = call.from_user.id, _name(call.from_user)
-        else:
-            mark = "O"
-            game["o_id"], game["o_name"] = call.from_user.id, _name(call.from_user)
+    # В личке человек ходит за обоих, поэтому очередь и решает, чей знак.
+    mark = game["turn"] if private else _seat(game, call.from_user)
 
     board = place(game["board"], cell, mark)
     end = winner(board)
