@@ -103,7 +103,19 @@ def keyboard(game: dict = None, highlight=(), inline: bool = False):
     if game and game.get("finished") and not inline:
         rows.append([InlineKeyboardButton(text="🔁 Ещё партию",
                                           callback_data="xo_new")])
+        rows.append(invite_row())
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def invite_row() -> list:
+    """Кнопка «позвать соперника».
+
+    switch_inline_query открывает у нажавшего выбор чата и подставляет
+    туда «@имя_бота» — человеку остаётся выбрать, с кем играть, и нажать
+    карточку. Это короче, чем объяснять, что надо набрать имя бота руками.
+    """
+    return [InlineKeyboardButton(text="🤝 Позвать соперника в другой чат",
+                                 switch_inline_query="")]
 
 
 def _who(game: dict) -> str:
@@ -144,12 +156,13 @@ async def start_game(message: Message, bot: Bot):
         await message.answer("Поле не создалось — база не отвечает.")
         return
 
+    markup = keyboard(game)
     tail = ""
     if message.chat.type == "private":
-        me = await bot.me()
-        tail = ("\n\n<i>Вы ходите за обоих. Чтобы сыграть с кем-то: "
-                + INLINE_HINT.format(bot=me.username) + "</i>")
-    await message.answer(caption(game) + tail, reply_markup=keyboard(game))
+        tail = ("\n\n<i>Здесь вы ходите за обоих. Чтобы сыграть с живым "
+                "соперником — кнопка ниже.</i>")
+        markup.inline_keyboard.append(invite_row())
+    await message.answer(caption(game) + tail, reply_markup=markup)
 
 
 @router.callback_query(F.data == "xo_open")
@@ -160,13 +173,14 @@ async def open_from_menu(call: CallbackQuery, bot: Bot):
     if not game:
         await call.message.answer("Поле не создалось — база не отвечает.")
         return
-    me = await bot.me()
+    markup = keyboard(game)
+    markup.inline_keyboard.append(invite_row())
     await call.message.answer(
         caption(game)
-        + "\n\n<i>Здесь, в личке, вы ходите за обоих — попробовать.\n"
+        + "\n\n<i>Здесь вы ходите за обоих — чтобы попробовать.\n"
         + "В группе играют двое: первый нажавший — крестики, второй — нолики.\n"
-        + "Позвать кого-то: " + INLINE_HINT.format(bot=me.username) + "</i>",
-        reply_markup=keyboard(game))
+        + "Позвать кого-то в другой чат — кнопка ниже.</i>",
+        reply_markup=markup)
 
 
 @router.callback_query(F.data == "xo_new")

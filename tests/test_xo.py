@@ -142,3 +142,17 @@ def test_seat_is_taken_in_order():
     assert xo._seat(g, аня) == "X" and g["x_id"] == 1
     assert xo._seat(g, борис) == "O" and g["o_id"] == 2
     assert xo._seat(g, аня) == "X"      # уже сидит — место не меняется
+
+
+def test_invite_button_opens_the_chat_picker():
+    """switch_inline_query подставляет имя бота в выбранный чат сам —
+    объяснять человеку, что его надо набрать руками, не приходится."""
+    button = xo.invite_row()[0]
+    assert button.switch_inline_query == ""
+    assert button.callback_data is None
+
+
+def test_finished_board_offers_both_replay_and_invite():
+    rows = xo.keyboard(game("XXX" + E * 6, finished=True)).inline_keyboard
+    assert rows[-2][0].callback_data == "xo_new"
+    assert rows[-1][0].switch_inline_query == ""
