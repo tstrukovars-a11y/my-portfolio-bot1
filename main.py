@@ -38,6 +38,7 @@ import book_find
 import invite_card
 import commands
 import content_plan
+import xo
 import tennis_game
 import inline_kb
 import planner
@@ -572,6 +573,7 @@ async def main():
     dp.include_router(invite_card.router)
     dp.include_router(commands.router)
     dp.include_router(content_plan.router)
+    dp.include_router(xo.router)
 
     dp.include_router(tennis_live.router)
     dp.include_router(travel.router)

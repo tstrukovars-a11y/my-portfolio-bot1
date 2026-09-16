@@ -796,6 +796,21 @@ async def init_db():
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""")
 
+        # 21в. Крестики-нолики. Поле в базе, а не в памяти процесса:
+        # деплой посреди партии не должен её стирать, а сообщение с полем
+        # живёт в чате неделями.
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.xo_games (
+            id SERIAL PRIMARY KEY,
+            chat_id BIGINT NOT NULL,
+            board TEXT NOT NULL DEFAULT '.........',
+            turn TEXT NOT NULL DEFAULT 'X',
+            x_id BIGINT, o_id BIGINT,
+            x_name TEXT, o_name TEXT,
+            finished BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+
         # 22. Мультфильмы: хранится раскадровка, а не видео — она занимает
         # килобайты и проигрывается заново на каждом устройстве.
         await conn.execute(f"""
@@ -2498,6 +2513,55 @@ async def race_top(limit: int = 10):
     except Exception as e:
         logging.error(f"Таблица рекордов недоступна: {e}")
         return []
+
+
+# --- КРЕСТИКИ-НОЛИКИ ---
+
+async def xo_new(chat_id: int):
+    """Новое поле. Возвращает игру словарём либо None."""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                f"INSERT INTO {SCHEMA}.xo_games (chat_id) VALUES ($1) "
+                "RETURNING id, chat_id, board, turn, x_id, o_id, "
+                "x_name, o_name, finished", chat_id)
+        return dict(row) if row else None
+    except Exception as e:
+        logging.error(f"Поле не создалось: {e}")
+        return None
+
+
+async def xo_get(game_id: int):
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                f"SELECT id, chat_id, board, turn, x_id, o_id, x_name, "
+                f"o_name, finished FROM {SCHEMA}.xo_games WHERE id = $1",
+                game_id)
+        return dict(row) if row else None
+    except Exception as e:
+        logging.error(f"Поле не читается: {e}")
+        return None
+
+
+async def xo_save(game: dict) -> bool:
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"""UPDATE {SCHEMA}.xo_games
+                    SET board = $1, turn = $2, x_id = $3, o_id = $4,
+                        x_name = $5, o_name = $6, finished = $7
+                    WHERE id = $8""",
+                game["board"], game["turn"], game.get("x_id"), game.get("o_id"),
+                game.get("x_name"), game.get("o_name"),
+                bool(game.get("finished")), game["id"])
+        return True
+    except Exception as e:
+        logging.error(f"Ход не сохранился: {e}")
+        return False
 
 
 async def save_tennis_score(user_id: int, name: str, score: int):
