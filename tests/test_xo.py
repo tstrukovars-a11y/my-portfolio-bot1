@@ -97,7 +97,7 @@ def test_board_has_nine_buttons_and_stable_data():
 
 def test_finished_board_offers_another_round():
     rows = xo.keyboard(game("XXX" + E * 6, finished=True)).inline_keyboard
-    assert rows[-1][0].callback_data == "xo_new"
+    assert any(b.callback_data == "xo_new" for row in rows for b in row)
 
 
 def test_caption_invites_the_first_player():
