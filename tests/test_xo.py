@@ -156,3 +156,22 @@ def test_finished_board_offers_both_replay_and_invite():
     rows = xo.keyboard(game("XXX" + E * 6, finished=True)).inline_keyboard
     assert rows[-2][0].callback_data == "xo_new"
     assert rows[-1][0].switch_inline_query == ""
+
+
+def test_game_without_a_chat_is_allowed_by_the_schema():
+    """Игра в чужом чате заводится без chat_id.
+
+    Колонка с NOT NULL ломала ровно это: карточка отправлялась, а первое
+    касание отвечало «поле не создалось».
+    """
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parent.parent / "database.py").read_text(
+        encoding="utf-8")
+    start = source.index("CREATE TABLE IF NOT EXISTS {SCHEMA}.xo_games")
+    table = source[start:source.index(')"""', start)]
+    chat_line = next(line for line in table.splitlines()
+                     if "chat_id" in line and "--" not in line)
+    assert "NOT NULL" not in chat_line, chat_line
+    assert "ALTER COLUMN chat_id DROP NOT NULL" in source, \
+        "старым базам нужно снять NOT NULL отдельно"

@@ -802,7 +802,9 @@ async def init_db():
         await conn.execute(f"""
         CREATE TABLE IF NOT EXISTS {SCHEMA}.xo_games (
             id SERIAL PRIMARY KEY,
-            chat_id BIGINT NOT NULL,
+            -- Без NOT NULL: у игры, отправленной в чужой чат, чата нет.
+            -- Она живёт в сообщении и находится по inline_id.
+            chat_id BIGINT,
             board TEXT NOT NULL DEFAULT '.........',
             turn TEXT NOT NULL DEFAULT 'X',
             inline_id TEXT,
@@ -814,6 +816,10 @@ async def init_db():
 
         await conn.execute(
             f"ALTER TABLE {SCHEMA}.xo_games ADD COLUMN IF NOT EXISTS inline_id TEXT")
+        # Таблица, созданная раньше, требует chat_id — и игра в чужом чате
+        # не заводилась вовсе: «Поле не создалось».
+        await conn.execute(
+            f"ALTER TABLE {SCHEMA}.xo_games ALTER COLUMN chat_id DROP NOT NULL")
 
         # 22. Мультфильмы: хранится раскадровка, а не видео — она занимает
         # килобайты и проигрывается заново на каждом устройстве.
