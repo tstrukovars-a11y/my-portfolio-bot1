@@ -131,3 +131,41 @@ def test_buttons_are_laid_out_two_per_row():
     assert digest._pairs(row) == [["a", "b"], ["c", "d"]]
     assert digest._pairs(["a"]) == [["a"]]
     assert digest._pairs([]) == []
+
+
+# --- пометка о рекламе ------------------------------------------------
+#
+# Вид пометки задан не нами: так её оформляют рекламодатели, и по ней
+# проверяющий узнаёт рекламу с первого взгляда.
+
+def test_mark_looks_like_the_advertisers_write_it(settings):
+    settings["shop_note_litres"] = "РЕКЛАМА. ООО «ЛитРес». ИНН 7719571260"
+    mark = run(digest._ad_mark("https://www.litres.ru/book/a?erid=2Vtzqvwp4GN"))
+    assert mark == "РЕКЛАМА. ООО «ЛитРес». ИНН 7719571260. ERID: 2Vtzqvwp4GN"
+
+
+def test_trailing_period_is_not_doubled(settings):
+    settings["shop_note_litres"] = "РЕКЛАМА. ООО «ЛитРес». ИНН 7719571260."
+    mark = run(digest._ad_mark("https://www.litres.ru/a?erid=2Vabc"))
+    assert ".. ERID" not in mark
+    assert mark.endswith(". ERID: 2Vabc")
+
+
+def test_advertiser_is_found_behind_the_network(settings):
+    """У ссылки через сеть в адресе стоит сеть, а магазин внутри параметра.
+
+    По одному хосту рекламодатель не находился, и в пост уходил голый
+    токен — без ООО и ИНН, то есть неполная маркировка.
+    """
+    settings["shop_note_litres"] = "РЕКЛАМА. ООО «ЛитРес». ИНН 7719571260"
+    url = ("https://ad.advcake.ru/click?erid=2Vtzqvwp4GN"
+           "&ulp=https%3A%2F%2Fwww.litres.ru%2Fbook%2Fa")
+    assert "ООО «ЛитРес»" in run(digest._ad_mark(url))
+
+
+def test_token_alone_when_advertiser_is_unknown(settings):
+    assert run(digest._ad_mark("https://unknown.example/x?erid=2Vabc")) == "ERID: 2Vabc"
+
+
+def test_no_link_no_mark(settings):
+    assert run(digest._ad_mark("https://www.litres.ru/book/a/")) == ""

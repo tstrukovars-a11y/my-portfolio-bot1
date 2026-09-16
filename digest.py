@@ -13,7 +13,7 @@ import json
 import logging
 import os
 from datetime import datetime, timedelta, timezone
-from urllib.parse import quote, urlparse, parse_qs
+from urllib.parse import quote, unquote, urlparse, parse_qs
 
 from aiogram import Router, F, Bot
 from aiogram.types import (Message, CallbackQuery, InlineKeyboardMarkup,
@@ -202,25 +202,48 @@ def _shop_label(url: str) -> str:
 
 
 def _shop_key(url: str) -> str:
-    """Короткое имя магазина по адресу — им же названы настройки пометок"""
+    """Короткое имя магазина по адресу — им же названы настройки пометок.
+
+    У ссылки через партнёрскую сеть в адресе стоит сама сеть, а магазин
+    спрятан внутри параметра. Если смотреть только на хост, пометка
+    рекламодателя не находится и в пост уходит голый токен — без ООО и
+    ИНН, то есть маркировка неполная.
+    """
     host = urlparse(url or "").netloc.lower()
     for key, _ in SHOP_LABELS:
         if key in host:
+            return key
+
+    inside = unquote(url or "").lower()
+    for key, _ in SHOP_LABELS:
+        if key in inside:
             return key
     return host.removeprefix("www.") or "shop"
 
 
 async def _ad_mark(url: str) -> str:
-    """«Реклама. ООО …, ИНН …, erid: …» для одной ссылки"""
-    note = await database.get_setting(SHOP_NOTE_KEY + _shop_key(url))
+    """Пометка о рекламе для одной ссылки.
+
+    Вид принят такой, как её оформляют сами рекламодатели:
+
+        РЕКЛАМА. ООО «ЛитРес». ИНН 7719571260. ERID: 2Vtzqvwp4GN
+
+    Части разделяются точкой, а не запятой, и токен пишется прописными:
+    так пометка читается как отдельная строка документа, а не как хвост
+    предложения. Рекламодателя и ИНН задаёт владелец через /digest note,
+    токен бот достаёт из самой ссылки.
+    """
+    note = (await database.get_setting(SHOP_NOTE_KEY + _shop_key(url)) or "").strip()
     if not note:
-        note = await database.get_setting(DISCLOSURE_KEY)
+        note = (await database.get_setting(DISCLOSURE_KEY) or "").strip()
     erid = _erid(url)
+
     if note and erid and "erid" not in note.lower():
-        return f"{note}, erid: {erid}"
+        # Точка в конце пометки уже может стоять — второй не нужно.
+        return f"{note.rstrip(' .,;')}. ERID: {erid}"
     if note:
         return note
-    return f"erid: {erid}" if erid else ""
+    return f"ERID: {erid}" if erid else ""
 
 
 def _erid(url: str) -> str:
@@ -1614,7 +1637,11 @@ async def digest_command(message: Message, bot: Bot):
         where = f" для {shop}" if shop else " общая"
         await message.answer(
             f"✅ Пометка{where}: {html.escape(value) or 'снята'}\n\n"
-            "Своя пометка магазину: <code>/digest note litres Реклама. ООО …</code>")
+            "Своя пометка магазину:\n"
+            "<code>/digest note litres РЕКЛАМА. ООО «ЛитРес». "
+            "ИНН 7719571260</code>\n\n"
+            "Токен <code>ERID</code> дописывать не нужно — бот возьмёт его "
+            "из самой ссылки и добавит в конец.")
         return
 
     if command == "сводка" or command == "summary":
