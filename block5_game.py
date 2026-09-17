@@ -96,8 +96,8 @@ async def start_game_block(call: CallbackQuery):
                     "fr": "🎨 Mes personnages", "he": "🎨 הדמויות שלי"}
     race_titles = {"ru": "🏎 Гонка", "en": "🏎 Race", "fr": "🏎 Course", "he": "🏎 מרוץ"}
     tennis_titles = {"ru": "🎾 Теннис", "en": "🎾 Tennis", "fr": "🎾 Tennis", "he": "🎾 טניס"}
-    xo_titles = {"ru": "⭕️❎ Крестики-нолики", "en": "⭕️❎ Tic-tac-toe",
-                 "fr": "⭕️❎ Morpion", "he": "⭕️❎ איקס עיגול"}
+    xo_titles = {"ru": "⭕️✅ Крестики-нолики", "en": "⭕️✅ Tic-tac-toe",
+                 "fr": "⭕️✅ Morpion", "he": "⭕️✅ איקס עיגול"}
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=t["btn_start"], callback_data="game_step1")],
         [InlineKeyboardButton(text=race_titles.get(lang, race_titles["en"]),
