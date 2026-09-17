@@ -24,13 +24,10 @@ import database
 router = Router()
 
 EMPTY = "."
-# Зелёный знак против красного: два цвета различаются даже боковым
-# зрением, а серый ✖️ на тёмной теме сливался с пустой клеткой.
-#
-# Голого зелёного креста в наборе эмодзи нет: ❎ — крест в квадрате,
-# ✅ — галочка, ❌ — красный. Ближайшее зелёное без подложки и в форме
-# креста — ✳️: восьмилучевая звёздочка, которая читается как крестик.
-MARKS = {"X": "✳️", "O": "⭕️", EMPTY: "·"}
+# Зелёный крест искали и не нашли: цвет эмодзи зашит в шрифт, а в наборе
+# зелёное есть только в квадрате (❎) или галочкой (✅). Вернулись к
+# обычному кресту — он хотя бы крест.
+MARKS = {"X": "✖️", "O": "⭕️", EMPTY: "·"}
 
 # Восемь линий: три ряда, три столбца, две диагонали.
 LINES = ((0, 1, 2), (3, 4, 5), (6, 7, 8),
@@ -102,9 +99,7 @@ def keyboard(game: dict = None, highlight=(), inline: bool = False):
             i = row * 3 + col
             face = MARKS[board[i]]
             if i in highlight:
-                # Подсветка в тех же цветах, что и сами значки, —
-                # иначе выигрышная линия читается как третий игрок.
-                face = "🟩" if board[i] == "X" else "🟥"
+                face = "🔶" if board[i] == "X" else "🔷"
             data = f"xoi_{i}" if inline else f"xo_{game['id']}_{i}"
             line.append(InlineKeyboardButton(text=face, callback_data=data))
         rows.append(line)
@@ -220,7 +215,7 @@ async def offer_game(query: InlineQuery):
     await query.answer(
         results=[InlineQueryResultArticle(
             id="xo",
-            title="⭕️✳️ Крестики-нолики",
+            title="⭕️✖️ Крестики-нолики",
             description="Поле на двоих прямо в этом чате",
             input_message_content=InputTextMessageContent(
                 message_text=caption({"board": EMPTY * 9}),

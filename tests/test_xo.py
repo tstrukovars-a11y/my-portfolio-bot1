@@ -181,9 +181,9 @@ def test_marks_come_from_one_place():
     """Шапка и поле не должны расходиться: значок задан один раз."""
     text = xo.caption(game("XXX" + E * 6, x=1, o=2, finished=True))
     assert xo.MARKS["X"] in text
-    assert "✖️" not in text
 
 
-def test_winning_line_keeps_the_colours_of_the_marks():
+def test_winning_line_is_marked_apart():
+    """Выигрышная линия должна отличаться от обычных знаков."""
     rows = xo.keyboard(game("XXX" + E * 6), highlight=(0, 1, 2)).inline_keyboard
-    assert [b.text for b in rows[0]] == ["🟩", "🟩", "🟩"]
+    assert all(b.text != xo.MARKS["X"] for b in rows[0])
