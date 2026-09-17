@@ -24,7 +24,9 @@ import database
 router = Router()
 
 EMPTY = "."
-MARKS = {"X": "✖️", "O": "⭕️", EMPTY: "·"}
+# Зелёный крестик против красного нолика: два цвета различаются даже
+# боковым зрением, а чёрный ✖️ на тёмной теме сливался с пустой клеткой.
+MARKS = {"X": "❎", "O": "⭕️", EMPTY: "·"}
 
 # Восемь линий: три ряда, три столбца, две диагонали.
 LINES = ((0, 1, 2), (3, 4, 5), (6, 7, 8),
@@ -96,7 +98,9 @@ def keyboard(game: dict = None, highlight=(), inline: bool = False):
             i = row * 3 + col
             face = MARKS[board[i]]
             if i in highlight:
-                face = "🔶" if board[i] == "X" else "🔷"
+                # Подсветка в тех же цветах, что и сами значки, —
+                # иначе выигрышная линия читается как третий игрок.
+                face = "🟩" if board[i] == "X" else "🟥"
             data = f"xoi_{i}" if inline else f"xo_{game['id']}_{i}"
             line.append(InlineKeyboardButton(text=face, callback_data=data))
         rows.append(line)
@@ -121,12 +125,13 @@ def invite_row() -> list:
 def _who(game: dict) -> str:
     x = html.escape(game.get("x_name") or "—")
     o = html.escape(game.get("o_name") or "—")
-    return f"✖️ {x}   ⭕️ {o}"
+    return f"{MARKS['X']} {x}   {MARKS['O']} {o}"
 
 
 def caption(game: dict) -> str:
     end = winner(game["board"])
-    lines = ["⭕️✖️ <b>Крестики-нолики</b>", "", _who(game), ""]
+    lines = [f"{MARKS['O']}{MARKS['X']} <b>Крестики-нолики</b>", "",
+             _who(game), ""]
     if end == "ничья":
         lines.append("Ничья. Поле кончилось раньше, чем кто-то выиграл.")
     elif end:
@@ -211,7 +216,7 @@ async def offer_game(query: InlineQuery):
     await query.answer(
         results=[InlineQueryResultArticle(
             id="xo",
-            title="⭕️✖️ Крестики-нолики",
+            title="⭕️❎ Крестики-нолики",
             description="Поле на двоих прямо в этом чате",
             input_message_content=InputTextMessageContent(
                 message_text=caption({"board": EMPTY * 9}),

@@ -175,3 +175,15 @@ def test_game_without_a_chat_is_allowed_by_the_schema():
     assert "NOT NULL" not in chat_line, chat_line
     assert "ALTER COLUMN chat_id DROP NOT NULL" in source, \
         "старым базам нужно снять NOT NULL отдельно"
+
+
+def test_marks_come_from_one_place():
+    """Шапка и поле не должны расходиться: значок задан один раз."""
+    text = xo.caption(game("XXX" + E * 6, x=1, o=2, finished=True))
+    assert xo.MARKS["X"] in text
+    assert "✖️" not in text
+
+
+def test_winning_line_keeps_the_colours_of_the_marks():
+    rows = xo.keyboard(game("XXX" + E * 6), highlight=(0, 1, 2)).inline_keyboard
+    assert [b.text for b in rows[0]] == ["🟩", "🟩", "🟩"]
