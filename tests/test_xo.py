@@ -2,6 +2,8 @@
 # сразу всем участникам чата, поэтому проверяем их целиком, а не выборочно.
 import pytest
 
+from conftest import run
+
 import xo
 
 E = xo.EMPTY
@@ -187,3 +189,23 @@ def test_winning_line_is_marked_apart():
     """Выигрышная линия должна отличаться от обычных знаков."""
     rows = xo.keyboard(game("XXX" + E * 6), highlight=(0, 1, 2)).inline_keyboard
     assert all(b.text != xo.MARKS["X"] for b in rows[0])
+
+
+# --- зов обратно в бота -----------------------------------------------
+
+def test_more_games_leads_to_the_games_section(settings):
+    """Игру видят в чужих чатах те, кто о боте не знал."""
+    settings["bot_username"] = "MyBotOllFree_bot"
+    row = run(xo.more_games_row())
+    assert row[0].url == "https://t.me/MyBotOllFree_bot?start=games"
+
+
+def test_no_bot_name_no_button(settings):
+    """Кнопка в никуда хуже отсутствующей."""
+    assert run(xo.more_games_row()) is None
+
+
+def test_games_payload_is_known_to_start():
+    """/start games должен куда-то вести, иначе кнопка обманывает."""
+    import common
+    assert common.DEEP_LINKS.get("games") == "menu_game"

@@ -110,6 +110,21 @@ def keyboard(game: dict = None, highlight=(), inline: bool = False):
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+async def more_games_row():
+    """«Ещё игры» под законченной партией.
+
+    Игру видят в чужих чатах люди, которые о боте не знали. Подпись
+    «via @бот» Telegram ставит сам, но она мелкая и ни к чему не зовёт.
+    Кнопка зовёт — и ведёт сразу в раздел игр, а не в общее меню.
+    """
+    username = await database.get_setting("bot_username")
+    if not username:
+        return None
+    return [InlineKeyboardButton(
+        text="🎮 Ещё игры",
+        url=f"https://t.me/{username.lstrip('@')}?start=games")]
+
+
 def invite_row() -> list:
     """Кнопка «позвать соперника».
 
@@ -252,12 +267,15 @@ async def inline_move(call: CallbackQuery, bot: Bot):
         await call.answer("Ход не сохранился, нажмите ещё раз", show_alert=True)
         return
 
+    markup = keyboard(game, line_of(game["board"], end)
+                      if end and end != "ничья" else (), inline=True)
+    if game["finished"]:
+        more = await more_games_row()
+        if more:
+            markup.inline_keyboard.append(more)
     try:
-        await bot.edit_message_text(
-            inline_message_id=inline_id, text=caption(game),
-            reply_markup=keyboard(game, line_of(game["board"], end)
-                                  if end and end != "ничья" else (),
-                                  inline=True))
+        await bot.edit_message_text(inline_message_id=inline_id,
+                                    text=caption(game), reply_markup=markup)
     except Exception as e:
         logging.info(f"Поле в чужом чате не перерисовалось: {e}")
     await call.answer()
@@ -305,11 +323,13 @@ async def move(call: CallbackQuery):
         await call.answer("Ход не сохранился, нажмите ещё раз", show_alert=True)
         return
 
+    markup = keyboard(game, line_of(board, end) if end and end != "ничья" else ())
+    if game["finished"]:
+        more = await more_games_row()
+        if more:
+            markup.inline_keyboard.append(more)
     try:
-        await call.message.edit_text(
-            caption(game),
-            reply_markup=keyboard(game, line_of(board, end) if end and
-                                  end != "ничья" else ()))
+        await call.message.edit_text(caption(game), reply_markup=markup)
     except Exception as e:
         logging.info(f"Поле не перерисовалось: {e}")
     await call.answer()
