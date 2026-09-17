@@ -169,3 +169,42 @@ def test_token_alone_when_advertiser_is_unknown(settings):
 
 def test_no_link_no_mark(settings):
     assert run(digest._ad_mark("https://www.litres.ru/book/a/")) == ""
+
+
+# --- имя бота ---------------------------------------------------------
+
+class _Me:
+    def __init__(self, username):
+        self.username = username
+
+
+class _Bot:
+    def __init__(self, username):
+        self._me = _Me(username)
+
+    async def get_me(self):
+        return self._me
+
+
+def test_new_name_is_picked_up(settings):
+    """Имя меняют в BotFather, а бот узнаёт о нём только при запуске."""
+    settings[digest.BOT_KEY] = "old_bot"
+    assert run(digest.refresh_bot_name(_Bot("accent_hub_bot"))) is True
+    assert settings[digest.BOT_KEY] == "accent_hub_bot"
+
+
+def test_same_name_is_not_rewritten(settings):
+    settings[digest.BOT_KEY] = "accent_hub_bot"
+    assert run(digest.refresh_bot_name(_Bot("accent_hub_bot"))) is False
+
+
+def test_telegram_silence_does_not_erase_the_name(settings):
+    """Потерять известное имя хуже, чем не узнать новое."""
+    settings[digest.BOT_KEY] = "accent_hub_bot"
+
+    class Broken:
+        async def get_me(self):
+            raise RuntimeError("нет сети")
+
+    assert run(digest.refresh_bot_name(Broken())) is False
+    assert settings[digest.BOT_KEY] == "accent_hub_bot"

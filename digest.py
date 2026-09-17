@@ -1259,13 +1259,39 @@ async def publish_slot(bot: Bot, force: str = None) -> str:
     return result
 
 
+async def refresh_bot_name(bot: Bot) -> bool:
+    """Сверить имя бота с тем, что знает Telegram.
+
+    Имя меняют в BotFather, а бот узнаёт об этом только при запуске. Пока
+    он держит старое, кнопки-ссылки в новых постах ведут в никуда — и
+    заметно это не сразу. Раз в сутки спросить дешевле, чем объяснять.
+    """
+    try:
+        me = await bot.get_me()
+    except Exception as e:
+        logging.warning(f"Имя бота не проверилось: {e}")
+        return False
+    if not me.username:
+        return False
+    if await database.get_setting(BOT_KEY) == me.username:
+        return False
+    await database.set_setting(BOT_KEY, me.username)
+    logging.info(f"Имя бота изменилось: теперь @{me.username}")
+    return True
+
+
 async def scheduler(bot: Bot):
     """Ведёт день по сетке. Просыпается часто и коротко: слот в 08:00
     должен выйти в восемь, а не когда придёт черёд двенадцатичасового
     круга."""
     await asyncio.sleep(60)
+    ticks = 0
     while True:
         try:
+            # 288 кругов по пять минут — сутки.
+            if ticks % 288 == 0:
+                await refresh_bot_name(bot)
+            ticks += 1
             result = await publish_slot(bot)
             if result != "не время":
                 logging.info(f"Дайджест: {result}")
