@@ -79,6 +79,7 @@
   <div class="hint">
     Ведите пальцем — игрок бежит за ним.<br>
     <b>Резкое движение</b> — сильный удар. <b>Медленное</b> — укороченный.<br>
+    Кружок показывает, куда мяч упадёт: красный — уже за линией.<br>
     Ведёте вбок — мяч закручивается и уходит от соперника.
   </div>
 </div>
@@ -175,7 +176,8 @@ let fvx = 0, fvy = 0;              // сглаженная скорость па
 
 function serve(toMe){
   const y = toMe ? NET() - H * 0.18 : NET() + H * 0.18;
-  ball = { x: W / 2, y, vx: 0, vy: 0, spin: 0, r: R_BALL(), live: false };
+  ball = { x: W / 2, y, vx: 0, vy: 0, spin: 0, r: R_BALL(), live: false,
+           land: null, bounced: false };
   serveTo = toMe;
   trail = [];
   setTimeout(() => {
@@ -183,6 +185,10 @@ function serve(toMe){
     const speed = H * 0.0125;
     ball.vy = toMe ? speed : -speed;
     ball.vx = (Math.random() * 2 - 1) * speed * 0.35;
+    // Подача кладётся в квадрат: середина половины принимающего.
+    ball.land = { x: W / 2 + ball.vx * 24,
+                  y: toMe ? NET() + H * 0.22 : NET() - H * 0.22 };
+    ball.bounced = false;
     ball.live = true;
     lastHit = toMe ? "foe" : "me";
   }, 700);
@@ -270,6 +276,28 @@ function draw(){
   man(foe, "#ff8f6b", null);
   man(me, "#48b0ff", finger ? { x: fvx, y: fvy } : null);
 
+  // Метка приземления: без неё глубину удара не прочитать, и аут
+  // выглядит несправедливым.
+  if (ball.live && ball.land && !ball.bounced){
+    const out = ball.land.y < M() || ball.land.y > H - M()
+             || ball.land.x < M() || ball.land.x > W - M();
+    ctx.strokeStyle = out ? "rgba(255,120,90,.75)" : "rgba(234,241,248,.45)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(ball.land.x, ball.land.y, ball.r * 1.6, 0, 7);
+    ctx.stroke();
+  }
+  if (ball.bounce && ball.bounce.age < 22){
+    ball.bounce.age += 1;
+    ctx.globalAlpha = 1 - ball.bounce.age / 22;
+    ctx.strokeStyle = "rgba(214,242,74,.9)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(ball.bounce.x, ball.bounce.y, ball.r * (1 + ball.bounce.age / 6), 0, 7);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+
   ctx.fillStyle = "#d6f24a";
   ctx.beginPath(); ctx.arc(ball.x, ball.y, ball.r, 0, 7); ctx.fill();
   ctx.restore();
@@ -288,6 +316,15 @@ function hitByMe(){
   ball.vx = fvx * 0.55 + (ball.x - me.x) * 0.08;
   ball.spin = fvx * 0.012;               // боковое движение — это закрутка
   ball.drop = soft;                      // укороченный падает сразу за сеткой
+
+  // Куда мяч упадёт. Чем резче движение, тем глубже — и тем ближе к
+  // задней линии, за которой начинается аут. Риск в силе, а не в
+  // направлении: именно этим теннис и отличается от пинг-понга.
+  const reachY = ball.y - (H * 0.30 + Math.min(power, W * 0.06) * 5.2);
+  const flight = (ball.y - reachY) / Math.max(0.1, -ball.vy);
+  ball.land = { x: ball.x + ball.vx * flight + ball.spin * flight * flight * 0.25,
+                y: reachY };
+  ball.bounced = false;
   lastHit = "me";
   rally += 1;
   bestRally = Math.max(bestRally, rally);
@@ -312,6 +349,10 @@ function hitByFoe(){
   ball.vy = dy / len * speed;
   ball.spin = (Math.random() * 2 - 1) * 0.06;
   ball.drop = drop;
+  // Его прицел и есть точка приземления — вместе с ошибкой уровня.
+  // Поэтому слабый соперник иногда мажет сам, без вашей помощи.
+  ball.land = { x: aim, y: H * (drop ? 0.62 : 0.92) };
+  ball.bounced = false;
   lastHit = "foe";
   rally += 1;
   bestRally = Math.max(bestRally, rally);
@@ -436,6 +477,31 @@ function step(){
     hitByFoe();
   }
 
+  // Приземление. До отскока мяч ещё не «в игре»: если точка падения за
+  // линией — это аут бьющего, и никакая беготня соперника уже не важна.
+  // Если внутри — мяч отскочил и живёт дальше, но теряет скорость.
+  if (ball.land && !ball.bounced){
+    const arrived = (ball.y - ball.land.y) * Math.sign(ball.vy || 1) >= 0;
+    if (arrived){
+      if (ball.land.x < m || ball.land.x > W - m){
+        point(lastHit === "foe", lastHit === "me" ? "Аут" : "Соперник в ауте");
+        return;
+      }
+      ball.bounced = true;
+      ball.bounce = { x: ball.land.x, y: ball.land.y, age: 0 };
+      ball.vx *= 0.82;                 // отскок съедает часть скорости
+      ball.vy *= 0.82;
+    }
+  }
+
+  // Перелетел заднюю линию, не коснувшись корта, — аут бьющего. Именно
+  // это отличает выигранный мяч от испорченного: важен не полёт, а то,
+  // упал ли мяч внутри.
+  if (!ball.bounced && (ball.y < m || ball.y > H - m)){
+    point(lastHit === "foe", lastHit === "me" ? "Аут" : "Соперник в ауте");
+    return;
+  }
+
   // Мяч встал на корте — проигрывает тот, на чьей половине он замер.
   // Укороченный, который не добежал до соперника, — это его очко; не
   // добежали вы — очко сопернику. Так же, как в жизни: мяч, сделавший
@@ -452,7 +518,7 @@ function step(){
     return;
   }
   if (ball.y > H){ point(false, "Не достали"); return; }
-  if (ball.y < 0){ point(true, "Не достал!"); return; }
+  if (ball.y < 0){ point(true, "Навылет!"); return; }
 }
 
 let loop = 0;               // номер живого цикла: старые молча выходят
