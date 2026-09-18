@@ -26,6 +26,8 @@
   .hud span{display:block;font-size:10px;letter-spacing:.09em;text-transform:uppercase;
     color:#cbd5e1;text-shadow:0 1px 3px rgba(0,0,0,.6)}
   .hud .right{text-align:right}
+  .hud .mid{text-align:center}
+  .hud .mid b{color:#d6f24a}
 
   .panel{position:fixed;inset:0;display:none;flex-direction:column;
     align-items:center;justify-content:center;gap:16px;padding:26px;
@@ -59,8 +61,9 @@
 <div id="wrap"><canvas id="cv"></canvas></div>
 
 <div class="hud" id="hud">
-  <div><span>Счёт</span><b id="score">0 : 0</b></div>
-  <div class="right"><span>Розыгрыш</span><b id="rally">0</b></div>
+  <div><span id="setslabel">Сеты</span><b id="sets">0 : 0</b></div>
+  <div class="mid"><span>Гейм</span><b id="points">0 : 0</b></div>
+  <div class="right"><span>Геймы</span><b id="games">0 : 0</b></div>
 </div>
 
 <div class="call" id="call"></div>
@@ -68,7 +71,8 @@
 <div class="panel on" id="start">
   <h1>🎾 Розыгрыш</h1>
   <p>Теннис сверху. Вы — синий, соперник — оранжевый. Очко берётся, когда
-    соперник не добежал.</p>
+    соперник не добежал. Счёт настоящий: 15–30–40, «ровно», тай-брейк при
+    6:6, матч до двух сетов.</p>
   <div class="lbl">Соперник</div>
   <div class="levels" id="levels"></div>
   <button id="go">Подача</button>
@@ -84,7 +88,7 @@
   <div class="big" id="final">0 : 0</div>
   <div class="best" id="bestline"></div>
   <div class="saved" id="saved"></div>
-  <button id="again">Ещё гейм</button>
+  <button id="again">Ещё матч</button>
   <button class="ghost" id="close">Выйти</button>
 </div>
 
@@ -143,11 +147,25 @@ const R_BALL = () => Math.max(6, W * 0.019);
 const R_MAN = () => Math.max(14, W * 0.055);   // игрок — круг, а не линия
 const REACH = () => R_MAN() * 1.55;            // радиус, в котором бьют
 
-const TARGET = 7;                          // очков в гейме
+// Теннисный счёт целиком: 15–30–40, «ровно», «больше», гейм с разницей
+// в два очка. Сет до шести геймов с отрывом в два, при 6:6 — тай-брейк
+// до семи. Матч до двух выигранных сетов.
+//
+// Считать «до семи очков» было проще, но теннис держится именно на этой
+// системе: при 40:40 цена одного розыгрыша резко растёт, и это как раз
+// то, ради чего в него играют.
+const CALLS = ["0", "15", "30", "40"];
+const SETS_TO_WIN = 2;
+const GAMES_TO_WIN = 6;
+const TIE_TO_WIN = 7;
 
 let state = "menu";
-let ball, me, foe, myScore, foeScore, rally, bestRally, lastHit, serveTo;
+let ball, me, foe, rally, bestRally, lastHit, serveTo;
 let trail = [], shake = 0, callTimer = 0;
+
+// Счёт: очки в гейме, геймы в сете, выигранные сеты и запись сыгранных
+// сетов для итогового экрана.
+let ptMe, ptFoe, gmMe, gmFoe, setMe, setFoe, tiebreak, history, server;
 
 // --- палец. Скорость движения в момент касания мяча решает всё: сильный
 //     удар, укороченный и закрутка — это одно и то же движение с разной
@@ -171,12 +189,16 @@ function serve(toMe){
 }
 
 function reset(){
-  myScore = foeScore = 0;
+  ptMe = ptFoe = gmMe = gmFoe = setMe = setFoe = 0;
+  tiebreak = false;
+  history = [];
+  server = Math.random() < 0.5 ? "me" : "foe";
   rally = 0;
   bestRally = 0;
   me  = { x: W / 2, y: H * 0.85 };
   foe = { x: W / 2, y: H * 0.15 };
-  serve(Math.random() < 0.5);
+  showScore();
+  serve(server === "foe");        // подаёт соперник — мяч летит к нам
 }
 
 // --- рисование
@@ -214,11 +236,18 @@ function man(p, colour, aim){
   ctx.lineWidth = 1.5;
   ctx.beginPath(); ctx.arc(p.x, p.y, REACH(), 0, 7); ctx.stroke();
   if (aim){
-    ctx.strokeStyle = "rgba(255,255,255,.5)";
-    ctx.beginPath();
-    ctx.moveTo(p.x, p.y);
-    ctx.lineTo(p.x + aim.x * r * 1.6, p.y + aim.y * r * 1.6);
-    ctx.stroke();
+    // Длину задаём сами: скорость пальца бывает любой, и стрелка в пол-
+    // экрана перечёркивала корт.
+    const len = Math.hypot(aim.x, aim.y);
+    if (len > 0.6){
+      const k = Math.min(len, 18) / len * r * 1.5;
+      ctx.strokeStyle = "rgba(255,255,255,.5)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y);
+      ctx.lineTo(p.x + aim.x * k / 6, p.y + aim.y * k / 6);
+      ctx.stroke();
+    }
   }
 }
 
@@ -262,7 +291,6 @@ function hitByMe(){
   lastHit = "me";
   rally += 1;
   bestRally = Math.max(bestRally, rally);
-  $("rally").textContent = rally;
   shake = 5;
 }
 
@@ -287,7 +315,6 @@ function hitByFoe(){
   lastHit = "foe";
   rally += 1;
   bestRally = Math.max(bestRally, rally);
-  $("rally").textContent = rally;
 }
 
 function say(text){
@@ -298,14 +325,71 @@ function say(text){
   callTimer = setTimeout(() => el.classList.remove("on"), 900);
 }
 
+// --- счёт словами
+function gameText(){
+  if (tiebreak) return `${ptMe} : ${ptFoe}`;
+  if (ptMe >= 3 && ptFoe >= 3){
+    if (ptMe === ptFoe) return "Ровно";
+    return ptMe > ptFoe ? "AD : 40" : "40 : AD";
+  }
+  return `${CALLS[ptMe]} : ${CALLS[ptFoe]}`;
+}
+
+function showScore(){
+  $("points").textContent = gameText();
+  $("games").textContent = `${gmMe} : ${gmFoe}`;
+  $("sets").textContent = `${setMe} : ${setFoe}`;
+  $("setslabel").textContent = tiebreak ? "Тай-брейк" : "Сеты";
+}
+
+function wonGame(mine){
+  if (mine) gmMe++; else gmFoe++;
+  ptMe = ptFoe = 0;
+  server = server === "me" ? "foe" : "me";   // подача переходит
+
+  const lead = Math.abs(gmMe - gmFoe);
+  const top = Math.max(gmMe, gmFoe);
+
+  if (tiebreak || (top >= GAMES_TO_WIN && lead >= 2)){
+    history.push([gmMe, gmFoe]);
+    if (gmMe > gmFoe) setMe++; else setFoe++;
+    gmMe = gmFoe = 0;
+    tiebreak = false;
+    say(mine ? "Сет ваш" : "Сет соперника");
+    return;
+  }
+  if (gmMe === GAMES_TO_WIN && gmFoe === GAMES_TO_WIN){
+    tiebreak = true;
+    say("Тай-брейк");
+    return;
+  }
+  say(mine ? "Гейм" : "Гейм соперника");
+}
+
+function addPoint(mine){
+  if (mine) ptMe++; else ptFoe++;
+
+  if (tiebreak){
+    const top = Math.max(ptMe, ptFoe);
+    if (top >= TIE_TO_WIN && Math.abs(ptMe - ptFoe) >= 2) wonGame(ptMe > ptFoe);
+    return;
+  }
+  // Гейм берут с отрывом в два очка: 40:40 — «ровно», дальше «больше».
+  if (ptMe >= 4 || ptFoe >= 4){
+    if (Math.abs(ptMe - ptFoe) >= 2) wonGame(ptMe > ptFoe);
+    else if (ptMe >= 4 && ptFoe >= 4){    // после «больше» возвращаемся к «ровно»
+      ptMe = ptFoe = 3;
+    }
+  }
+}
+
 function point(toMe, why){
-  if (toMe) myScore++; else foeScore++;
-  $("score").textContent = `${myScore} : ${foeScore}`;
   say(why);
+  addPoint(toMe);
+  showScore();
   rally = 0;
-  $("rally").textContent = "0";
-  if (myScore >= TARGET || foeScore >= TARGET){ finish(); return; }
-  serve(!toMe);                          // подаёт проигравший розыгрыш
+  if (setMe >= SETS_TO_WIN || setFoe >= SETS_TO_WIN){ finish(); return; }
+  serve(server === "foe");
 }
 
 function step(){
@@ -381,9 +465,10 @@ function tick(mine){
 
 function finish(){
   state = "over";
-  const won = myScore > foeScore;
-  $("verdict").textContent = won ? "Гейм ваш" : "Гейм соперника";
-  $("final").textContent = `${myScore} : ${foeScore}`;
+  const won = setMe > setFoe;
+  $("verdict").textContent = won ? "Матч ваш" : "Матч соперника";
+  $("final").textContent = history.map(s => `${s[0]}:${s[1]}`).join("  ")
+                           || `${setMe} : ${setFoe}`;
 
   const best = +(store.get("rally_best") || 0);
   const record = bestRally > best;
@@ -402,8 +487,6 @@ function play(){
   $("over").classList.remove("on");
   $("hud").classList.add("on");
   reset();
-  $("score").textContent = "0 : 0";
-  $("rally").textContent = "0";
   state = "play";
   loop += 1;
   const mine = loop;
