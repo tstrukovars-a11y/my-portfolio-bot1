@@ -114,6 +114,8 @@ INTRO = {
 PLAY = {"ru": "🎾 На корт", "en": "🎾 Play", "fr": "🎾 Jouer", "he": "🎾 לשחק"}
 TOP = {"ru": "🏆 Самые длинные розыгрыши", "en": "🏆 Longest rallies",
        "fr": "🏆 Plus longs échanges", "he": "🏆 החילופים הארוכים"}
+SHARE = {"ru": "🤝 Отправить игру в чат", "en": "🤝 Send to a chat",
+         "fr": "🤝 Envoyer dans un chat", "he": "🤝 לשלוח לצ׳אט"}
 EMPTY = {"ru": "Пока никто не играл. Будете первой строкой.",
          "en": "Nobody has played yet. You can be the first line.",
          "fr": "Personne n'a encore joué. À vous la première ligne.",
@@ -128,6 +130,10 @@ def _menu(lang: str) -> InlineKeyboardMarkup:
                                           web_app=WebAppInfo(url=url))])
     rows.append([InlineKeyboardButton(text=TOP.get(lang, TOP["en"]),
                                       callback_data="rally_top")])
+    # Отправить игру в чужой чат: Telegram сам покажет выбор чата и
+    # подставит туда имя бота, а карточку человек выберет из списка.
+    rows.append([InlineKeyboardButton(text=SHARE.get(lang, SHARE["en"]),
+                                      switch_inline_query="")])
     rows.append([InlineKeyboardButton(text=inline_kb.label(inline_kb.HOME_TEXTS, lang),
                                       callback_data="go_home")])
     return InlineKeyboardMarkup(inline_keyboard=rows)

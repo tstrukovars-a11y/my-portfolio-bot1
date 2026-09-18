@@ -59,6 +59,7 @@ DEEP_LINKS = {
     "ai": "menu_claude",
     # Сюда приходят те, кто увидел игру в чужом чате и нажал «ещё игры».
     "games": "menu_game",
+    "rally": "rally_open",
 }
 
 
@@ -116,6 +117,7 @@ async def cmd_start(message: Message, state: FSMContext, bot: Bot):
             "sport_travel": "🌍 Путешествия",
             "menu_claude": "🤖 Чат AI",
             "menu_game": "🎮 Игры",
+            "rally_open": "🎾 Розыгрыш",
         }
         await message.answer(
             "Вы пришли по ссылке — вот она:",

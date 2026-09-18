@@ -74,3 +74,42 @@ def test_no_external_address_means_no_button(monkeypatch):
 def test_page_is_real_html():
     page = rally.page()
     assert b"<canvas" in page and b"rally/score" in page
+
+
+# --- отправка в чужой чат ---------------------------------------------
+
+def test_inline_offers_all_three(settings):
+    """В чужой чат уходит поле крестиков и ссылки на остальные игры."""
+    import xo
+    settings["bot_username"] = "accent_hub_bot"
+
+    got = {}
+
+    class Query:
+        async def answer(self, results=None, **kw):
+            got["results"] = results
+
+    run(xo.offer_games(Query()))
+    titles = [r.title for r in got["results"]]
+    assert len(titles) == 3
+    assert any("Розыгрыш" in t for t in titles)
+    assert any("Все игры" in t for t in titles)
+
+
+def test_inline_without_bot_name_keeps_only_the_board(settings):
+    """Ссылка в никуда хуже отсутствующей карточки."""
+    import xo
+
+    got = {}
+
+    class Query:
+        async def answer(self, results=None, **kw):
+            got["results"] = results
+
+    run(xo.offer_games(Query()))
+    assert len(got["results"]) == 1
+
+
+def test_rally_payload_opens_the_game():
+    import common
+    assert common.DEEP_LINKS.get("rally") == "rally_open"

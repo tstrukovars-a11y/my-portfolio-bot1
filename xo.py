@@ -225,18 +225,54 @@ INLINE_HINT = ("Наберите в любом чате <code>@{bot}</code> и �
 
 
 @router.inline_query()
-async def offer_game(query: InlineQuery):
-    """Единственный результат — новое поле. Выбирать не из чего."""
-    await query.answer(
-        results=[InlineQueryResultArticle(
-            id="xo",
-            title="⭕️✖️ Крестики-нолики",
-            description="Поле на двоих прямо в этом чате",
+async def offer_games(query: InlineQuery):
+    """Что бот предлагает отправить в чужой чат.
+
+    Список общий для всех игр, а живёт здесь, потому что только у
+    крестиков поле помещается прямо в сообщение. Остальные — ссылки:
+    мини-приложение в чужом сообщении не открыть, его запускает бот.
+    """
+    username = await database.get_setting("bot_username")
+    results = [InlineQueryResultArticle(
+        id="xo",
+        title="⭕️✖️ Крестики-нолики",
+        description="Поле на двоих прямо в этом чате",
+        input_message_content=InputTextMessageContent(
+            message_text=caption({"board": EMPTY * 9}),
+            parse_mode="HTML"),
+        reply_markup=keyboard(inline=True))]
+
+    if username:
+        home = f"https://t.me/{username.lstrip('@')}"
+        results.append(InlineQueryResultArticle(
+            id="rally",
+            title="🎾 Розыгрыш",
+            description="Теннис сверху: выманить соперника и перебросить",
             input_message_content=InputTextMessageContent(
-                message_text=caption({"board": EMPTY * 9}),
+                message_text=(
+                    "🎾 <b>Розыгрыш</b>\n\nТеннис сверху: соперник после "
+                    "каждого удара возвращается в центр. Выманите его "
+                    "вперёд укороченным и перебросьте в дальний угол.\n"
+                    "Счёт настоящий: 15–30–40, тай-брейк, два сета."),
                 parse_mode="HTML"),
-            reply_markup=keyboard(inline=True))],
-        cache_time=0, is_personal=False)
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="🎾 Играть",
+                                     url=f"{home}?start=rally")]])))
+        results.append(InlineQueryResultArticle(
+            id="games",
+            title="🎮 Все игры",
+            description="Теннис, розыгрыш, гонка, крестики-нолики",
+            input_message_content=InputTextMessageContent(
+                message_text=(
+                    "🎮 <b>Игры «Акцента»</b>\n\nТеннис, розыгрыш на корте, "
+                    "ночная гонка и крестики-нолики на двоих. Всё играется "
+                    "прямо в Telegram, ставить ничего не нужно."),
+                parse_mode="HTML"),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="🎮 Открыть игры",
+                                     url=f"{home}?start=games")]])))
+
+    await query.answer(results=results, cache_time=0, is_personal=False)
 
 
 @router.callback_query(F.data.regexp(r"^xoi_\d$"), F.inline_message_id)

@@ -400,16 +400,7 @@ function step(){
     ball.spin *= 0.985;
     ball.x += ball.vx;
     ball.y += ball.vy;
-    if (ball.drop){
-      // Укороченный гасится, но не до нуля: мяч, остановившийся посреди
-      // корта, подвешивает розыгрыш навсегда.
-      ball.vy *= 0.975; ball.vx *= 0.975;
-      const slow = Math.hypot(ball.vx, ball.vy), floor = H * 0.0045;
-      if (slow < floor && slow > 0){
-        ball.vx = ball.vx / slow * floor;
-        ball.vy = ball.vy / slow * floor;
-      }
-    }
+    if (ball.drop){ ball.vy *= 0.975; ball.vx *= 0.975; }
 
     trail.push({ x: ball.x, y: ball.y });
     if (trail.length > 9) trail.shift();
@@ -443,6 +434,16 @@ function step(){
   }
   if (ball.vy < 0 && ball.y < NET() && Math.hypot(ball.x - foe.x, ball.y - foe.y) < REACH()){
     hitByFoe();
+  }
+
+  // Мяч встал на корте — проигрывает тот, на чьей половине он замер.
+  // Укороченный, который не добежал до соперника, — это его очко; не
+  // добежали вы — очко сопернику. Так же, как в жизни: мяч, сделавший
+  // второй отскок на твоей стороне, проигран.
+  if (Math.hypot(ball.vx, ball.vy) < H * 0.0014){
+    const mine = ball.y > NET();
+    point(!mine, mine ? "Мяч встал у вас" : "Мяч встал у соперника");
+    return;
   }
 
   // Мяч ушёл за боковую — ошибка того, кто бил.
