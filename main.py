@@ -39,6 +39,7 @@ import invite_card
 import commands
 import content_plan
 import xo
+import rally
 import tennis_game
 import inline_kb
 import planner
@@ -181,6 +182,31 @@ def make_handle_ping(bot: Bot, dp: Dispatcher):
                     f"Content-Length: {len(payload)}\r\n"
                     "Connection: close\r\n\r\n"
                 ).encode("utf-8") + payload
+
+        elif path == "/rally" and method == "GET":
+            body_bytes = rally.page()
+            response = (
+                f"HTTP/1.1 200 OK\r\n"
+                f"Content-Type: text/html; charset=utf-8\r\n"
+                f"Cache-Control: no-cache\r\n"
+                f"Content-Length: {len(body_bytes)}\r\n"
+                f"Connection: close\r\n\r\n"
+            ).encode('utf-8') + body_bytes
+
+        elif path == "/rally/score" and method == "POST":
+            try:
+                code, result = await rally.handle_score(body, config.TOKEN)
+            except Exception as e:
+                logging.error(f"Розыгрыш: ошибка приёма счёта: {e}")
+                code, result = 500, {"status": "error"}
+            payload = json.dumps(result, ensure_ascii=False).encode("utf-8")
+            response = (
+                f"HTTP/1.1 {code} {'OK' if code == 200 else 'Error'}\r\n"
+                f"Content-Type: application/json\r\n"
+                f"{cors_headers}"
+                f"Content-Length: {len(payload)}\r\n"
+                f"Connection: close\r\n\r\n"
+            ).encode("utf-8") + payload
 
         elif path == "/tennis" and method == "GET":
             body_bytes = tennis_game.page()
@@ -574,6 +600,7 @@ async def main():
     dp.include_router(commands.router)
     dp.include_router(content_plan.router)
     dp.include_router(xo.router)
+    dp.include_router(rally.router)
 
     dp.include_router(tennis_live.router)
     dp.include_router(travel.router)

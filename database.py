@@ -814,6 +814,16 @@ async def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""")
 
+        # 21г. Рекорды розыгрыша — самый длинный обмен ударами за гейм.
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.rally_scores (
+            user_id BIGINT PRIMARY KEY,
+            name TEXT,
+            best INTEGER NOT NULL DEFAULT 0,
+            played INTEGER NOT NULL DEFAULT 0,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+
         await conn.execute(
             f"ALTER TABLE {SCHEMA}.xo_games ADD COLUMN IF NOT EXISTS inline_id TEXT")
         # Таблица, созданная раньше, требует chat_id — и игра в чужом чате
@@ -2616,6 +2626,44 @@ async def save_tennis_score(user_id: int, name: str, score: int):
     except Exception as e:
         logging.error(f"Не удалось сохранить результат тенниса: {e}")
         return None, score
+
+
+async def save_rally_score(user_id: int, name: str, score: int):
+    """Самый длинный розыгрыш: (место в таблице, личный рекорд)"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            best = await conn.fetchval(
+                f"""INSERT INTO {SCHEMA}.rally_scores (user_id, name, best, played)
+                    VALUES ($1, $2, $3, 1)
+                    ON CONFLICT (user_id) DO UPDATE
+                    SET best = GREATEST(rally_scores.best, EXCLUDED.best),
+                        name = EXCLUDED.name,
+                        played = rally_scores.played + 1,
+                        updated_at = CURRENT_TIMESTAMP
+                    RETURNING best""",
+                user_id, name, score)
+            place = await conn.fetchval(
+                f"SELECT COUNT(*) + 1 FROM {SCHEMA}.rally_scores WHERE best > $1",
+                best)
+        return place, best
+    except Exception as e:
+        logging.error(f"Не удалось сохранить розыгрыш: {e}")
+        return None, score
+
+
+async def rally_top(limit: int = 10):
+    """(id, имя, рекорд) — самые длинные розыгрыши"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT user_id, name, best FROM {SCHEMA}.rally_scores "
+                "ORDER BY best DESC, updated_at LIMIT $1", limit)
+        return [(r["user_id"], r["name"], r["best"]) for r in rows]
+    except Exception as e:
+        logging.error(f"Таблица розыгрышей недоступна: {e}")
+        return []
 
 
 async def tennis_top(limit: int = 10):

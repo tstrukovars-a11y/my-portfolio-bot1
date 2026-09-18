@@ -1,0 +1,459 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>Розыгрыш</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root{
+    --bg:#0b1220; --out:#123454; --court:#1b5e8c; --line:#eaf1f8;
+    --ink:#f2f3f5; --dim:#93a0b1; --ball:#d6f24a;
+    --me:#48b0ff; --foe:#ff8f6b; --accent:#48b0ff;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--ink);
+    font:16px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    user-select:none;touch-action:none}
+  #wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center}
+  canvas{display:block;touch-action:none}
+
+  .hud{position:fixed;top:calc(env(safe-area-inset-top) + 10px);left:0;right:0;
+    display:none;justify-content:space-between;padding:0 16px;
+    font-variant-numeric:tabular-nums;pointer-events:none}
+  .hud.on{display:flex}
+  .hud b{font-size:24px;font-weight:700;text-shadow:0 1px 3px rgba(0,0,0,.6)}
+  .hud span{display:block;font-size:10px;letter-spacing:.09em;text-transform:uppercase;
+    color:#cbd5e1;text-shadow:0 1px 3px rgba(0,0,0,.6)}
+  .hud .right{text-align:right}
+
+  .panel{position:fixed;inset:0;display:none;flex-direction:column;
+    align-items:center;justify-content:center;gap:16px;padding:26px;
+    background:rgba(11,18,32,.95);backdrop-filter:blur(6px);text-align:center}
+  .panel.on{display:flex}
+  .panel h1{font-size:29px;font-weight:700;letter-spacing:-.02em}
+  .panel p{color:var(--dim);max-width:20em;font-size:15px}
+  .big{font-size:54px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums}
+  .best,.saved{color:var(--dim);font-size:14px}
+  .lbl{font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--dim)}
+  button{appearance:none;border:0;border-radius:14px;padding:15px 32px;
+    font-size:17px;font-weight:600;color:#06121f;background:var(--accent);
+    cursor:pointer;transition:transform .08s}
+  button:active{transform:scale(.97)}
+  button.ghost{background:transparent;color:var(--dim);
+    box-shadow:inset 0 0 0 1px #2c3b4f;padding:12px 24px;font-size:15px}
+  .levels{display:flex;gap:9px}
+  .lv{padding:10px 16px;border-radius:12px;font-size:15px;color:var(--dim);
+    box-shadow:inset 0 0 0 1px #2c3b4f;cursor:pointer}
+  .lv.on{color:#06121f;background:var(--ball);box-shadow:none;font-weight:600}
+  .hint{color:var(--dim);font-size:13px;line-height:1.55;max-width:22em}
+  .hint b{color:var(--ink);font-weight:600}
+  .call{position:fixed;left:0;right:0;top:44%;text-align:center;
+    font-size:26px;font-weight:700;letter-spacing:-.01em;pointer-events:none;
+    opacity:0;transition:opacity .18s}
+  .call.on{opacity:1}
+  @media (prefers-reduced-motion:reduce){.call{transition:none}}
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="cv"></canvas></div>
+
+<div class="hud" id="hud">
+  <div><span>Счёт</span><b id="score">0 : 0</b></div>
+  <div class="right"><span>Розыгрыш</span><b id="rally">0</b></div>
+</div>
+
+<div class="call" id="call"></div>
+
+<div class="panel on" id="start">
+  <h1>🎾 Розыгрыш</h1>
+  <p>Теннис сверху. Вы — синий, соперник — оранжевый. Очко берётся, когда
+    соперник не добежал.</p>
+  <div class="lbl">Соперник</div>
+  <div class="levels" id="levels"></div>
+  <button id="go">Подача</button>
+  <div class="hint">
+    Ведите пальцем — игрок бежит за ним.<br>
+    <b>Резкое движение</b> — сильный удар. <b>Медленное</b> — укороченный.<br>
+    Ведёте вбок — мяч закручивается и уходит от соперника.
+  </div>
+</div>
+
+<div class="panel" id="over">
+  <h1 id="verdict">Гейм</h1>
+  <div class="big" id="final">0 : 0</div>
+  <div class="best" id="bestline"></div>
+  <div class="saved" id="saved"></div>
+  <button id="again">Ещё гейм</button>
+  <button class="ghost" id="close">Выйти</button>
+</div>
+
+<script>
+"use strict";
+const tg = window.Telegram && window.Telegram.WebApp;
+if (tg){ tg.ready(); tg.expand(); }
+const $ = id => document.getElementById(id);
+
+const store = {
+  get(k){ try { return localStorage.getItem(k); } catch(e){ return null; } },
+  set(k, v){ try { localStorage.setItem(k, v); } catch(e){} }
+};
+
+const cv = $("cv"), ctx = cv.getContext("2d");
+let W = 0, H = 0, DPR = 1;
+
+function resize(){
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = Math.min(window.innerWidth, Math.round(window.innerHeight * 0.66));
+  H = window.innerHeight;
+  cv.style.width = W + "px"; cv.style.height = H + "px";
+  cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+addEventListener("resize", resize);
+resize();
+
+// --- соперник. Разница не в скорости мяча, а в том, как быстро он бегает
+//     и насколько точно читает удар: так проигрыш выглядит честным.
+const LEVELS = [
+  { name: "Новичок", speed: 0.34, read: 0.55, err: 0.22, aim: 0.45 },
+  { name: "Клубный", speed: 0.46, read: 0.75, err: 0.13, aim: 0.65 },
+  { name: "Мастер",  speed: 0.58, read: 0.92, err: 0.06, aim: 0.85 }
+];
+let level = +(store.get("rally_level") || 1);
+if (!(level >= 0 && level < LEVELS.length)) level = 1;
+
+function drawLevels(){
+  const box = $("levels");
+  box.innerHTML = "";
+  LEVELS.forEach((lv, i) => {
+    const el = document.createElement("div");
+    el.className = "lv" + (i === level ? " on" : "");
+    el.textContent = lv.name;
+    el.onclick = () => { level = i; store.set("rally_level", i); drawLevels(); };
+    box.appendChild(el);
+  });
+}
+drawLevels();
+
+// --- размеры корта
+const M = () => W * 0.07;                 // поля за боковыми линиями
+const NET = () => H / 2;
+const R_BALL = () => Math.max(6, W * 0.019);
+const R_MAN = () => Math.max(14, W * 0.055);   // игрок — круг, а не линия
+const REACH = () => R_MAN() * 1.55;            // радиус, в котором бьют
+
+const TARGET = 7;                          // очков в гейме
+
+let state = "menu";
+let ball, me, foe, myScore, foeScore, rally, bestRally, lastHit, serveTo;
+let trail = [], shake = 0, callTimer = 0;
+
+// --- палец. Скорость движения в момент касания мяча решает всё: сильный
+//     удар, укороченный и закрутка — это одно и то же движение с разной
+//     резкостью, а не три разные кнопки.
+let finger = null;                 // {x, y}
+let fvx = 0, fvy = 0;              // сглаженная скорость пальца, px/кадр
+
+function serve(toMe){
+  const y = toMe ? NET() - H * 0.18 : NET() + H * 0.18;
+  ball = { x: W / 2, y, vx: 0, vy: 0, spin: 0, r: R_BALL(), live: false };
+  serveTo = toMe;
+  trail = [];
+  setTimeout(() => {
+    if (state !== "play" || !ball || ball.live) return;
+    const speed = H * 0.0125;
+    ball.vy = toMe ? speed : -speed;
+    ball.vx = (Math.random() * 2 - 1) * speed * 0.35;
+    ball.live = true;
+    lastHit = toMe ? "foe" : "me";
+  }, 700);
+}
+
+function reset(){
+  myScore = foeScore = 0;
+  rally = 0;
+  bestRally = 0;
+  me  = { x: W / 2, y: H * 0.85 };
+  foe = { x: W / 2, y: H * 0.15 };
+  serve(Math.random() < 0.5);
+}
+
+// --- рисование
+function court(){
+  ctx.fillStyle = "#123454";
+  ctx.fillRect(0, 0, W, H);
+  const m = M();
+  ctx.fillStyle = "#1b5e8c";
+  ctx.fillRect(m, m, W - m * 2, H - m * 2);
+
+  ctx.strokeStyle = "rgba(234,241,248,.8)";
+  ctx.lineWidth = Math.max(1.5, W * 0.005);
+  ctx.strokeRect(m, m, W - m * 2, H - m * 2);
+
+  const box = H * 0.2;
+  ctx.beginPath();
+  ctx.moveTo(m, NET() - box); ctx.lineTo(W - m, NET() - box);
+  ctx.moveTo(m, NET() + box); ctx.lineTo(W - m, NET() + box);
+  ctx.moveTo(W / 2, NET() - box); ctx.lineTo(W / 2, NET() + box);
+  ctx.stroke();
+
+  ctx.strokeStyle = "rgba(234,241,248,.9)";
+  ctx.lineWidth = Math.max(2, H * 0.0035);
+  ctx.beginPath(); ctx.moveTo(m, NET()); ctx.lineTo(W - m, NET()); ctx.stroke();
+}
+
+function man(p, colour, aim){
+  const r = R_MAN();
+  ctx.fillStyle = "rgba(0,0,0,.25)";
+  ctx.beginPath(); ctx.arc(p.x, p.y + r * 0.22, r, 0, 7); ctx.fill();
+  ctx.fillStyle = colour;
+  ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, 7); ctx.fill();
+  // Зона удара — иначе непонятно, почему мяч пролетел мимо.
+  ctx.strokeStyle = "rgba(255,255,255,.22)";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(p.x, p.y, REACH(), 0, 7); ctx.stroke();
+  if (aim){
+    ctx.strokeStyle = "rgba(255,255,255,.5)";
+    ctx.beginPath();
+    ctx.moveTo(p.x, p.y);
+    ctx.lineTo(p.x + aim.x * r * 1.6, p.y + aim.y * r * 1.6);
+    ctx.stroke();
+  }
+}
+
+function draw(){
+  ctx.save();
+  if (shake > 0){
+    ctx.translate((Math.random() - .5) * shake, (Math.random() - .5) * shake);
+    shake *= 0.85;
+    if (shake < 0.3) shake = 0;
+  }
+  court();
+
+  trail.forEach((p, i) => {
+    ctx.globalAlpha = (i + 1) / trail.length * 0.3;
+    ctx.fillStyle = "#d6f24a";
+    ctx.beginPath(); ctx.arc(p.x, p.y, ball.r * 0.75, 0, 7); ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+
+  man(foe, "#ff8f6b", null);
+  man(me, "#48b0ff", finger ? { x: fvx, y: fvy } : null);
+
+  ctx.fillStyle = "#d6f24a";
+  ctx.beginPath(); ctx.arc(ball.x, ball.y, ball.r, 0, 7); ctx.fill();
+  ctx.restore();
+}
+
+// --- удар. Одно движение задаёт три вещи сразу: силу, направление и
+//     закрутку. Медленное касание превращается в укороченный — это и есть
+//     «выманить вперёд».
+function hitByMe(){
+  const power = Math.hypot(fvx, fvy);
+  const soft = power < W * 0.012;
+  const base = H * (soft ? 0.009 : 0.013);
+  const extra = Math.min(power * 0.55, H * 0.011);
+
+  ball.vy = -(base + extra);
+  ball.vx = fvx * 0.55 + (ball.x - me.x) * 0.08;
+  ball.spin = fvx * 0.012;               // боковое движение — это закрутка
+  ball.drop = soft;                      // укороченный падает сразу за сеткой
+  lastHit = "me";
+  rally += 1;
+  bestRally = Math.max(bestRally, rally);
+  $("rally").textContent = rally;
+  shake = 5;
+}
+
+function hitByFoe(){
+  const lv = LEVELS[level];
+  // Соперник целит подальше от нас — в противоположный угол, иногда
+  // укорачивает. Точность зависит от уровня.
+  const m = M();
+  const far = me.x < W / 2 ? W - m - R_MAN() : m + R_MAN();
+  const aim = far * lv.aim + (W / 2) * (1 - lv.aim)
+            + (Math.random() * 2 - 1) * W * lv.err;
+
+  const drop = Math.random() < 0.14;
+  const speed = H * (drop ? 0.009 : 0.0135);
+  const dx = aim - ball.x, dy = (H * (drop ? 0.62 : 0.92)) - ball.y;
+  const len = Math.hypot(dx, dy) || 1;
+
+  ball.vx = dx / len * speed;
+  ball.vy = dy / len * speed;
+  ball.spin = (Math.random() * 2 - 1) * 0.06;
+  ball.drop = drop;
+  lastHit = "foe";
+  rally += 1;
+  bestRally = Math.max(bestRally, rally);
+  $("rally").textContent = rally;
+}
+
+function say(text){
+  const el = $("call");
+  el.textContent = text;
+  el.classList.add("on");
+  clearTimeout(callTimer);
+  callTimer = setTimeout(() => el.classList.remove("on"), 900);
+}
+
+function point(toMe, why){
+  if (toMe) myScore++; else foeScore++;
+  $("score").textContent = `${myScore} : ${foeScore}`;
+  say(why);
+  rally = 0;
+  $("rally").textContent = "0";
+  if (myScore >= TARGET || foeScore >= TARGET){ finish(); return; }
+  serve(!toMe);                          // подаёт проигравший розыгрыш
+}
+
+function step(){
+  const lv = LEVELS[level], m = M(), r = R_MAN();
+
+  if (ball.live){
+    ball.vx += ball.spin * 0.5;          // закрутка уводит мяч вбок в полёте
+    ball.spin *= 0.985;
+    ball.x += ball.vx;
+    ball.y += ball.vy;
+    if (ball.drop){
+      // Укороченный гасится, но не до нуля: мяч, остановившийся посреди
+      // корта, подвешивает розыгрыш навсегда.
+      ball.vy *= 0.975; ball.vx *= 0.975;
+      const slow = Math.hypot(ball.vx, ball.vy), floor = H * 0.0045;
+      if (slow < floor && slow > 0){
+        ball.vx = ball.vx / slow * floor;
+        ball.vy = ball.vy / slow * floor;
+      }
+    }
+
+    trail.push({ x: ball.x, y: ball.y });
+    if (trail.length > 9) trail.shift();
+  }
+
+  // Соперник: бежит к тому месту, где мяч пересечёт его линию, а после
+  // удара возвращается в центр — как настоящий теннисист.
+  let target = W / 2;
+  if (ball.live && ball.vy < 0){
+    const time = Math.max(1, (ball.y - foe.y) / Math.max(0.1, -ball.vy));
+    const guess = ball.x + ball.vx * time * lv.read;
+    target = Math.max(m + r, Math.min(W - m - r, guess));
+  }
+  const speedLimit = W * lv.speed * 0.045;
+  const dx = target - foe.x;
+  foe.x += Math.max(-speedLimit, Math.min(speedLimit, dx));
+
+  // Мы бежим за пальцем, но только по своей половине.
+  if (finger){
+    me.x += (finger.x - me.x) * 0.35;
+    me.y += (finger.y - me.y) * 0.35;
+    me.x = Math.max(m + r, Math.min(W - m - r, me.x));
+    me.y = Math.max(NET() + r, Math.min(H - r, me.y));
+  }
+
+  if (!ball.live) return;
+
+  // Удары
+  if (ball.vy > 0 && ball.y > NET() && Math.hypot(ball.x - me.x, ball.y - me.y) < REACH()){
+    hitByMe();
+  }
+  if (ball.vy < 0 && ball.y < NET() && Math.hypot(ball.x - foe.x, ball.y - foe.y) < REACH()){
+    hitByFoe();
+  }
+
+  // Мяч ушёл за боковую — ошибка того, кто бил.
+  if (ball.x < m || ball.x > W - m){
+    point(lastHit === "foe", lastHit === "me" ? "В аут" : "Соперник в ауте");
+    return;
+  }
+  if (ball.y > H){ point(false, "Не достали"); return; }
+  if (ball.y < 0){ point(true, "Не достал!"); return; }
+}
+
+let loop = 0;               // номер живого цикла: старые молча выходят
+
+function tick(mine){
+  if (state !== "play" || mine !== loop) return;
+  step();
+  if (state === "play") draw();
+  requestAnimationFrame(() => tick(mine));
+}
+
+function finish(){
+  state = "over";
+  const won = myScore > foeScore;
+  $("verdict").textContent = won ? "Гейм ваш" : "Гейм соперника";
+  $("final").textContent = `${myScore} : ${foeScore}`;
+
+  const best = +(store.get("rally_best") || 0);
+  const record = bestRally > best;
+  if (record) store.set("rally_best", bestRally);
+  $("bestline").textContent = record
+    ? `Самый длинный розыгрыш: ${bestRally} — это рекорд`
+    : `Самый длинный розыгрыш: ${bestRally}, рекорд ${best}`;
+  $("saved").textContent = "";
+  $("hud").classList.remove("on");
+  $("over").classList.add("on");
+  send(bestRally);
+}
+
+function play(){
+  $("start").classList.remove("on");
+  $("over").classList.remove("on");
+  $("hud").classList.add("on");
+  reset();
+  $("score").textContent = "0 : 0";
+  $("rally").textContent = "0";
+  state = "play";
+  loop += 1;
+  const mine = loop;
+  requestAnimationFrame(() => tick(mine));
+}
+
+// --- отправка результата. initData подписан Telegram, сервер проверит
+//     подпись: без этого рекорд мог бы прислать кто угодно и любой.
+async function send(value){
+  if (!tg || !tg.initData){ $("saved").textContent = "Результат сохранён только здесь"; return; }
+  try {
+    const r = await fetch("/rally/score", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ initData: tg.initData, score: value })
+    });
+    const d = await r.json();
+    $("saved").textContent = d.status === "ok"
+      ? (d.place ? "В таблице вы " + d.place + "-й" : "Результат засчитан")
+      : "Результат не сохранился";
+  } catch(e){ $("saved").textContent = "Результат не сохранился"; }
+}
+
+// --- палец
+function at(e){
+  const rect = cv.getBoundingClientRect();
+  return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+}
+addEventListener("pointerdown", e => { finger = at(e); fvx = fvy = 0; });
+addEventListener("pointermove", e => {
+  const p = at(e);
+  if (finger){
+    // Сглаживаем: одиночный кадр даёт рывки, а от скорости зависит удар.
+    fvx = fvx * 0.6 + (p.x - finger.x) * 0.4;
+    fvy = fvy * 0.6 + (p.y - finger.y) * 0.4;
+  }
+  finger = p;
+}, { passive: true });
+addEventListener("pointerup", () => { fvx *= 0.5; fvy *= 0.5; });
+
+addEventListener("keydown", e => { if (e.key === " " && state !== "play") play(); });
+
+$("go").onclick = play;
+$("again").onclick = play;
+$("close").onclick = () => { if (tg) tg.close(); };
+
+// Первый экран рисуем сразу: пустой холст выглядит как несработавшая игра.
+me  = { x: W / 2, y: H * 0.85 };
+foe = { x: W / 2, y: H * 0.15 };
+ball = { x: W / 2, y: NET() + H * 0.18, vx: 0, vy: 0, spin: 0, r: R_BALL(), live: false };
+draw();
+</script>
+</body>
+</html>
