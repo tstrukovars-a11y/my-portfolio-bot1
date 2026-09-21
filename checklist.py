@@ -70,6 +70,67 @@ def _names(rows) -> str:
     return "    " + "; ".join(shown) + tail
 
 
+# --- записанное руками ------------------------------------------------
+#
+# Всё остальное на этом экране считается из данных: чего нет у книги, у
+# места, у картины. Но часть дел живёт вне бота — завести кассу, снять
+# картины, — и помнить их негде. Поэтому короткий список, который ведётся
+# руками и лежит там же, где смотрят «что не готово».
+
+OWED_KEY = "owed_by_owner"
+
+
+async def _owed() -> list:
+    raw = await database.get_setting(OWED_KEY)
+    try:
+        items = json.loads(raw) if raw else []
+        return [str(x) for x in items] if isinstance(items, list) else []
+    except (ValueError, TypeError):
+        return []
+
+
+async def _save_owed(items: list):
+    await database.set_setting(OWED_KEY, json.dumps(items, ensure_ascii=False))
+
+
+@router.message(F.text.regexp(r"^/долг"))
+async def owed_command(message: Message):
+    """/долг — показать, /долг текст — добавить, /долг -2 — вычеркнуть"""
+    if not config.is_admin(message.from_user.id):
+        return
+
+    tail = (message.text or "").split(maxsplit=1)
+    items = await _owed()
+
+    if len(tail) < 2:
+        if not items:
+            await message.answer(
+                "За вами ничего не записано.\n\n"
+                "<code>/долг завести ЮKassa</code> — записать\n"
+                "<code>/долг -1</code> — вычеркнуть первое")
+            return
+        lines = ["<b>За вами:</b>"]
+        lines += [f"{i}. {html.escape(x)}" for i, x in enumerate(items, 1)]
+        lines += ["", "<code>/долг -1</code> — вычеркнуть первое"]
+        await message.answer("\n".join(lines))
+        return
+
+    text = tail[1].strip()
+    if text.startswith("-") and text[1:].strip().isdigit():
+        number = int(text[1:].strip())
+        if not 1 <= number <= len(items):
+            await message.answer(f"Столько пунктов нет: их {len(items)}.")
+            return
+        done = items.pop(number - 1)
+        await _save_owed(items)
+        await message.answer(f"✅ Вычеркнула: {html.escape(done)}")
+        return
+
+    items.append(text[:200])
+    await _save_owed(items)
+    await message.answer(f"Записала. Всего за вами: {len(items)}.")
+
+
 @router.message(F.text.startswith(("/todo", "/чего")))
 async def todo(message: Message):
     """Что мешает публиковать: по разделам, с командой для починки"""
@@ -77,6 +138,15 @@ async def todo(message: Message):
         return
 
     lines = ["🧾 <b>Чего не хватает</b>", ""]
+
+    # Руками записанное идёт первым: остальное считается из данных и
+    # само себя покажет, а это помнить больше негде.
+    owed = await _owed()
+    if owed:
+        lines.append("<b>За вами:</b>")
+        lines += [f"{i}. {html.escape(item)}" for i, item in enumerate(owed, 1)]
+        lines.append("    <code>/долг</code>")
+        lines.append("")
 
     # --- книги -------------------------------------------------------
     stats = await database.books_link_stats()
