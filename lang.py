@@ -108,6 +108,28 @@ def audio_path(code: str, text: str):
     return path if os.path.exists(path) else None
 
 
+def phrases(code: str) -> list:
+    """Всё, что в языке звучит: слова, реплики, диалоги.
+
+    Один перечень на всех: по нему озвучивают (tools/make_audio.py),
+    по нему же проверяют на слух. Разойдись они — проверять начали бы
+    одно, а отправлять людям другое.
+    """
+    out, said = [], set()
+    for topic in ((content().get(code) or {}).get("topics") or {}).values():
+        for card in topic.get("cards", []):
+            for text in [card["word"]] + [l["q"] for l in card["lines"]] \
+                    + [l["a"] for l in card["lines"]]:
+                if text not in said:
+                    said.add(text)
+                    out.append(text)
+        for turn in topic.get("dialog", {}).get("turns", []):
+            if turn["text"] not in said:
+                said.add(turn["text"])
+                out.append(turn["text"])
+    return out
+
+
 # ---------------------------------------------------------------------
 # УРОК
 # ---------------------------------------------------------------------

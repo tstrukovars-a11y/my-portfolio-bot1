@@ -827,6 +827,22 @@ async def init_db():
             PRIMARY KEY (user_id, card_id)
         )""")
 
+        # 21в. Проверка озвучки на слух. Машина огласовывает иврит с
+        # ошибками, а слышно это только тому, кто на нём говорит: одна
+        # запись на фразу и на проверяющего, повторный ответ её заменяет.
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.lang_reviews (
+            code TEXT NOT NULL,
+            phrase TEXT NOT NULL,
+            reviewer BIGINT NOT NULL,
+            reviewer_name TEXT,
+            verdict TEXT NOT NULL,
+            note TEXT,
+            voice_id TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (code, phrase, reviewer)
+        )""")
+
         # 21г. Рекорды розыгрыша — самый длинный обмен ударами за гейм.
         await conn.execute(f"""
         CREATE TABLE IF NOT EXISTS {SCHEMA}.rally_scores (
@@ -2692,6 +2708,88 @@ async def lang_stats(user_id: int) -> dict:
     except Exception as e:
         logging.error(f"Счёт языка недоступен: {e}")
         return {"cards": 0, "strong": 0, "answers": 0}
+
+
+# --- ПРОВЕРКА ОЗВУЧКИ ---
+#
+# Огласовщик ошибается, и услышать это может только человек, говорящий на
+# языке. Его ответы — не статистика, а правки: каждая относится к
+# конкретной фразе и живёт до тех пор, пока он же её не переслушает.
+
+async def save_review(code: str, phrase: str, reviewer: int, name: str,
+                      verdict: str, note: str = "", voice_id: str = "") -> bool:
+    async def write():
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"""INSERT INTO {SCHEMA}.lang_reviews
+                        (code, phrase, reviewer, reviewer_name, verdict,
+                         note, voice_id)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    ON CONFLICT (code, phrase, reviewer) DO UPDATE
+                    SET verdict = $5, note = $6, voice_id = $7,
+                        reviewer_name = $4,
+                        created_at = CURRENT_TIMESTAMP""",
+                code, phrase, reviewer, name[:64], verdict,
+                note[:500] or None, voice_id or None)
+        return True
+
+    try:
+        return await retry_write("Проверка озвучки", write)
+    except Exception as e:
+        logging.error(f"Отзыв о произношении не сохранился: {e}")
+        return False
+
+
+async def review_note(code: str, phrase: str, reviewer: int, note: str = "",
+                      voice_id: str = "") -> bool:
+    """Замечание к уже отмеченной фразе: голосом или словами"""
+    async def write():
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"""UPDATE {SCHEMA}.lang_reviews
+                    SET note = COALESCE($4, note), voice_id = COALESCE($5, voice_id)
+                    WHERE code = $1 AND phrase = $2 AND reviewer = $3""",
+                code, phrase, reviewer, note[:500] or None, voice_id or None)
+        return True
+
+    try:
+        return await retry_write("Замечание к озвучке", write)
+    except Exception as e:
+        logging.error(f"Замечание не сохранилось: {e}")
+        return False
+
+
+async def reviewed_by(code: str, reviewer: int) -> set:
+    """Фразы, которые этот человек уже послушал"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"""SELECT phrase FROM {SCHEMA}.lang_reviews
+                    WHERE code = $1 AND reviewer = $2""", code, reviewer)
+        return {r["phrase"] for r in rows}
+    except Exception as e:
+        logging.error(f"Проверенное недоступно: {e}")
+        return set()
+
+
+async def reviews(code: str, only_bad: bool = False) -> list:
+    """Все отзывы о языке, спорные — первыми"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"""SELECT phrase, verdict, note, voice_id, reviewer,
+                           reviewer_name, created_at
+                    FROM {SCHEMA}.lang_reviews
+                    WHERE code = $1 {"AND verdict = 'bad'" if only_bad else ""}
+                    ORDER BY verdict, created_at DESC""", code)
+        return [dict(r) for r in rows]
+    except Exception as e:
+        logging.error(f"Отзывы о произношении недоступны: {e}")
+        return []
 
 
 async def save_rally_score(user_id: int, name: str, score: int):

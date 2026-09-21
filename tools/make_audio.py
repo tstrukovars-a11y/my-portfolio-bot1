@@ -54,20 +54,10 @@ digest = lang.digest          # один отпечаток на бота и н�
 # ---------------------------------------------------------------------
 
 def phrases(data: dict):
-    """Всё, что должно звучать: слова, реплики и диалоги"""
-    for code, language in data.get("languages", {}).items():
-        said = set()
-        for topic in language.get("topics", {}).values():
-            for card in topic.get("cards", []):
-                for text in [card["word"]] + [l["q"] for l in card["lines"]] \
-                        + [l["a"] for l in card["lines"]]:
-                    if text not in said:
-                        said.add(text)
-                        yield code, text
-            for turn in topic.get("dialog", {}).get("turns", []):
-                if turn["text"] not in said:
-                    said.add(turn["text"])
-                    yield code, turn["text"]
+    """Всё, что должно звучать. Перечень общий с ботом — см. lang.phrases."""
+    for code in data.get("languages", {}):
+        for text in lang.phrases(code):
+            yield code, text
 
 
 # ---------------------------------------------------------------------
