@@ -79,11 +79,21 @@ def _names(rows) -> str:
 
 OWED_KEY = "owed_by_owner"
 
+# То, что уже проговорено и ждёт своей очереди. Список показывается,
+# пока его не тронули: как только первый пункт вычеркнут, дальше живёт
+# сохранённый — включая пустой.
+OWED_DEFAULT = [
+    "завести ЮKassa и прислать ссылку на оплату (/касса)",
+    "снять и загрузить фото картин (/art_list)",
+]
+
 
 async def _owed() -> list:
     raw = await database.get_setting(OWED_KEY)
+    if not raw:
+        return list(OWED_DEFAULT)
     try:
-        items = json.loads(raw) if raw else []
+        items = json.loads(raw)
         return [str(x) for x in items] if isinstance(items, list) else []
     except (ValueError, TypeError):
         return []

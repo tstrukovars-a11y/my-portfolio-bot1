@@ -181,3 +181,27 @@ def test_till_is_not_for_readers(settings, monkeypatch):
     message = Msg("/касса https://yookassa.ru/x", user_id=999)
     run(access.till_command(message))
     assert not message.said and not settings
+
+
+# --- что за владелицей ------------------------------------------------
+
+def test_owed_list_starts_with_what_was_promised(settings):
+    import checklist
+
+    assert any("ЮKassa" in x for x in run(checklist._owed()))
+    assert any("картин" in x for x in run(checklist._owed()))
+
+
+def test_crossing_off_the_last_item_leaves_it_empty(settings):
+    """Иначе вычеркнутое возвращалось бы из значений по умолчанию."""
+    import checklist
+
+    run(checklist._save_owed([]))
+    assert run(checklist._owed()) == []
+
+
+def test_owed_survives_a_broken_record(settings):
+    import checklist
+
+    settings[checklist.OWED_KEY] = "не json"
+    assert run(checklist._owed()) == []
