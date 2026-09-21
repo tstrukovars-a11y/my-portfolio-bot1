@@ -224,3 +224,38 @@ def test_panel_is_closed_to_everyone_else(db, monkeypatch):
     call = Call("admin_check", user_id=999)
     run(review.panel(call))
     assert not call.message.said
+
+
+# --- позвать на проверку ----------------------------------------------
+
+def test_invite_card_carries_the_link(db):
+    db["settings"]["bot_username"] = "accent_hub_bot"
+    call = Call("chk_send", user_id=1)
+    run(review.send_invite(call))
+    assert call.message.said
+    card = call.message.said[0]
+    assert "?start=check_" in card, "переслать нечего"
+    assert "иврит" in card.lower(), "человек не поймёт, о чём его просят"
+
+
+def test_invite_says_why_it_cannot_be_built(db):
+    """Пустая карточка хуже объяснения: непонятно, что сломалось."""
+    call = Call("chk_send", user_id=1)
+    run(review.send_invite(call))
+    assert "имя" in call.message.said[0]
+
+
+def test_invite_is_for_the_owner_only(db, monkeypatch):
+    monkeypatch.setattr(config, "ADMIN_ID", 1)
+    call = Call("chk_send", user_id=999)
+    run(review.send_invite(call))
+    assert not call.message.said
+
+
+def test_admin_menu_offers_both_screens():
+    """Позвать и посмотреть — разные действия, и обе кнопки на виду."""
+    import admin
+
+    buttons = [b.callback_data for row in admin._admin_menu().inline_keyboard
+               for b in row]
+    assert "admin_check" in buttons and "chk_send" in buttons

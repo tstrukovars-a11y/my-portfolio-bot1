@@ -175,6 +175,7 @@ def _admin_menu() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="📦 Запасы контента", callback_data="planstock")],
         [InlineKeyboardButton(text="📨 Приглашения", callback_data="admin_invite")],
         [InlineKeyboardButton(text="🎧 Проверка иврита", callback_data="admin_check")],
+        [InlineKeyboardButton(text="📤 Позвать на проверку", callback_data="chk_send")],
         [InlineKeyboardButton(text="⌨️ Команды", callback_data="admin_commands")],
         [InlineKeyboardButton(text="🔖 Шпаргалка", callback_data="admin_cheatsheet")],
         [InlineKeyboardButton(text="🔑 Пароли разделов", callback_data="admin_passwords")],

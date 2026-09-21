@@ -299,13 +299,17 @@ SHARE_TEXT = ("Помогите проверить, как звучит иври
               "это пара минут и две кнопки")
 
 
+def _share(address: str) -> str:
+    """Ссылка на выбор чата: Телеграм сам вложит адрес и подпись"""
+    return (f"https://t.me/share/url?url={quote(address, safe='')}"
+            f"&text={quote(SHARE_TEXT, safe='')}")
+
+
 def _panel_kb(link_text: str) -> InlineKeyboardMarkup:
     rows = []
     if link_text:
-        # Телеграм сам покажет выбор чата и вложит ссылку с подписью.
-        share = (f"https://t.me/share/url?url={quote(link_text, safe='')}"
-                 f"&text={quote(SHARE_TEXT, safe='')}")
-        rows.append([InlineKeyboardButton(text="📤 Отправить ссылку", url=share)])
+        rows.append([InlineKeyboardButton(text="📤 Отправить ссылку",
+                                          url=_share(link_text))])
     rows.append([InlineKeyboardButton(text="🎤 Послушать замечания",
                                       callback_data="chk_voices")])
     rows.append([InlineKeyboardButton(text="🔄 Новая ссылка",
@@ -336,6 +340,41 @@ async def panel(call: CallbackQuery):
     await call.message.answer(await _panel_text(),
                               reply_markup=_panel_kb(await link()),
                               disable_web_page_preview=True)
+
+
+# Готовое приглашение: одна кнопка в служебном меню — и есть что
+# переслать. Просить о помощи голой ссылкой неловко, а сочинять текст
+# каждый раз заново — повод отложить.
+INVITE = (
+    "🎧 <b>Нужна пара минут вашего иврита</b>\n\n"
+    "Я собрала уроки на слух: бот произносит фразу, а человек угадывает, "
+    "что это. Огласовки машина расставляет сама и иногда читает слово не "
+    "тем словом — заметить это может только тот, кто на иврите говорит.\n\n"
+    "По ссылке — короткие записи и две кнопки: «так звучит» или «не так». "
+    "Если не так, можно тут же надиктовать голосом, как правильно.\n\n"
+    "Бросить можно в любой момент: бот помнит, что вы уже слушали.\n\n"
+    "{link}")
+
+
+@router.callback_query(F.data == "chk_send")
+async def send_invite(call: CallbackQuery):
+    """Карточка, которую остаётся только переслать"""
+    if not config.is_admin(call.from_user.id):
+        await call.answer()
+        return
+    await call.answer()
+
+    address = await link()
+    if not address:
+        await call.message.answer(
+            "Ссылку пока не собрать: бот ещё не узнал своё имя в Телеграме. "
+            "Обычно это проходит после перезапуска.")
+        return
+
+    await call.message.answer(
+        INVITE.format(link=address), disable_web_page_preview=True,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="📤 Выбрать чат", url=_share(address))]]))
 
 
 @router.callback_query(F.data == "chk_newlink")
