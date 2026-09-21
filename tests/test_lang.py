@@ -239,3 +239,18 @@ def test_hebrew_is_spelled_out_for_the_voice():
     """Без огласовок синтезатор гадает — и слышно, что он угадал не то."""
     voice = raw()["languages"]["he"].get("voice") or {}
     assert len(voice) > 20, "иврит снова остался без огласовок"
+
+
+def test_language_lives_with_travel():
+    """Язык на слух нужен не для развития, а в чужой стране — и искать
+    его будут там же, где путешествия."""
+    import inline_kb
+
+    travel = [b.callback_data for row in
+              inline_kb.get_travel_main_menu("ru").inline_keyboard for b in row]
+    assert "lang_open" in travel
+
+
+def test_language_screen_is_not_a_dead_end():
+    assert any(b.callback_data == "go_home"
+               for row in lang._langs_kb().inline_keyboard for b in row)

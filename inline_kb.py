@@ -140,7 +140,11 @@ def get_travel_main_menu(lang):
     tool = "🧮 Travel Toolkit" if lang == "ru" else "🧮 Travel Toolkit"
     back = "🔙 Назад" if lang == "ru" else "🔙 Back"
     places = "🌍 Страны и локации" if lang == "ru" else "🌍 Countries & places"
+    # Язык на слух — здесь, а не в «Интеллекте»: он нужен не для развития,
+    # а чтобы понять автоответчик и заказать кофе в чужой стране.
+    la = "🎧 Язык на слух" if lang == "ru" else "🎧 Language by ear"
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=la, callback_data="lang_open")],
         [InlineKeyboardButton(text=places, callback_data="travel_places")],
         [InlineKeyboardButton(text=geo, callback_data="travel_geography")],
         [InlineKeyboardButton(text=tool, callback_data="travel_toolkit")],
@@ -419,15 +423,12 @@ def get_intellect_menu(lang):
     # Календарь. Кнопку видят все: у кого календаря ещё нет, тот попадёт на
     # экран с условиями — это и есть вход в продукт.
     c = "📅 Мой календарь" if lang == "ru" else "📅 My calendar"
-    # Язык без перевода: иврит, французский, английский.
-    la = "🎧 Язык на слух" if lang == "ru" else "🎧 Language by ear"
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=d, callback_data="menu_diary")],
         [InlineKeyboardButton(text=g, callback_data="intellect_genetics")],
         [InlineKeyboardButton(text=p, callback_data="intellect_puzzle")],
         [InlineKeyboardButton(text=b, callback_data="intellect_books")],
         [InlineKeyboardButton(text=c, callback_data="plan:open")],
-        [InlineKeyboardButton(text=la, callback_data="lang_open")],
         [InlineKeyboardButton(text="⇦ В главное меню" if lang == "ru" else "⇦ Main Menu", callback_data="go_home")]
     ])
 

@@ -236,9 +236,12 @@ async def _save(user_id: int, state):
 # ---------------------------------------------------------------------
 
 def _langs_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=data["title"], callback_data=f"lang_l_{code}")]
-        for code, data in content().items()])
+    rows = [[InlineKeyboardButton(text=data["title"], callback_data=f"lang_l_{code}")]
+            for code, data in content().items()]
+    # Сюда приходят и по команде /язык, и из «Путешествий»: выход должен
+    # быть в обоих случаях, иначе экран становится тупиком.
+    rows.append([InlineKeyboardButton(text="⇦", callback_data="go_home")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _topics_kb(code: str) -> InlineKeyboardMarkup:
