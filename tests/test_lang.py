@@ -194,12 +194,19 @@ def test_pronunciation_override_does_not_rename_the_file():
     """Огласовки меняют чтение, а не то, что показано на экране."""
     text = "מרפאה"
     before = lang.digest(text)
-    lang.content()["he"].setdefault("voice", {})[text] = "מִרְפָּאָה"
+    voice = lang.content()["he"].setdefault("voice", {})
+    was = voice.get(text)
+    voice[text] = "מִרְפָּאָה"
     try:
         assert lang.spoken("he", text) == "מִרְפָּאָה"
         assert lang.digest(text) == before
     finally:
-        lang.content()["he"]["voice"].pop(text)
+        # Словарь у модуля один на все тесты: убрать чужую запись — значит
+        # незаметно сломать соседний тест.
+        if was is None:
+            voice.pop(text, None)
+        else:
+            voice[text] = was
 
 
 def test_pronunciation_overrides_point_at_real_phrases():
@@ -208,3 +215,27 @@ def test_pronunciation_overrides_point_at_real_phrases():
     for code, language in raw()["languages"].items():
         for text in (language.get("voice") or {}):
             assert (code, text) in said, f"{code}: {text} нигде не звучит"
+
+
+def test_nikud_only_adds_marks():
+    """Огласовки добавляют знаки чтения, но не меняют слов.
+
+    Огласовщик ошибается и иногда возвращает не то слово — тогда в уроке
+    зазвучит одно, а на экране появится другое, и человек выучит ошибку.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "nikud", Path(__file__).resolve().parent.parent / "tools" / "nikud.py")
+    tool = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tool)
+
+    for code, language in raw()["languages"].items():
+        for text, said in (language.get("voice") or {}).items():
+            assert tool.bare(said) == text, f"{said} читается не как {text}"
+
+
+def test_hebrew_is_spelled_out_for_the_voice():
+    """Без огласовок синтезатор гадает — и слышно, что он угадал не то."""
+    voice = raw()["languages"]["he"].get("voice") or {}
+    assert len(voice) > 20, "иврит снова остался без огласовок"
