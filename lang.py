@@ -86,9 +86,25 @@ def all_cards(code: str) -> list:
 # задание незачем. Имя файла — отпечаток текста, чтобы фраза, которую
 # нужно узнать на слух, не читалась глазами в проигрывателе.
 
+def digest(text: str) -> str:
+    """Имя файла для фразы. Общее с tools/make_audio.py — иначе бот будет
+    искать один файл, а генератор класть другой, и звук молча пропадёт."""
+    return hashlib.sha1(text.encode("utf-8")).hexdigest()[:12]
+
+
+def spoken(code: str, text: str) -> str:
+    """Как фразу произносить, если написание обманывает синтезатор.
+
+    Иврит пишут без огласовок, и одно и то же слово читается по-разному:
+    синтезатор угадывает и иногда ошибается. Тогда в lang.json в раздел
+    "voice" кладётся тот же текст с огласовками — на экране он остаётся
+    прежним, меняется только произношение.
+    """
+    return ((content().get(code) or {}).get("voice") or {}).get(text, text)
+
+
 def audio_path(code: str, text: str):
-    name = hashlib.sha1(text.encode("utf-8")).hexdigest()[:12] + ".m4a"
-    path = os.path.join(AUDIO, code, name)
+    path = os.path.join(AUDIO, code, digest(text) + ".m4a")
     return path if os.path.exists(path) else None
 
 

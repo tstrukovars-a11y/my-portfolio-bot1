@@ -24,8 +24,12 @@ def all_cards():
                 yield code, card
 
 
+def raw() -> dict:
+    return json.loads(DATA.read_text(encoding="utf-8"))
+
+
 def test_file_is_valid_json():
-    json.loads(DATA.read_text(encoding="utf-8"))
+    raw()
 
 
 def test_three_languages_are_there():
@@ -160,14 +164,47 @@ def test_sound_matches_the_task():
     assert lang.sound("he", {"card": card, "kind": "say"}) is None
 
 
-def test_generator_and_bot_agree_on_names():
-    """Разойдутся имена — звук молча перестанет находиться."""
+def make_audio():
     import importlib.util
 
     spec = importlib.util.spec_from_file_location(
         "make_audio", Path(__file__).resolve().parent.parent / "tools" / "make_audio.py")
     tool = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(tool)
+    return tool
 
+
+def test_generator_and_bot_agree_on_names():
+    """Разойдутся имена — звук молча перестанет находиться."""
+    tool = make_audio()
+    assert tool.digest is lang.digest
     text = "מרפאה"
-    assert lang.audio_path("he", text).endswith(tool.digest(text) + ".m4a")
+    assert lang.audio_path("he", text).endswith(lang.digest(text) + ".m4a")
+
+
+def test_every_engine_is_callable():
+    """Движок выбирается ключом из командной строки — опечатка в таблице
+    вылезла бы только в момент озвучки, посреди списка фраз."""
+    tool = make_audio()
+    assert set(tool.ENGINES) == {"say", "eleven", "azure", "google"}
+    assert all(callable(f) for f in tool.ENGINES.values())
+
+
+def test_pronunciation_override_does_not_rename_the_file():
+    """Огласовки меняют чтение, а не то, что показано на экране."""
+    text = "מרפאה"
+    before = lang.digest(text)
+    lang.content()["he"].setdefault("voice", {})[text] = "מִרְפָּאָה"
+    try:
+        assert lang.spoken("he", text) == "מִרְפָּאָה"
+        assert lang.digest(text) == before
+    finally:
+        lang.content()["he"]["voice"].pop(text)
+
+
+def test_pronunciation_overrides_point_at_real_phrases():
+    """Опечатка в ключе тихо ничего не исправит — и это не заметно."""
+    said = {(code, text) for code, text in make_audio().phrases(raw())}
+    for code, language in raw()["languages"].items():
+        for text in (language.get("voice") or {}):
+            assert (code, text) in said, f"{code}: {text} нигде не звучит"
