@@ -5,6 +5,7 @@ from aiogram.types import (
     CallbackQuery, LabeledPrice, PreCheckoutQuery, Message,
     InlineKeyboardMarkup, InlineKeyboardButton
 )
+import access
 import database
 import finance
 
@@ -35,6 +36,32 @@ def tariff_rows(lang: str) -> list:
                               callback_data=f"buy_premium_{code}")]
         for code, (_, stars) in TARIFFS.items()
     ]
+
+@router.callback_query(F.data.startswith("buy_skill_"))
+async def buy_skill(call: CallbackQuery, bot: Bot):
+    """Один навык, а не всё сразу: за иврит платят, за ИИ — нет."""
+    body = call.data[len("buy_skill_"):]
+    skill, _, tier = body.rpartition("_")
+    if skill not in access.SKILLS or tier not in access.TARIFFS:
+        await call.answer()
+        return
+
+    days, stars = access.TARIFFS[tier]
+    name = access.SKILLS[skill]
+    try:
+        await bot.send_invoice(
+            chat_id=call.from_user.id,
+            title=name,
+            description=f"Доступ на {days} дней. Только этот раздел.",
+            payload=f"skill_{skill}_{days}",
+            provider_token="",
+            currency="XTR",
+            prices=[LabeledPrice(label="Stars", amount=stars)])
+    except Exception as e:
+        logging.error(f"Счёт за навык не выставлен: {type(e).__name__}: {e}")
+        await call.message.answer("⚠️ Не удалось открыть оплату. Попробуйте позже.")
+    await call.answer()
+
 
 @router.callback_query(F.data.startswith("buy_premium_"))
 async def process_buy_premium(call: CallbackQuery, bot: Bot):
@@ -87,10 +114,17 @@ async def process_pre_checkout(pre_checkout_query: PreCheckoutQuery):
 async def process_successful_payment(message: Message):
     user_id = message.from_user.id
     payload = message.successful_payment.invoice_payload
-    days = int(payload.split("_")[1]) # Достаем количество дней из payload
-    
-    # Записываем подписку в единую базу данных
-    await database.add_or_extend_subscription(user_id, days)
+
+    # В payload лежит либо «premium_30», либо «skill_lang_he_30»: общая
+    # подписка открывает всё, покупка навыка — только его.
+    skill = ""
+    if payload.startswith("skill_"):
+        skill, _, tail = payload[len("skill_"):].rpartition("_")
+        days = int(tail)
+        await database.grant_skill(user_id, skill, days, "stars")
+    else:
+        days = int(payload.split("_")[1])
+        await database.add_or_extend_subscription(user_id, days)
 
     # И в общий журнал операций: charge_id уникален, поэтому повторная
     # доставка того же апдейта запись не задвоит.
@@ -102,12 +136,18 @@ async def process_successful_payment(message: Message):
               else payment.total_amount / 100)
     await finance.record(
         kind="income", asset=payment.currency, amount=amount,
-        category="subscription", note=f"{days} дней, user {user_id}",
+        category="subscription", note=f"{skill or 'premium'}: {days} дней, user {user_id}",
         external_id=payment.telegram_payment_charge_id,
     )
     
     lang = await database.get_user_language(user_id)
-    
+
+    if skill:
+        await message.answer(
+            f"🎉 {access.SKILLS.get(skill, skill)}\n\n"
+            f"Доступ открыт на {days} дней. Спасибо!")
+        return
+
     success_texts = {
         "ru": f"🎉 **Оплата успешно завершена!** Подписка активирована на {days} дней. Спасибо!",
         "en": f"🎉 **Payment successful!** Your subscription is active for {days} days. Thank you!",

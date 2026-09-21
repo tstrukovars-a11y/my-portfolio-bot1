@@ -843,6 +843,20 @@ async def init_db():
             PRIMARY KEY (code, phrase, reviewer)
         )""")
 
+        # 21д. Доступ к отдельным навыкам. Общая подписка открывала бы
+        # человеку и то, за чем он не приходил: за иврит он платить готов,
+        # за ИИ — нет. Поэтому доступ хранится по навыкам, а не одной
+        # датой на всё.
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.skill_access (
+            user_id BIGINT NOT NULL,
+            skill TEXT NOT NULL,
+            expires_at TIMESTAMP NOT NULL,
+            source TEXT,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, skill)
+        )""")
+
         # 21г. Рекорды розыгрыша — самый длинный обмен ударами за гейм.
         await conn.execute(f"""
         CREATE TABLE IF NOT EXISTS {SCHEMA}.rally_scores (
@@ -2708,6 +2722,65 @@ async def lang_stats(user_id: int) -> dict:
     except Exception as e:
         logging.error(f"Счёт языка недоступен: {e}")
         return {"cards": 0, "strong": 0, "answers": 0}
+
+
+# --- ДОСТУП К НАВЫКАМ ---
+#
+# Даты храним наивным UTC: в этих колонках TIMESTAMP без зоны, и осознанное
+# время с зоной легло бы туда со сдвигом.
+
+async def grant_skill(user_id: int, skill: str, days: int, source: str = "") -> bool:
+    """Открыть или продлить доступ. Продление считается от конца, а не от
+    сегодня: иначе человек, заплативший заранее, теряет остаток."""
+    async def write():
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"""INSERT INTO {SCHEMA}.skill_access
+                        (user_id, skill, expires_at, source)
+                    VALUES ($1, $2, CURRENT_TIMESTAMP + ($3 || ' days')::interval, $4)
+                    ON CONFLICT (user_id, skill) DO UPDATE
+                    SET expires_at = GREATEST(skill_access.expires_at,
+                                              CURRENT_TIMESTAMP)
+                                     + ($3 || ' days')::interval,
+                        source = $4,
+                        updated_at = CURRENT_TIMESTAMP""",
+                user_id, skill, str(days), source[:64] or None)
+        return True
+
+    try:
+        return await retry_write("Доступ к навыку", write)
+    except Exception as e:
+        logging.error(f"Доступ не открылся: {e}")
+        return False
+
+
+async def skill_until(user_id: int, skill: str):
+    """До какого числа открыто, либо None"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            return await conn.fetchval(
+                f"""SELECT expires_at FROM {SCHEMA}.skill_access
+                    WHERE user_id = $1 AND skill = $2
+                      AND expires_at > CURRENT_TIMESTAMP""", user_id, skill)
+    except Exception as e:
+        logging.error(f"Доступ к навыку недоступен: {e}")
+        return None
+
+
+async def skills_of(user_id: int) -> dict:
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"""SELECT skill, expires_at FROM {SCHEMA}.skill_access
+                    WHERE user_id = $1 AND expires_at > CURRENT_TIMESTAMP""",
+                user_id)
+        return {r["skill"]: r["expires_at"] for r in rows}
+    except Exception as e:
+        logging.error(f"Список навыков недоступен: {e}")
+        return {}
 
 
 # --- ПРОВЕРКА ОЗВУЧКИ ---

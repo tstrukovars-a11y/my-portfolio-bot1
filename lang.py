@@ -31,6 +31,7 @@ from aiogram import Router, F
 from aiogram.types import (Message, CallbackQuery, InlineKeyboardMarkup,
                            InlineKeyboardButton, FSInputFile)
 
+import access
 import config
 import database
 
@@ -41,6 +42,19 @@ DATA = os.path.join(HERE, "data", "lang.json")
 AUDIO = os.path.join(HERE, "data", "audio")
 STATE_KEY = "lang_state_"        # + id: урок целиком, чтобы пережить деплой
 LESSON = 8                       # карточек в уроке: больше не досиживают
+
+# Первая тема каждого языка бесплатна целиком, вместе с входным тестом.
+# Огрызок вместо урока показывал бы, что продукт плохой: человек должен
+# успеть понять на себе, что слух без перевода работает.
+FREE_TOPICS = 1
+
+
+def skill_of(code: str) -> str:
+    return f"lang_{code}"
+
+
+def free_topics(code: str) -> list:
+    return list(((content().get(code) or {}).get("topics") or {}))[:FREE_TOPICS]
 
 _content = None
 
@@ -380,10 +394,17 @@ def _langs_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def _topics_kb(code: str, at_level: int = 0) -> InlineKeyboardMarkup:
+def _topics_kb(code: str, at_level: int = 0, paid: bool = True) -> InlineKeyboardMarkup:
     topics = (content().get(code) or {}).get("topics") or {}
-    rows = [[InlineKeyboardButton(text=t["title"], callback_data=f"lang_t_{code}_{key}")]
-            for key, t in topics.items()]
+    free = free_topics(code)
+    rows = []
+    for key, t in topics.items():
+        # Замок рисуем, но кнопку не убираем: спрятанное не купят, а
+        # человек должен видеть, что там дальше.
+        shut = not paid and key not in free
+        rows.append([InlineKeyboardButton(
+            text=("🔒 " if shut else "") + t["title"],
+            callback_data=f"lang_t_{code}_{key}")])
     if at_level:
         rows.append([InlineKeyboardButton(
             text=f"🎚 {LEVEL_NAMES[at_level]} · проверить заново",
@@ -440,8 +461,9 @@ async def pick_language(call: CallbackQuery):
 async def _topics(message: Message, user_id: int, code: str):
     data = content().get(code) or {}
     at = await level(user_id, code)
+    paid = await access.has(user_id, skill_of(code))
     await message.answer(f"{data.get('hello', '')}\n\n{data.get('title', '')}",
-                         reply_markup=_topics_kb(code, at))
+                         reply_markup=_topics_kb(code, at, paid))
 
 
 @router.callback_query(F.data.startswith("lang_s_"))
@@ -564,6 +586,11 @@ async def pick_topic(call: CallbackQuery):
     _, _, code, topic = call.data.split("_", 3)
     await call.answer()
 
+    if topic not in free_topics(code) \
+            and not await access.has(call.from_user.id, skill_of(code)):
+        await _wall(call.message, code)
+        return
+
     known = await database.lang_known(call.from_user.id)
     tasks = build(code, topic, known, await level(call.from_user.id, code))
     if not tasks:
@@ -664,3 +691,15 @@ async def _finish(message: Message, user_id: int, state: dict):
             [InlineKeyboardButton(text="🔁", callback_data=f"lang_t_{code}_{topic}")],
             [InlineKeyboardButton(text=data.get("title", "⇦"),
                                   callback_data=f"lang_l_{code}")]]))
+
+    # Разговор дослушан — вот теперь и только теперь уместно про деньги:
+    # человек уже знает на себе, работает это у него или нет.
+    if not await access.has(user_id, skill_of(code)):
+        await _wall(message, code, "🎧 Это был пробный урок целиком.")
+
+
+async def _wall(message: Message, code: str, done: str = ""):
+    skill = skill_of(code)
+    await message.answer(access.wall_text(skill, done),
+                         reply_markup=await access.buy_kb(skill),
+                         disable_web_page_preview=True)

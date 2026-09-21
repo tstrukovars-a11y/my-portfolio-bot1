@@ -40,6 +40,7 @@ import commands
 import content_plan
 import xo
 import rally
+import access
 import lang
 import lang_review
 import tennis_game
@@ -605,6 +606,7 @@ async def main():
     dp.include_router(rally.router)
     dp.include_router(lang.router)
     dp.include_router(lang_review.router)
+    dp.include_router(access.router)
 
     dp.include_router(tennis_live.router)
     dp.include_router(travel.router)
