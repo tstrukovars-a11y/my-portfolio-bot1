@@ -52,6 +52,7 @@ GROUPS = (
     ("commands", "⌨️ Справка"),
     ("art_shop", "🎨 Картины"),
     ("xo", "🎮 Игры"),
+    ("lang", "🗣 Языки"),
     ("puzzle_daily", "🧩 Головоломки"),
     ("travel_spots", "🌍 Места"),
     ("travel_channel", "🌍 Канал путешествий"),

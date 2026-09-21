@@ -814,6 +814,19 @@ async def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""")
 
+        # 21д. Что человек уже видел в языковых уроках. Сила карточки
+        # растёт от верных ответов и падает от ошибок — по ней урок
+        # решает, показывать слово как новое или как повторение.
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.lang_progress (
+            user_id BIGINT NOT NULL,
+            card_id TEXT NOT NULL,
+            strength SMALLINT NOT NULL DEFAULT 0,
+            seen INTEGER NOT NULL DEFAULT 0,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, card_id)
+        )""")
+
         # 21г. Рекорды розыгрыша — самый длинный обмен ударами за гейм.
         await conn.execute(f"""
         CREATE TABLE IF NOT EXISTS {SCHEMA}.rally_scores (
@@ -2626,6 +2639,59 @@ async def save_tennis_score(user_id: int, name: str, score: int):
     except Exception as e:
         logging.error(f"Не удалось сохранить результат тенниса: {e}")
         return None, score
+
+
+# --- ЯЗЫКОВЫЕ УРОКИ ---
+
+async def lang_known(user_id: int) -> set:
+    """Карточки, которые человек уже видел"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT card_id FROM {SCHEMA}.lang_progress WHERE user_id = $1",
+                user_id)
+        return {r["card_id"] for r in rows}
+    except Exception as e:
+        logging.error(f"Прогресс языка недоступен: {e}")
+        return set()
+
+
+async def lang_seen(user_id: int, card_id: str, right: bool) -> bool:
+    """Отметить показ карточки. Верный ответ усиливает, ошибка ослабляет."""
+    step = 1 if right else -1
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"""INSERT INTO {SCHEMA}.lang_progress
+                        (user_id, card_id, strength, seen)
+                    VALUES ($1, $2, GREATEST(0, $3), 1)
+                    ON CONFLICT (user_id, card_id) DO UPDATE
+                    SET strength = GREATEST(0, LEAST(5,
+                            lang_progress.strength + $3)),
+                        seen = lang_progress.seen + 1,
+                        updated_at = CURRENT_TIMESTAMP""",
+                user_id, card_id, step)
+        return True
+    except Exception as e:
+        logging.error(f"Прогресс языка не сохранился: {e}")
+        return False
+
+
+async def lang_stats(user_id: int) -> dict:
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                f"""SELECT COUNT(*) AS cards,
+                           COUNT(*) FILTER (WHERE strength >= 3) AS strong,
+                           COALESCE(SUM(seen), 0) AS answers
+                    FROM {SCHEMA}.lang_progress WHERE user_id = $1""", user_id)
+        return dict(row) if row else {"cards": 0, "strong": 0, "answers": 0}
+    except Exception as e:
+        logging.error(f"Счёт языка недоступен: {e}")
+        return {"cards": 0, "strong": 0, "answers": 0}
 
 
 async def save_rally_score(user_id: int, name: str, score: int):

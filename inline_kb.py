@@ -419,12 +419,15 @@ def get_intellect_menu(lang):
     # Календарь. Кнопку видят все: у кого календаря ещё нет, тот попадёт на
     # экран с условиями — это и есть вход в продукт.
     c = "📅 Мой календарь" if lang == "ru" else "📅 My calendar"
+    # Язык без перевода: иврит, французский, английский.
+    la = "🗣 Язык без перевода" if lang == "ru" else "🗣 Language, no translation"
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=d, callback_data="menu_diary")],
         [InlineKeyboardButton(text=g, callback_data="intellect_genetics")],
         [InlineKeyboardButton(text=p, callback_data="intellect_puzzle")],
         [InlineKeyboardButton(text=b, callback_data="intellect_books")],
         [InlineKeyboardButton(text=c, callback_data="plan:open")],
+        [InlineKeyboardButton(text=la, callback_data="lang_open")],
         [InlineKeyboardButton(text="⇦ В главное меню" if lang == "ru" else "⇦ Main Menu", callback_data="go_home")]
     ])
 

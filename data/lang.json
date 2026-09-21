@@ -1,0 +1,543 @@
+{
+  "_note": "Язык учится без языка-прокладки: в карточках нет ни одного русского слова. Значение передаёт картинка, а не перевод. Слова намеренно повторяются в разных фразах и темах — так понимание становится своим, а не переведённым.",
+  "languages": {
+    "fr": {
+      "title": "🇫🇷 Français",
+      "hello": "Bonjour !",
+      "right": [
+        "Oui !",
+        "C'est ça !",
+        "Très bien !",
+        "Exactement !"
+      ],
+      "wrong": [
+        "Non.",
+        "Pas tout à fait.",
+        "Encore une fois."
+      ],
+      "topics": {
+        "ecole": {
+          "title": "🏫 À l'école",
+          "level": 1,
+          "cards": [
+            {
+              "id": "fr.ciseaux",
+              "emoji": "✂️",
+              "word": "les ciseaux",
+              "lines": [
+                {
+                  "q": "Qu'est-ce que c'est ?",
+                  "a": "Ce sont des ciseaux."
+                },
+                {
+                  "q": "Où sont les ciseaux ?",
+                  "a": "Ils sont sur la table."
+                },
+                {
+                  "q": "Donne-moi les ciseaux.",
+                  "a": "Voilà, prends-les."
+                }
+              ]
+            },
+            {
+              "id": "fr.crayon",
+              "emoji": "✏️",
+              "word": "un crayon",
+              "lines": [
+                {
+                  "q": "Qu'est-ce que c'est ?",
+                  "a": "C'est un crayon."
+                },
+                {
+                  "q": "Le crayon est rouge ?",
+                  "a": "Non, il est bleu."
+                }
+              ]
+            },
+            {
+              "id": "fr.livre",
+              "emoji": "📕",
+              "word": "un livre",
+              "lines": [
+                {
+                  "q": "Qu'est-ce que c'est ?",
+                  "a": "C'est un livre."
+                },
+                {
+                  "q": "Ouvre le livre.",
+                  "a": "D'accord, je l'ouvre."
+                }
+              ]
+            },
+            {
+              "id": "fr.sac",
+              "emoji": "🎒",
+              "word": "un sac",
+              "lines": [
+                {
+                  "q": "Qu'est-ce que c'est ?",
+                  "a": "C'est un sac."
+                },
+                {
+                  "q": "Où est le sac ?",
+                  "a": "Il est sous la chaise."
+                }
+              ]
+            },
+            {
+              "id": "fr.chaise",
+              "emoji": "🪑",
+              "word": "une chaise",
+              "lines": [
+                {
+                  "q": "Qu'est-ce que c'est ?",
+                  "a": "C'est une chaise."
+                },
+                {
+                  "q": "Assieds-toi sur la chaise.",
+                  "a": "Merci."
+                }
+              ]
+            },
+            {
+              "id": "fr.prof",
+              "emoji": "🧑‍🏫",
+              "word": "le professeur",
+              "lines": [
+                {
+                  "q": "Qui est-ce ?",
+                  "a": "C'est le professeur."
+                },
+                {
+                  "q": "Le professeur parle ?",
+                  "a": "Oui, il parle."
+                }
+              ]
+            },
+            {
+              "id": "fr.feuille",
+              "emoji": "📄",
+              "word": "une feuille",
+              "lines": [
+                {
+                  "q": "Qu'est-ce que c'est ?",
+                  "a": "C'est une feuille."
+                },
+                {
+                  "q": "Donne-moi une feuille, s'il te plaît.",
+                  "a": "Voilà."
+                }
+              ]
+            }
+          ],
+          "dialog": {
+            "title": "✂️ En classe",
+            "turns": [
+              {
+                "who": "🧑‍🏫",
+                "text": "Bonjour ! Prends une feuille."
+              },
+              {
+                "who": "🙋",
+                "text": "Voilà, j'ai une feuille."
+              },
+              {
+                "who": "🧑‍🏫",
+                "text": "Où sont les ciseaux ?"
+              },
+              {
+                "who": "🙋",
+                "text": "Ils sont sur la table."
+              },
+              {
+                "who": "🧑‍🏫",
+                "text": "Donne-moi les ciseaux, s'il te plaît."
+              },
+              {
+                "who": "🙋",
+                "text": "Voilà, prends-les."
+              },
+              {
+                "who": "🧑‍🏫",
+                "text": "Merci beaucoup !"
+              }
+            ]
+          }
+        },
+        "cafe": {
+          "title": "☕️ Au café",
+          "level": 1,
+          "cards": [
+            {
+              "id": "fr.cafe",
+              "emoji": "☕️",
+              "word": "un café",
+              "lines": [
+                {
+                  "q": "Qu'est-ce que c'est ?",
+                  "a": "C'est un café."
+                },
+                {
+                  "q": "Un café, s'il vous plaît.",
+                  "a": "Tout de suite."
+                }
+              ]
+            },
+            {
+              "id": "fr.eau",
+              "emoji": "💧",
+              "word": "de l'eau",
+              "lines": [
+                {
+                  "q": "Vous voulez de l'eau ?",
+                  "a": "Oui, s'il vous plaît."
+                }
+              ]
+            },
+            {
+              "id": "fr.pain",
+              "emoji": "🥖",
+              "word": "du pain",
+              "lines": [
+                {
+                  "q": "Qu'est-ce que c'est ?",
+                  "a": "C'est du pain."
+                },
+                {
+                  "q": "Donne-moi du pain.",
+                  "a": "Voilà."
+                }
+              ]
+            },
+            {
+              "id": "fr.addition",
+              "emoji": "🧾",
+              "word": "l'addition",
+              "lines": [
+                {
+                  "q": "L'addition, s'il vous plaît.",
+                  "a": "Oui, un instant."
+                }
+              ]
+            },
+            {
+              "id": "fr.table2",
+              "emoji": "🍽",
+              "word": "une table",
+              "lines": [
+                {
+                  "q": "Une table pour deux ?",
+                  "a": "Oui, par ici."
+                }
+              ]
+            }
+          ],
+          "dialog": {
+            "title": "☕️ Commander",
+            "turns": [
+              {
+                "who": "🙋",
+                "text": "Bonjour ! Une table pour deux ?"
+              },
+              {
+                "who": "🧑‍🍳",
+                "text": "Oui, par ici."
+              },
+              {
+                "who": "🙋",
+                "text": "Un café et de l'eau, s'il vous plaît."
+              },
+              {
+                "who": "🧑‍🍳",
+                "text": "Tout de suite."
+              },
+              {
+                "who": "🙋",
+                "text": "L'addition, s'il vous plaît."
+              },
+              {
+                "who": "🧑‍🍳",
+                "text": "Voilà. Merci beaucoup !"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "he": {
+      "title": "🇮🇱 עברית",
+      "hello": "שלום!",
+      "right": [
+        "נכון!",
+        "יפה מאוד!",
+        "כן!"
+      ],
+      "wrong": [
+        "לא.",
+        "עוד פעם."
+      ],
+      "topics": {
+        "mirpaa": {
+          "title": "🏥 במרפאה",
+          "level": 1,
+          "cards": [
+            {
+              "id": "he.mirpaa",
+              "emoji": "🏥",
+              "word": "מרפאה",
+              "lines": [
+                {
+                  "q": "מה זה?",
+                  "a": "זאת מרפאה."
+                }
+              ]
+            },
+            {
+              "id": "he.rofa",
+              "emoji": "👩‍⚕️",
+              "word": "רופאה",
+              "lines": [
+                {
+                  "q": "מי זאת?",
+                  "a": "זאת רופאה."
+                }
+              ]
+            },
+            {
+              "id": "he.telefon",
+              "emoji": "📞",
+              "word": "טלפון",
+              "lines": [
+                {
+                  "q": "מה זה?",
+                  "a": "זה טלפון."
+                }
+              ]
+            },
+            {
+              "id": "he.natsig",
+              "emoji": "🧑‍💼",
+              "word": "נציג",
+              "lines": [
+                {
+                  "q": "מי זה?",
+                  "a": "זה נציג."
+                }
+              ]
+            },
+            {
+              "id": "he.tor",
+              "emoji": "🗓",
+              "word": "תור",
+              "lines": [
+                {
+                  "q": "יש לך תור?",
+                  "a": "כן, יש לי תור."
+                }
+              ]
+            },
+            {
+              "id": "he.hamtana",
+              "emoji": "☎️",
+              "word": "נא להמתין על הקו",
+              "lines": [
+                {
+                  "q": "נא להמתין על הקו.",
+                  "a": "בסדר, אני ממתינה."
+                }
+              ]
+            },
+            {
+              "id": "he.keev",
+              "emoji": "🤕",
+              "word": "כואב לי",
+              "lines": [
+                {
+                  "q": "מה כואב לך?",
+                  "a": "כואב לי הראש."
+                }
+              ]
+            },
+            {
+              "id": "he.toda",
+              "emoji": "🙏",
+              "word": "תודה רבה",
+              "lines": [
+                {
+                  "q": "תודה רבה.",
+                  "a": "בבקשה."
+                }
+              ]
+            }
+          ],
+          "dialog": {
+            "title": "☎️ שיחה למוקד",
+            "turns": [
+              {
+                "who": "🧑‍💼",
+                "text": "שלום, מוקד המרפאה!"
+              },
+              {
+                "who": "🙋",
+                "text": "שלום, אני רוצה תור לרופאה."
+              },
+              {
+                "who": "🧑‍💼",
+                "text": "נא להמתין על הקו."
+              },
+              {
+                "who": "🧑‍💼",
+                "text": "יש תור ביום ראשון בשעה עשר?"
+              },
+              {
+                "who": "🙋",
+                "text": "כן, בסדר."
+              },
+              {
+                "who": "🧑‍💼",
+                "text": "מה השם שלך?"
+              },
+              {
+                "who": "🙋",
+                "text": "תודה רבה."
+              }
+            ]
+          }
+        }
+      }
+    },
+    "en": {
+      "title": "🇬🇧 English",
+      "hello": "Hello!",
+      "right": [
+        "Yes!",
+        "That's right!",
+        "Very good!"
+      ],
+      "wrong": [
+        "No.",
+        "Not quite.",
+        "Try again."
+      ],
+      "topics": {
+        "school": {
+          "title": "🏫 At school",
+          "level": 1,
+          "cards": [
+            {
+              "id": "en.scissors",
+              "emoji": "✂️",
+              "word": "scissors",
+              "lines": [
+                {
+                  "q": "What is it?",
+                  "a": "These are scissors."
+                },
+                {
+                  "q": "Where are the scissors?",
+                  "a": "They are on the table."
+                },
+                {
+                  "q": "Give me the scissors.",
+                  "a": "Here, take them."
+                }
+              ]
+            },
+            {
+              "id": "en.pencil",
+              "emoji": "✏️",
+              "word": "a pencil",
+              "lines": [
+                {
+                  "q": "What is it?",
+                  "a": "It is a pencil."
+                }
+              ]
+            },
+            {
+              "id": "en.book",
+              "emoji": "📕",
+              "word": "a book",
+              "lines": [
+                {
+                  "q": "What is it?",
+                  "a": "It is a book."
+                },
+                {
+                  "q": "Open the book.",
+                  "a": "All right."
+                }
+              ]
+            },
+            {
+              "id": "en.bag",
+              "emoji": "🎒",
+              "word": "a bag",
+              "lines": [
+                {
+                  "q": "Where is the bag?",
+                  "a": "It is under the chair."
+                }
+              ]
+            },
+            {
+              "id": "en.chair",
+              "emoji": "🪑",
+              "word": "a chair",
+              "lines": [
+                {
+                  "q": "What is it?",
+                  "a": "It is a chair."
+                }
+              ]
+            },
+            {
+              "id": "en.teacher",
+              "emoji": "🧑‍🏫",
+              "word": "a teacher",
+              "lines": [
+                {
+                  "q": "Who is it?",
+                  "a": "It is the teacher."
+                }
+              ]
+            }
+          ],
+          "dialog": {
+            "title": "✂️ In the classroom",
+            "turns": [
+              {
+                "who": "🧑‍🏫",
+                "text": "Hello! Take a sheet of paper."
+              },
+              {
+                "who": "🙋",
+                "text": "Here, I have one."
+              },
+              {
+                "who": "🧑‍🏫",
+                "text": "Where are the scissors?"
+              },
+              {
+                "who": "🙋",
+                "text": "They are on the table."
+              },
+              {
+                "who": "🧑‍🏫",
+                "text": "Give me the scissors, please."
+              },
+              {
+                "who": "🙋",
+                "text": "Here, take them."
+              },
+              {
+                "who": "🧑‍🏫",
+                "text": "Thank you very much!"
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}
