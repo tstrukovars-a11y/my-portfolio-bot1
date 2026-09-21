@@ -4,6 +4,8 @@
 # приходит человек со стороны, и кнопки бота ему видны те же, что всем
 # остальным. Второе — привязка ответа к фразе: перепутать их значит
 # исправить не то слово, и заметить это будет уже нечем.
+import re
+
 import pytest
 
 from conftest import run
@@ -124,12 +126,31 @@ def test_old_link_stops_working(db):
 
 
 def test_right_link_lets_the_person_in(db):
+    """Первым делом — выбор языка: русского он не знает."""
     db["settings"]["bot_username"] = "accent_hub_bot"
     message = Msg()
     message.text = f"/start check_{run(review.token())}"
     run(review.enter(message))
-    assert message.said and "Проверка озвучки" in message.said[0]
-    assert message.sent, "первая фраза не пришла"
+    assert message.said and "English" in message.said[0]
+    assert db["settings"][review.CHECKER_KEY + "42"] == "1"
+
+
+def test_language_choice_starts_the_work(db):
+    db["settings"][review.CHECKER_KEY + "42"] = "1"
+    call = Call("chk_ui_he")
+    run(review.pick_ui(call))
+    assert db["settings"][review.UI_KEY + "42"] == "he"
+    assert call.message.said and "בדיקת" in call.message.said[0]
+    assert call.message.sent, "первая фраза не пришла"
+
+
+def test_second_visit_skips_the_question(db):
+    """Спрашивать язык каждый раз — значит не помнить человека."""
+    db["settings"][review.UI_KEY + "42"] = "en"
+    message = Msg()
+    message.text = f"/start check_{run(review.token())}"
+    run(review.enter(message))
+    assert "Pronunciation check" in message.said[0]
 
 
 def test_a_stranger_cannot_vote(db):
@@ -161,7 +182,7 @@ def test_bad_verdict_asks_how_it_should_sound(db):
     call = Call("chk_bad", caption="מרפאה\n1 / 46")
     run(review.verdict(call))
     assert db["saved"][0]["verdict"] == "bad"
-    assert any("голосом" in text for text in call.message.said)
+    assert any("record" in text.lower() for text in call.message.said)
     assert db["settings"][review.WAIT_KEY + "42"] == "מרפאה"
 
 
@@ -235,7 +256,7 @@ def test_invite_card_carries_the_link(db):
     assert call.message.said
     card = call.message.said[0]
     assert "?start=check_" in card, "переслать нечего"
-    assert "иврит" in card.lower(), "человек не поймёт, о чём его просят"
+    assert "עברית" in card and "Hebrew" in card, "он прочтёт не на своём языке"
 
 
 def test_invite_says_why_it_cannot_be_built(db):
@@ -259,3 +280,37 @@ def test_admin_menu_offers_both_screens():
     buttons = [b.callback_data for row in admin._admin_menu().inline_keyboard
                for b in row]
     assert "admin_check" in buttons and "chk_send" in buttons
+
+
+# --- язык проверяющего -------------------------------------------------
+#
+# Он говорит на иврите и по-английски, русского не знает. Одно русское
+# слово в кнопке — и человек, которого попросили о помощи, сидит перед
+# экраном, которого не может прочесть.
+
+CYRILLIC = re.compile(r"[а-яёА-ЯЁ]")
+
+
+def _reviewer_texts():
+    for language in review.TEXTS.values():
+        yield from language.values()
+    yield review.INVITE
+    yield review.PICK
+    yield review.SHARE_TEXT
+
+
+@pytest.mark.parametrize("text", list(_reviewer_texts()))
+def test_no_russian_where_he_will_read(text):
+    assert not CYRILLIC.search(text), text
+
+
+def test_both_languages_say_the_same_things():
+    """Забыть строку в одном языке — значит показать пустую кнопку."""
+    assert set(review.TEXTS["he"]) == set(review.TEXTS["en"])
+    assert all(v.strip() for language in review.TEXTS.values()
+               for v in language.values())
+
+
+def test_english_is_the_default(db):
+    """Пока он не выбрал, говорим на языке, который знают оба."""
+    assert run(review.ui(42)) is review.TEXTS["en"]

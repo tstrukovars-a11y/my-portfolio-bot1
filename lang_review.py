@@ -39,6 +39,7 @@ CODE = "he"                      # проверяем иврит: остальн
 TOKEN_KEY = "lang_check_token"
 CHECKER_KEY = "lang_checker_"    # + id: человек уже входил по ссылке
 WAIT_KEY = "lang_check_wait_"    # + id: фраза, к которой ждём замечание
+UI_KEY = "lang_check_ui_"        # + id: на каком языке с ним говорить
 
 MAX_VOICES = 10                  # столько записей присылаем за раз
 
@@ -102,33 +103,87 @@ def queue(done: set) -> list:
 # ЭКРАН ПРОВЕРЯЮЩЕГО
 # ---------------------------------------------------------------------
 
-HELLO = (
-    "🎧 <b>Проверка озвучки</b>\n\n"
-    "Спасибо, что согласились. Машина расставляет огласовки сама и "
-    "иногда читает слово не тем словом — на слух это ловите только вы.\n\n"
-    "Дальше будут короткие записи. Послушайте и нажмите одну из двух "
-    "кнопок. Если звучит не так — можно тут же надиктовать голосом, как "
-    "правильно: это полезнее любого описания словами.\n\n"
-    "Можно бросить в любой момент и вернуться когда угодно — бот помнит, "
-    "что вы уже слушали.")
+# Проверяющий знает иврит и английский — и не знает русского. Значит,
+# по-русски здесь не должно быть ни слова: ни в кнопках, ни во всплывающих
+# подсказках, ни в приглашении, которое он открывает первым. Русский
+# остаётся только на экране владелицы.
+#
+# Язык он выбирает сам при входе. Иврит написан коротко и просто — его же
+# и попросим поправить, если что: он для этого и пришёл.
 
-DONE = ("🎉 Всё прослушано. Спасибо — теперь в уроках звучит то, что нужно.\n\n"
-        "Если появятся новые фразы, бот их пришлёт.")
+TEXTS = {
+    "he": {
+        "hello": (
+            "🎧 <b>בדיקת הקראה</b>\n\n"
+            "תודה על העזרה. המחשב מנקד לבד, ולפעמים יוצאת מילה אחרת. "
+            "רק מי שמדבר עברית שומע את זה.\n\n"
+            "יגיעו הקלטות קצרות. אחרי כל אחת יש שני כפתורים: "
+            "«נשמע נכון» או «לא נכון». אם לא נכון — אפשר להקליט בקול "
+            "איך אומרים. זה עוזר יותר מכל הסבר.\n\n"
+            "אפשר להפסיק בכל רגע ולחזור אחר כך: הבוט זוכר איפה הפסקתם."),
+        "done": "🎉 זה הכול. תודה רבה!",
+        "ok": "👍 נשמע נכון",
+        "bad": "👎 לא נכון",
+        "skip": "⏭ לדלג",
+        "next": "⏭ הלאה",
+        "ask_note": "אפשר להקליט בקול איך אומרים נכון — או לכתוב. אפשר גם לדלג.",
+        "toast_ok": "נשמר",
+        "toast_bad": "תודה, נתקן",
+        "toast_skip": "מדלג",
+        "saved_voice": "ההקלטה נשמרה. הבא:",
+        "saved_text": "נשמר. הבא:",
+    },
+    "en": {
+        "hello": (
+            "🎧 <b>Pronunciation check</b>\n\n"
+            "Thank you for helping. The vowel marks are added by a machine, "
+            "and it sometimes reads one word as another — only someone who "
+            "speaks Hebrew can hear that.\n\n"
+            "You will get short recordings. After each one, two buttons: "
+            "“sounds right” or “not right”. If it is not right, you can "
+            "record how it should sound — that helps more than any "
+            "description.\n\n"
+            "Stop whenever you like and come back later: the bot remembers "
+            "what you have already heard."),
+        "done": "🎉 That's all of them. Thank you!",
+        "ok": "👍 Sounds right",
+        "bad": "👎 Not right",
+        "skip": "⏭ Skip",
+        "next": "⏭ Next",
+        "ask_note": ("Record how it should sound — or write it. "
+                     "You can skip this too."),
+        "toast_ok": "Saved",
+        "toast_bad": "Thanks, we'll fix it",
+        "toast_skip": "Skipping",
+        "saved_voice": "Recording saved. Next:",
+        "saved_text": "Saved. Next:",
+    },
+}
+
+PICK = ("בעברית או באנגלית?\n"
+        "Hebrew or English?")
 
 
-def _kb() -> InlineKeyboardMarkup:
+async def ui(user_id: int) -> dict:
+    """Язык проверяющего. По умолчанию английский: он понятен обоим."""
+    choice = await database.get_setting(UI_KEY + str(user_id))
+    return TEXTS.get(choice, TEXTS["en"])
+
+
+def _kb(t: dict) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="👍 Так и звучит", callback_data="chk_ok"),
-         InlineKeyboardButton(text="👎 Не так", callback_data="chk_bad")],
-        [InlineKeyboardButton(text="⏭ Пропустить", callback_data="chk_skip")]])
+        [InlineKeyboardButton(text=t["ok"], callback_data="chk_ok"),
+         InlineKeyboardButton(text=t["bad"], callback_data="chk_bad")],
+        [InlineKeyboardButton(text=t["skip"], callback_data="chk_skip")]])
 
 
 async def ask(message: Message, user_id: int):
     """Следующая непрослушанная фраза"""
+    t = await ui(user_id)
     done = await database.reviewed_by(CODE, user_id)
     left = queue(done)
     if not left:
-        await message.answer(DONE)
+        await message.answer(t["done"])
         return
 
     phrase = left[0]
@@ -143,7 +198,7 @@ async def ask(message: Message, user_id: int):
     await message.answer_audio(
         FSInputFile(lang.audio_path(CODE, phrase)),
         title="🎧", performer=" ", caption="\n".join(caption),
-        reply_markup=_kb())
+        reply_markup=_kb(t))
 
 
 @router.message(F.text.regexp(r"^/start\s+check_(\S+)"))
@@ -154,9 +209,36 @@ async def enter(message: Message):
         # причине: это не его забота, а владельца бота.
         raise SkipHandler
 
-    await database.set_setting(CHECKER_KEY + str(message.from_user.id), "1")
-    await message.answer(HELLO)
-    await ask(message, message.from_user.id)
+    user_id = message.from_user.id
+    await database.set_setting(CHECKER_KEY + str(user_id), "1")
+
+    if await database.get_setting(UI_KEY + str(user_id)):
+        await message.answer((await ui(user_id))["hello"])
+        await ask(message, user_id)
+        return
+
+    await message.answer(PICK, reply_markup=InlineKeyboardMarkup(
+        inline_keyboard=[[
+            InlineKeyboardButton(text="עברית", callback_data="chk_ui_he"),
+            InlineKeyboardButton(text="English", callback_data="chk_ui_en")]]))
+
+
+@router.callback_query(F.data.startswith("chk_ui_"))
+async def pick_ui(call: CallbackQuery):
+    user_id = call.from_user.id
+    if not await is_checker(user_id):
+        await call.answer()
+        return
+    choice = call.data.split("_")[-1]
+    await database.set_setting(UI_KEY + str(user_id),
+                               choice if choice in TEXTS else "en")
+    await call.answer()
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await call.message.answer((await ui(user_id))["hello"])
+    await ask(call.message, user_id)
 
 
 @router.message(F.text.regexp(r"^/(проверка|check)$"))
@@ -196,15 +278,16 @@ async def verdict(call: CallbackQuery):
         await call.answer()
         return
 
+    t = await ui(user_id)
     phrase = _current(call)
     choice = call.data.split("_")[1]
     if choice == "skip":
-        await call.answer("Пропускаю")
+        await call.answer(t["toast_skip"])
         # Пропуск тоже запоминаем, иначе бот будет предлагать одно и то
         # же по кругу, а человек — уходить.
         await database.save_review(CODE, phrase, user_id, _name(call), "skip")
     else:
-        await call.answer("Записала" if choice == "ok" else "Понятно, поправим")
+        await call.answer(t["toast_ok"] if choice == "ok" else t["toast_bad"])
         await database.save_review(CODE, phrase, user_id, _name(call),
                                    "ok" if choice == "ok" else "bad")
 
@@ -216,10 +299,9 @@ async def verdict(call: CallbackQuery):
     if choice == "bad":
         await database.set_setting(WAIT_KEY + str(user_id), phrase)
         await call.message.answer(
-            "Скажите голосом, как правильно — или напишите словами. "
-            "Можно и пропустить.",
+            t["ask_note"],
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                InlineKeyboardButton(text="⏭ Дальше", callback_data="chk_next")]]))
+                InlineKeyboardButton(text=t["next"], callback_data="chk_next")]]))
         return
 
     await ask(call.message, user_id)
@@ -247,7 +329,7 @@ async def voice_note(message: Message):
     voice = message.voice or message.audio or message.video_note
     await database.review_note(CODE, phrase, user_id, voice_id=voice.file_id)
     await database.set_setting(WAIT_KEY + str(user_id), "")
-    await message.answer("Записала ваш голос. Дальше:")
+    await message.answer((await ui(user_id))["saved_voice"])
     await ask(message, user_id)
 
 
@@ -260,7 +342,7 @@ async def text_note(message: Message):
 
     await database.review_note(CODE, phrase, user_id, note=message.text.strip())
     await database.set_setting(WAIT_KEY + str(user_id), "")
-    await message.answer("Записала. Дальше:")
+    await message.answer((await ui(user_id))["saved_text"])
     await ask(message, user_id)
 
 
@@ -295,8 +377,8 @@ async def report() -> str:
     return "\n".join(lines)
 
 
-SHARE_TEXT = ("Помогите проверить, как звучит иврит в уроках — "
-              "это пара минут и две кнопки")
+SHARE_TEXT = ("Could you check how the Hebrew sounds? "
+              "A few minutes, two buttons — עזרה קטנה עם עברית")
 
 
 def _share(address: str) -> str:
@@ -346,13 +428,23 @@ async def panel(call: CallbackQuery):
 # переслать. Просить о помощи голой ссылкой неловко, а сочинять текст
 # каждый раз заново — повод отложить.
 INVITE = (
-    "🎧 <b>Нужна пара минут вашего иврита</b>\n\n"
-    "Я собрала уроки на слух: бот произносит фразу, а человек угадывает, "
-    "что это. Огласовки машина расставляет сама и иногда читает слово не "
-    "тем словом — заметить это может только тот, кто на иврите говорит.\n\n"
-    "По ссылке — короткие записи и две кнопки: «так звучит» или «не так». "
-    "Если не так, можно тут же надиктовать голосом, как правильно.\n\n"
-    "Бросить можно в любой момент: бот помнит, что вы уже слушали.\n\n"
+    "🎧 <b>בדיקת הקראה בעברית</b>\n\n"
+    "אני בונה שיעורי עברית להאזנה: הבוט אומר משפט, והלומד מנחש מה זה. "
+    "המחשב מנקד לבד, ולפעמים יוצאת מילה אחרת — רק מי שמדבר עברית שומע "
+    "את זה.\n\n"
+    "בקישור יש הקלטות קצרות ושני כפתורים: «נשמע נכון» או «לא נכון». "
+    "אם לא נכון, אפשר מיד להקליט בקול איך אומרים.\n\n"
+    "אפשר להפסיק בכל רגע — הבוט זוכר איפה הפסקתם.\n\n"
+    "— — —\n\n"
+    "🎧 <b>Checking how Hebrew sounds</b>\n\n"
+    "I'm building Hebrew listening lessons: the bot says a phrase and the "
+    "learner guesses what it is. The vowel marks are added by a machine, "
+    "and it sometimes reads one word as another — only someone who speaks "
+    "Hebrew can hear that.\n\n"
+    "The link gives you short recordings and two buttons: “sounds right” "
+    "or “not right”. If it's not right, you can record how it should "
+    "sound.\n\n"
+    "Stop whenever you like — the bot remembers where you left off.\n\n"
     "{link}")
 
 
@@ -368,7 +460,7 @@ async def send_invite(call: CallbackQuery):
     if not address:
         await call.message.answer(
             "Ссылку пока не собрать: бот ещё не узнал своё имя в Телеграме. "
-            "Обычно это проходит после перезапуска.")
+            "Обычно это проходит после перезапуска.")   # это вижу только я
         return
 
     await call.message.answer(
