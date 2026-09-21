@@ -134,6 +134,56 @@ async def grant_command(message: Message):
     await message.answer("⚠️ Не записалось. Проверьте базу: /db")
 
 
+@router.message(F.text.regexp(r"^/касса"))
+async def till_command(message: Message):
+    """Ссылка на оплату картой: общая или для одного навыка.
+
+        /касса https://…              — на все навыки
+        /касса lang_he https://…      — только на иврит
+        /касса lang_he -              — убрать
+    """
+    if not config.is_admin(message.from_user.id):
+        return
+
+    parts = (message.text or "").split()
+    if len(parts) < 2:
+        lines = ["<b>Ссылка на оплату картой</b>", ""]
+        common = await database.get_setting("pay_url")
+        lines.append(f"Общая: {html.escape(common) if common else '—'}")
+        for skill, name in SKILLS.items():
+            own = await database.get_setting(PAY_URL_KEY + skill)
+            if own:
+                lines.append(f"{name}: {html.escape(own)}")
+        lines += ["", "<code>/касса https://ссылка</code> — на все навыки",
+                  "<code>/касса lang_he https://ссылка</code> — на один",
+                  "<code>/касса lang_he -</code> — убрать",
+                  "",
+                  "Пока ссылки нет, кнопки «оплатить картой» не будет: "
+                  "вести в никуда хуже, чем не предлагать."]
+        await message.answer("\n".join(lines), disable_web_page_preview=True)
+        return
+
+    if parts[1] in SKILLS:
+        key, value = PAY_URL_KEY + parts[1], " ".join(parts[2:]).strip()
+    else:
+        key, value = "pay_url", " ".join(parts[1:]).strip()
+
+    if value in ("-", "—", ""):
+        await database.set_setting(key, "")
+        await message.answer("Убрала. Кнопки картой больше нет.")
+        return
+
+    if not value.startswith("https://"):
+        # Telegram не примет кнопку с другой схемой, и человек увидит
+        # ошибку вместо оплаты.
+        await message.answer("Ссылка должна начинаться с https://")
+        return
+
+    await database.set_setting(key, value)
+    await message.answer(f"✅ Записала.\n{html.escape(value)}",
+                         disable_web_page_preview=True)
+
+
 @router.message(F.text.regexp(r"^/мои_навыки"))
 async def my_skills(message: Message):
     rows = await database.skills_of(message.from_user.id)

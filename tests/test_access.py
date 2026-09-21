@@ -140,3 +140,44 @@ def test_wall_talks_about_what_is_next():
     text = access.wall_text("lang_he", "Это был пробный урок целиком.")
     assert "пробный" in text
     assert "Иврит" in text
+
+
+# --- касса ------------------------------------------------------------
+
+class Msg:
+    def __init__(self, text, user_id=1):
+        self.text = text
+        self.said = []
+        self.from_user = type("U", (), {"id": user_id})()
+
+    async def answer(self, text, **kw):
+        self.said.append(text)
+
+
+def test_till_link_is_saved(settings, monkeypatch):
+    monkeypatch.setattr(config, "ADMIN_ID", 1)
+    run(access.till_command(Msg("/касса lang_he https://yookassa.ru/x")))
+    assert settings["pay_url_lang_he"] == "https://yookassa.ru/x"
+
+
+def test_till_refuses_a_broken_link(settings, monkeypatch):
+    """Telegram не примет такую кнопку — человек увидит ошибку вместо кассы."""
+    monkeypatch.setattr(config, "ADMIN_ID", 1)
+    message = Msg("/касса yookassa.ru/x")
+    run(access.till_command(message))
+    assert "https://" in message.said[0]
+    assert "pay_url" not in settings
+
+
+def test_till_can_be_cleared(settings, monkeypatch):
+    monkeypatch.setattr(config, "ADMIN_ID", 1)
+    settings["pay_url"] = "https://old"
+    run(access.till_command(Msg("/касса -")))
+    assert settings["pay_url"] == ""
+
+
+def test_till_is_not_for_readers(settings, monkeypatch):
+    monkeypatch.setattr(config, "ADMIN_ID", 1)
+    message = Msg("/касса https://yookassa.ru/x", user_id=999)
+    run(access.till_command(message))
+    assert not message.said and not settings
