@@ -1,20 +1,27 @@
-# lang.py — язык учится без языка-прокладки.
+# lang.py — язык на слух, без языка-прокладки.
 #
-# Так учат в стране языка: значение показывают, а не переводят. Поэтому в
-# уроке нет ни одного русского слова — только картинка, фраза и выбор.
-# Перевод дал бы понимание быстрее, но чужое: человек запоминал бы пару
-# «ножницы = ciseaux» и каждый раз ходил бы через русский.
+# Учится тот язык, на котором живёшь. С текстом переводчик справляется:
+# даже кривой перевод вывески понятен. А в кафе и по телефону текста нет —
+# автоответчик говорит быстро и не ждёт. Поэтому урок начинается со звука,
+# а написанное показывается уже после ответа.
 #
-# Отсюда три правила, на которых держится модуль:
+# И без русского: перевод дал бы понимание быстрее, но чужое — человек
+# запоминал бы пару «ножницы = ciseaux» и каждый раз ходил бы через него.
 #
-#   1. Вопрос и ответ — на изучаемом языке. Значение несёт эмодзи.
-#   2. Слова возвращаются: то, что встретилось в теме «школа», всплывает
+# Отсюда четыре правила, на которых держится модуль:
+#
+#   1. Сначала слышно, потом видно. Фраза звучит, значение несёт эмодзи,
+#      текст появляется после ответа — как закрепление, а не подсказка.
+#   2. Половина заданий — ответы: расслышать мало, надо дать понять, что
+#      понял, или переспросить. Для этого есть отдельная тема.
+#   3. Слова возвращаются: то, что встретилось в теме «школа», всплывает
 #      в диалоге и в следующей теме. Повторение делает понимание своим.
-#   3. Проверка — выбором, а не набором текста: иврит с русской
+#   4. Проверка — выбором, а не набором текста: иврит с русской
 #      клавиатуры не наберёшь, и урок сломался бы на первом же слове.
 #
 # Содержание лежит в data/lang.json и правится без кода: добавить тему —
 # это дописать словарь, а не трогать модуль.
+import hashlib
 import json
 import logging
 import os
@@ -22,14 +29,16 @@ import random
 
 from aiogram import Router, F
 from aiogram.types import (Message, CallbackQuery, InlineKeyboardMarkup,
-                           InlineKeyboardButton)
+                           InlineKeyboardButton, FSInputFile)
 
 import config
 import database
 
 router = Router()
 
-DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "lang.json")
+HERE = os.path.dirname(os.path.abspath(__file__))
+DATA = os.path.join(HERE, "data", "lang.json")
+AUDIO = os.path.join(HERE, "data", "audio")
 STATE_KEY = "lang_state_"        # + id: урок целиком, чтобы пережить деплой
 LESSON = 8                       # карточек в уроке: больше не досиживают
 
@@ -65,6 +74,25 @@ def all_cards(code: str) -> list:
 
 
 # ---------------------------------------------------------------------
+# ЗВУК
+# ---------------------------------------------------------------------
+#
+# В стране текста нет: автоответчик не ждёт, а в кафе никто не пишет.
+# Кривой перевод на бумаге понятен, речь на слух — нет. Поэтому главное
+# упражнение здесь — слушать, и только потом читать.
+#
+# Файлы озвучены заранее (tools/make_audio.py) и лежат рядом с кодом:
+# синтезировать на сервере нечем, да и ходить в чужой сервис на каждое
+# задание незачем. Имя файла — отпечаток текста, чтобы фраза, которую
+# нужно узнать на слух, не читалась глазами в проигрывателе.
+
+def audio_path(code: str, text: str):
+    name = hashlib.sha1(text.encode("utf-8")).hexdigest()[:12] + ".m4a"
+    path = os.path.join(AUDIO, code, name)
+    return path if os.path.exists(path) else None
+
+
+# ---------------------------------------------------------------------
 # УРОК
 # ---------------------------------------------------------------------
 
@@ -85,8 +113,17 @@ def build(code: str, topic: str, known: set) -> list:
 
     tasks = []
     for i, card in enumerate(picked):
-        # Чередуем: «что это» (выбрать фразу) и «покажи» (выбрать картинку).
-        tasks.append({"card": card, "kind": "say" if i % 2 == 0 else "show"})
+        # Слух первым: «услышал — покажи» и «услышал — ответь». Чтение
+        # остаётся запасным вариантом, когда звука для фразы нет.
+        if audio_path(code, card["word"]):
+            kind = "hear"
+        elif audio_path(code, card["lines"][0]["q"]):
+            kind = "reply"
+        else:
+            kind = "say" if i % 2 == 0 else "show"
+        if kind == "hear" and i % 2 and audio_path(code, card["lines"][0]["q"]):
+            kind = "reply"          # чередуем узнавание и ответ
+        tasks.append({"card": card, "kind": kind})
     return tasks
 
 
@@ -95,7 +132,7 @@ def options(code: str, card: dict, kind: str) -> list:
     pool = [c for c in all_cards(code) if c["id"] != card["id"]]
     random.shuffle(pool)
     others = pool[:3]
-    if kind == "say":
+    if kind in ("say", "reply"):
         items = [(card["lines"][0]["a"], card["id"])] + \
                 [(c["lines"][0]["a"], c["id"]) for c in others]
     else:
@@ -105,12 +142,29 @@ def options(code: str, card: dict, kind: str) -> list:
     return items
 
 
+# Подпись под звуком — без текста фразы: в ней весь смысл задания.
+LISTEN = {"hear": "🎧", "reply": "🎧 …?"}
+
+
 def question(code: str, task: dict) -> str:
     card = task["card"]
     line = card["lines"][0]
-    if task["kind"] == "say":
+    kind = task["kind"]
+    if kind in LISTEN:
+        return LISTEN[kind]
+    if kind == "say":
         return f"{card['emoji']}\n\n<b>{line['q']}</b>"
     return f"<b>{card['word']}</b>"
+
+
+def sound(code: str, task: dict):
+    """Файл, который надо услышать, либо None"""
+    card = task["card"]
+    if task["kind"] == "hear":
+        return audio_path(code, card["word"])
+    if task["kind"] == "reply":
+        return audio_path(code, card["lines"][0]["q"])
+    return None
 
 
 def _kb(items: list, right_id: str) -> InlineKeyboardMarkup:
@@ -160,9 +214,10 @@ def _topics_kb(code: str) -> InlineKeyboardMarkup:
 @router.message(F.text.regexp(r"^/(язык|lang)"))
 async def lang_command(message: Message):
     await message.answer(
-        "🗣 <b>Язык без перевода</b>\n\nВыберите язык. Дальше русского не "
-        "будет: значение показывает картинка, а слова возвращаются в других "
-        "фразах — так понимание становится своим.",
+        "🎧 <b>Язык на слух</b>\n\nВыберите язык. Дальше русского не будет: "
+        "фраза звучит, а значение показывает картинка.\n\nГлавное здесь — "
+        "расслышать и ответить хоть как-то: в кафе и по телефону текста "
+        "нет, а переводчик не поможет.",
         reply_markup=_langs_kb())
 
 
@@ -221,9 +276,19 @@ async def _ask(message: Message, user_id: int):
 
     task = {"card": card, "kind": state["kinds"][state["i"]]}
     items = options(code, card, task["kind"])
-    await message.answer(
-        f"{question(code, task)}\n\n<i>{state['i'] + 1} / {len(state['ids'])}</i>",
-        reply_markup=_kb(items, card["id"]))
+    caption = (f"{question(code, task)}\n\n"
+               f"<i>{state['i'] + 1} / {len(state['ids'])}</i>")
+    markup = _kb(items, card["id"])
+
+    voice = sound(code, task)
+    if voice:
+        # Заголовок нейтральный: имя файла и подпись видны в проигрывателе,
+        # а фразу нужно узнать ухом.
+        await message.answer_audio(FSInputFile(voice), title="🎧",
+                                   performer=" ", caption=caption,
+                                   reply_markup=markup)
+        return
+    await message.answer(caption, reply_markup=markup)
 
 
 @router.callback_query(F.data.startswith("lang_a_"))
@@ -239,7 +304,19 @@ async def answer(call: CallbackQuery):
     await call.answer(random.choice(data.get("right" if right else "wrong", ["…"])))
 
     card_id = state["ids"][state["i"]]
+    kind = state["kinds"][state["i"]]
     await database.lang_seen(user_id, card_id, right)
+
+    # После звука показываем фразу письменно — тогда услышанное
+    # закрепляется написанием, а не наоборот.
+    if kind in LISTEN:
+        card = next((c for c in all_cards(state["code"]) if c["id"] == card_id), None)
+        if card:
+            said = card["word"] if kind == "hear" else card["lines"][0]["q"]
+            try:
+                await call.message.answer(f"🎧 <b>{said}</b>")
+            except Exception:
+                pass
     if right:
         state["right"] += 1
     state["i"] += 1

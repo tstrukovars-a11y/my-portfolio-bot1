@@ -261,6 +261,107 @@
               }
             ]
           }
+        },
+        "ask": {
+          "title": "🔁 Je n'ai pas compris",
+          "level": 1,
+          "cards": [
+            {
+              "id": "fr.pardon",
+              "emoji": "❓",
+              "word": "Pardon ?",
+              "lines": [
+                {
+                  "q": "Pardon ?",
+                  "a": "Je répète : bonjour."
+                }
+              ]
+            },
+            {
+              "id": "fr.encore",
+              "emoji": "🔁",
+              "word": "Encore une fois, s'il vous plaît.",
+              "lines": [
+                {
+                  "q": "Encore une fois, s'il vous plaît.",
+                  "a": "Bien sûr."
+                }
+              ]
+            },
+            {
+              "id": "fr.lentement",
+              "emoji": "🐢",
+              "word": "Plus lentement, s'il vous plaît.",
+              "lines": [
+                {
+                  "q": "Plus lentement, s'il vous plaît.",
+                  "a": "D'accord, lentement."
+                }
+              ]
+            },
+            {
+              "id": "fr.comprends",
+              "emoji": "🤷",
+              "word": "Je ne comprends pas.",
+              "lines": [
+                {
+                  "q": "Vous comprenez ?",
+                  "a": "Non, je ne comprends pas."
+                }
+              ]
+            },
+            {
+              "id": "fr.compris",
+              "emoji": "👍",
+              "word": "J'ai compris.",
+              "lines": [
+                {
+                  "q": "Vous comprenez ?",
+                  "a": "Oui, j'ai compris."
+                }
+              ]
+            },
+            {
+              "id": "fr.attendez",
+              "emoji": "✋",
+              "word": "Un instant, s'il vous plaît.",
+              "lines": [
+                {
+                  "q": "Un instant, s'il vous plaît.",
+                  "a": "Oui, j'attends."
+                }
+              ]
+            }
+          ],
+          "dialog": {
+            "title": "📞 Au téléphone",
+            "turns": [
+              {
+                "who": "☎️",
+                "text": "Bonjour, vous êtes au service clients."
+              },
+              {
+                "who": "🙋",
+                "text": "Pardon ? Plus lentement, s'il vous plaît."
+              },
+              {
+                "who": "☎️",
+                "text": "Vous êtes au service clients. Un instant."
+              },
+              {
+                "who": "🙋",
+                "text": "Oui, j'attends."
+              },
+              {
+                "who": "☎️",
+                "text": "Merci d'avoir attendu."
+              },
+              {
+                "who": "🙋",
+                "text": "J'ai compris. Merci !"
+              }
+            ]
+          }
         }
       }
     },
@@ -403,6 +504,107 @@
               }
             ]
           }
+        },
+        "ask": {
+          "title": "🔁 לא הבנתי",
+          "level": 1,
+          "cards": [
+            {
+              "id": "he.slicha",
+              "emoji": "❓",
+              "word": "סליחה?",
+              "lines": [
+                {
+                  "q": "סליחה?",
+                  "a": "אני חוזרת: שלום."
+                }
+              ]
+            },
+            {
+              "id": "he.odpaam",
+              "emoji": "🔁",
+              "word": "עוד פעם, בבקשה.",
+              "lines": [
+                {
+                  "q": "עוד פעם, בבקשה.",
+                  "a": "בסדר, עוד פעם."
+                }
+              ]
+            },
+            {
+              "id": "he.leat",
+              "emoji": "🐢",
+              "word": "לאט, בבקשה.",
+              "lines": [
+                {
+                  "q": "לאט, בבקשה.",
+                  "a": "בסדר, לאט."
+                }
+              ]
+            },
+            {
+              "id": "he.lomevin",
+              "emoji": "🤷",
+              "word": "אני לא מבין.",
+              "lines": [
+                {
+                  "q": "אתה מבין?",
+                  "a": "לא, אני לא מבין."
+                }
+              ]
+            },
+            {
+              "id": "he.hevanti",
+              "emoji": "👍",
+              "word": "הבנתי.",
+              "lines": [
+                {
+                  "q": "אתה מבין?",
+                  "a": "כן, הבנתי."
+                }
+              ]
+            },
+            {
+              "id": "he.rega",
+              "emoji": "✋",
+              "word": "רגע, בבקשה.",
+              "lines": [
+                {
+                  "q": "רגע, בבקשה.",
+                  "a": "כן, אני ממתין."
+                }
+              ]
+            }
+          ],
+          "dialog": {
+            "title": "📞 בטלפון",
+            "turns": [
+              {
+                "who": "☎️",
+                "text": "שלום, הגעת למוקד השירות."
+              },
+              {
+                "who": "🙋",
+                "text": "סליחה? לאט, בבקשה."
+              },
+              {
+                "who": "☎️",
+                "text": "הגעת למוקד השירות. רגע, בבקשה."
+              },
+              {
+                "who": "🙋",
+                "text": "כן, אני ממתין."
+              },
+              {
+                "who": "☎️",
+                "text": "תודה על ההמתנה."
+              },
+              {
+                "who": "🙋",
+                "text": "הבנתי. תודה רבה!"
+              }
+            ]
+          }
         }
       }
     },
@@ -533,6 +735,107 @@
               {
                 "who": "🧑‍🏫",
                 "text": "Thank you very much!"
+              }
+            ]
+          }
+        },
+        "ask": {
+          "title": "🔁 I didn't catch that",
+          "level": 1,
+          "cards": [
+            {
+              "id": "en.sorry",
+              "emoji": "❓",
+              "word": "Sorry?",
+              "lines": [
+                {
+                  "q": "Sorry?",
+                  "a": "I said hello."
+                }
+              ]
+            },
+            {
+              "id": "en.again",
+              "emoji": "🔁",
+              "word": "Again, please.",
+              "lines": [
+                {
+                  "q": "Again, please.",
+                  "a": "Of course."
+                }
+              ]
+            },
+            {
+              "id": "en.slowly",
+              "emoji": "🐢",
+              "word": "More slowly, please.",
+              "lines": [
+                {
+                  "q": "More slowly, please.",
+                  "a": "All right, slowly."
+                }
+              ]
+            },
+            {
+              "id": "en.dontget",
+              "emoji": "🤷",
+              "word": "I don't understand.",
+              "lines": [
+                {
+                  "q": "Do you understand?",
+                  "a": "No, I don't understand."
+                }
+              ]
+            },
+            {
+              "id": "en.got",
+              "emoji": "👍",
+              "word": "I understand.",
+              "lines": [
+                {
+                  "q": "Do you understand?",
+                  "a": "Yes, I understand."
+                }
+              ]
+            },
+            {
+              "id": "en.moment",
+              "emoji": "✋",
+              "word": "One moment, please.",
+              "lines": [
+                {
+                  "q": "One moment, please.",
+                  "a": "Yes, I am waiting."
+                }
+              ]
+            }
+          ],
+          "dialog": {
+            "title": "📞 On the phone",
+            "turns": [
+              {
+                "who": "☎️",
+                "text": "Hello, you have reached customer service."
+              },
+              {
+                "who": "🙋",
+                "text": "Sorry? More slowly, please."
+              },
+              {
+                "who": "☎️",
+                "text": "You have reached customer service. One moment."
+              },
+              {
+                "who": "🙋",
+                "text": "Yes, I am waiting."
+              },
+              {
+                "who": "☎️",
+                "text": "Thank you for waiting."
+              },
+              {
+                "who": "🙋",
+                "text": "I understand. Thank you!"
               }
             ]
           }

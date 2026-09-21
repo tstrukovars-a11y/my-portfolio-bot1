@@ -77,8 +77,13 @@ def test_lesson_is_not_endless():
 
 
 def test_both_kinds_of_task_appear():
+    """Узнать на слух и ответить на слух — оба задания в одном уроке.
+
+    Только узнавание — и человек понимает, но молчит; только ответы — и
+    он отвечает наугад, не расслышав вопроса.
+    """
     kinds = {t["kind"] for t in lang.build("fr", "ecole", set())}
-    assert kinds == {"say", "show"}
+    assert kinds == {"hear", "reply"}
 
 
 def test_options_contain_the_right_answer_once():
@@ -107,3 +112,62 @@ def test_question_shows_picture_for_say_and_word_for_show():
 
 def test_unknown_topic_gives_no_lesson():
     assert lang.build("fr", "нет-такой-темы", set()) == []
+
+
+# --- звук -------------------------------------------------------------
+#
+# Слушать важнее, чем читать: кривой перевод на бумаге понятен, речь на
+# слух — нет. Поэтому проверяем, что озвучено то, что нужно слышать.
+
+AUDIO = Path(__file__).resolve().parent.parent / "data" / "audio"
+
+
+def test_audio_is_shipped_with_the_code():
+    """Синтезировать на сервере нечем — файлы едут в репозитории."""
+    assert (AUDIO / "he").is_dir()
+    assert list((AUDIO / "he").glob("*.m4a"))
+
+
+@pytest.mark.parametrize("code", ["he", "fr", "en"])
+def test_every_word_has_a_voice(code):
+    missing = [card["word"] for c, card in all_cards() if c == code
+               and not lang.audio_path(code, card["word"])]
+    assert not missing, f"без звука: {missing}"
+
+
+def test_unknown_text_has_no_file():
+    assert lang.audio_path("he", "такого текста нет") is None
+
+
+def test_file_name_hides_the_phrase():
+    """Имя файла видно в проигрывателе — фразу нужно узнать ухом."""
+    path = lang.audio_path("he", "מרפאה")
+    assert path and "מרפאה" not in path
+
+
+def test_listening_comes_first():
+    """Пока у фразы есть звук, читать её незачем."""
+    kinds = {t["kind"] for t in lang.build("he", "mirpaa", set())}
+    assert kinds <= {"hear", "reply"}
+
+
+def test_sound_matches_the_task():
+    card = lang.cards_of("he", "mirpaa")[0]
+    assert lang.sound("he", {"card": card, "kind": "hear"}) \
+        == lang.audio_path("he", card["word"])
+    assert lang.sound("he", {"card": card, "kind": "reply"}) \
+        == lang.audio_path("he", card["lines"][0]["q"])
+    assert lang.sound("he", {"card": card, "kind": "say"}) is None
+
+
+def test_generator_and_bot_agree_on_names():
+    """Разойдутся имена — звук молча перестанет находиться."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "make_audio", Path(__file__).resolve().parent.parent / "tools" / "make_audio.py")
+    tool = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tool)
+
+    text = "מרפאה"
+    assert lang.audio_path("he", text).endswith(tool.digest(text) + ".m4a")

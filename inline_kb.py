@@ -420,7 +420,7 @@ def get_intellect_menu(lang):
     # экран с условиями — это и есть вход в продукт.
     c = "📅 Мой календарь" if lang == "ru" else "📅 My calendar"
     # Язык без перевода: иврит, французский, английский.
-    la = "🗣 Язык без перевода" if lang == "ru" else "🗣 Language, no translation"
+    la = "🎧 Язык на слух" if lang == "ru" else "🎧 Language by ear"
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=d, callback_data="menu_diary")],
         [InlineKeyboardButton(text=g, callback_data="intellect_genetics")],
