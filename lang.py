@@ -131,10 +131,45 @@ def phrases(code: str) -> list:
 
 
 # ---------------------------------------------------------------------
+# УРОВЕНЬ
+# ---------------------------------------------------------------------
+#
+# Уровень здесь — не словарный запас, а то, сколько нужно удержать в
+# голове на слух:
+#
+#   1. Услышал слово — показал, что это. Значение несёт картинка.
+#   2. Услышал вопрос — выбрал ответ. Слово надо не только узнать, но и
+#      понять, о чём спрашивают.
+#   3. Услышал чужую реплику в разговоре — понял, что сказать дальше.
+#      Картинки нет, опоры нет, есть только речь.
+#
+# Считать сложность по длине фразы не вышло: «un crayon» и «a pencil» —
+# два слова из-за артикля, а трудности в них нет. Зато разница между
+# «узнать слово» и «ответить в разговоре» настоящая и слышна сразу.
+
+MAX_LEVEL = 3
+
+
+def turns_of(code: str) -> list:
+    """Пары реплик из диалогов: (что слышно, что отвечают).
+
+    Диалог — единственный материал, где речь идёт своим ходом и не ждёт,
+    пока вы вспомните слово. Поэтому третья ступень измеряется им.
+    """
+    out = []
+    for topic in ((content().get(code) or {}).get("topics") or {}).values():
+        turns = (topic.get("dialog") or {}).get("turns") or []
+        for first, second in zip(turns, turns[1:]):
+            if audio_path(code, first["text"]):
+                out.append((first["text"], second["text"]))
+    return out
+
+
+# ---------------------------------------------------------------------
 # УРОК
 # ---------------------------------------------------------------------
 
-def build(code: str, topic: str, known: set) -> list:
+def build(code: str, topic: str, known: set, level: int = 1) -> list:
     """Задания урока.
 
     Сначала идут новые карточки, потом те, что человек уже видел, — иначе
@@ -153,14 +188,18 @@ def build(code: str, topic: str, known: set) -> list:
     for i, card in enumerate(picked):
         # Слух первым: «услышал — покажи» и «услышал — ответь». Чтение
         # остаётся запасным вариантом, когда звука для фразы нет.
-        if audio_path(code, card["word"]):
+        #
+        # Чем выше ступень, тем реже картинка: узнавать слово по ней
+        # начинающему нужно, а тому, кто держит вопрос, — уже нет.
+        answers = audio_path(code, card["lines"][0]["q"])
+        if answers and (level >= 3 or (level == 2 and i % 2)):
+            kind = "reply"
+        elif audio_path(code, card["word"]):
             kind = "hear"
-        elif audio_path(code, card["lines"][0]["q"]):
+        elif answers:
             kind = "reply"
         else:
             kind = "say" if i % 2 == 0 else "show"
-        if kind == "hear" and i % 2 and audio_path(code, card["lines"][0]["q"]):
-            kind = "reply"          # чередуем узнавание и ответ
         tasks.append({"card": card, "kind": kind})
     return tasks
 
@@ -205,13 +244,110 @@ def sound(code: str, task: dict):
     return None
 
 
-def _kb(items: list, right_id: str) -> InlineKeyboardMarkup:
+def _kb(items: list, right_id: str, prefix: str = "lang_a_") -> InlineKeyboardMarkup:
     rows = []
     for text, cid in items:
         mark = "1" if cid == right_id else "0"
         rows.append([InlineKeyboardButton(text=text[:64],
-                                          callback_data=f"lang_a_{mark}")])
+                                          callback_data=prefix + mark)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+# ---------------------------------------------------------------------
+# ВХОДНОЙ ТЕСТ
+# ---------------------------------------------------------------------
+#
+# Спрашивать «какой у вас уровень» бессмысленно: человек либо скромничает,
+# либо называет школьный английский двадцатилетней давности. Поэтому
+# уровень не спрашивается, а слышится — шесть записей от слова к реплике.
+#
+# Тест короткий и обрывается сам: если обе фразы ступени не узнаны, дальше
+# слушать нечего, и лучше начать заниматься, чем добивать человека тем,
+# чего он ещё не понимает.
+
+EXAM = 2                         # заданий на ступень
+EXAM_KEY = "lang_exam_"          # + id: незаконченный тест
+LEVEL_KEY = "lang_level_"        # + id + _ + код языка
+
+
+def exam(code: str) -> list:
+    """Задания входного теста: слово → вопрос → реплика в разговоре"""
+    out = []
+
+    words = [c for c in all_cards(code) if audio_path(code, c["word"])]
+    random.shuffle(words)
+    out += [{"tier": 1, "kind": "hear", "id": c["id"]} for c in words[:EXAM]]
+
+    asks = [c for c in all_cards(code) if audio_path(code, c["lines"][0]["q"])]
+    random.shuffle(asks)
+    out += [{"tier": 2, "kind": "reply", "id": c["id"]} for c in asks[:EXAM]]
+
+    pairs = turns_of(code)
+    random.shuffle(pairs)
+    out += [{"tier": 3, "kind": "turn", "phrase": heard, "answer": reply}
+            for heard, reply in pairs[:EXAM]]
+    return out
+
+
+def turn_options(code: str, answer: str) -> list:
+    """Что ответить: верная реплика и три чужих
+
+    Чужие берём из ответов карточек — они того же вида и той же длины,
+    поэтому выбрать наугад по форме не выйдет, придётся расслышать.
+    """
+    pool = [c["lines"][0]["a"] for c in all_cards(code)
+            if c["lines"][0]["a"] != answer]
+    random.shuffle(pool)
+    items = [(answer, "1")] + [(text, "0") for text in pool[:3]]
+    random.shuffle(items)
+    return items
+
+
+def level_of(answers: list) -> int:
+    """Уровень по ответам: [(ступень, верно ли), …]
+
+    Достаточно одного попадания на ступени: на слух угадать чужую фразу
+    из четырёх вариантов — это уже понимание, а не везение. Требовать
+    оба ответа значило бы ронять человека на ступень вниз за одну помарку.
+    """
+    level = 1
+    for tier, right in answers:
+        if right:
+            level = max(level, tier)
+    return min(level, MAX_LEVEL)
+
+
+def exam_over(answers: list, tier: int) -> bool:
+    """Ступень провалена целиком — дальше будет только хуже"""
+    tried = [right for t, right in answers if t == tier]
+    return len(tried) >= EXAM and not any(tried)
+
+
+LEVEL_NAMES = {
+    1: "Слышу отдельные слова",
+    2: "Понимаю короткий вопрос",
+    3: "Держу реплику целиком",
+}
+
+LEVEL_NEXT = {
+    1: "Начнём со слов: их надо узнавать мгновенно, иначе фраза "
+       "рассыпается, пока вы вспоминаете первое слово.",
+    2: "Уроки будут из вопросов и ответов — тех, что звучат в кафе и по "
+       "телефону. Картинка останется через раз.",
+    3: "Дальше — вопрос и ответ без картинок: опора вам уже не нужна.",
+}
+
+
+async def level(user_id: int, code: str) -> int:
+    raw = await database.get_setting(f"{LEVEL_KEY}{user_id}_{code}")
+    try:
+        return max(1, min(MAX_LEVEL, int(raw)))
+    except (TypeError, ValueError):
+        return 1
+
+
+async def set_level(user_id: int, code: str, value: int):
+    await database.set_setting(f"{LEVEL_KEY}{user_id}_{code}", str(value))
 
 
 # ---------------------------------------------------------------------
@@ -244,10 +380,14 @@ def _langs_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def _topics_kb(code: str) -> InlineKeyboardMarkup:
+def _topics_kb(code: str, at_level: int = 0) -> InlineKeyboardMarkup:
     topics = (content().get(code) or {}).get("topics") or {}
     rows = [[InlineKeyboardButton(text=t["title"], callback_data=f"lang_t_{code}_{key}")]
             for key, t in topics.items()]
+    if at_level:
+        rows.append([InlineKeyboardButton(
+            text=f"🎚 {LEVEL_NAMES[at_level]} · проверить заново",
+            callback_data=f"lang_x_{code}")])
     rows.append([InlineKeyboardButton(text="⇦", callback_data="lang_open")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -276,8 +416,147 @@ async def pick_language(call: CallbackQuery):
     await call.answer()
     if not data:
         return
-    await call.message.answer(f"{data['hello']}\n\n{data['title']}",
-                              reply_markup=_topics_kb(code))
+
+    user_id = call.from_user.id
+    if not await database.get_setting(f"{LEVEL_KEY}{user_id}_{code}"):
+        # Уровень ещё не известен. Предлагаем проверить, но не запираем:
+        # тест — помощь, а не турникет, и начать с нуля можно сразу.
+        await call.message.answer(
+            f"{data['hello']}\n\n"
+            "Прежде чем начать — шесть записей, чтобы понять, что вы уже "
+            "слышите. Спрашивать «какой у вас уровень» бесполезно: это "
+            "видно только на слух.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🎧 Проверить слух",
+                                      callback_data=f"lang_x_{code}")],
+                [InlineKeyboardButton(text="Начать с простого",
+                                      callback_data=f"lang_s_{code}")],
+                [InlineKeyboardButton(text="⇦", callback_data="lang_open")]]))
+        return
+
+    await _topics(call.message, user_id, code)
+
+
+async def _topics(message: Message, user_id: int, code: str):
+    data = content().get(code) or {}
+    at = await level(user_id, code)
+    await message.answer(f"{data.get('hello', '')}\n\n{data.get('title', '')}",
+                         reply_markup=_topics_kb(code, at))
+
+
+@router.callback_query(F.data.startswith("lang_s_"))
+async def start_simple(call: CallbackQuery):
+    """Без теста — значит с первой ступени"""
+    code = call.data.split("_")[-1]
+    await call.answer()
+    await set_level(call.from_user.id, code, 1)
+    await _topics(call.message, call.from_user.id, code)
+
+
+# --- входной тест -----------------------------------------------------
+
+async def _exam_state(user_id: int):
+    raw = await database.get_setting(EXAM_KEY + str(user_id))
+    try:
+        return json.loads(raw) if raw else None
+    except (ValueError, TypeError):
+        return None
+
+
+@router.callback_query(F.data.startswith("lang_x_"))
+async def start_exam(call: CallbackQuery):
+    code = call.data.split("_")[-1]
+    await call.answer()
+    items = exam(code)
+    if not items:
+        await set_level(call.from_user.id, code, 1)
+        await _topics(call.message, call.from_user.id, code)
+        return
+
+    await database.set_setting(EXAM_KEY + str(call.from_user.id), json.dumps(
+        {"code": code, "i": 0, "answers": [], "items": items},
+        ensure_ascii=False))
+    await _exam_ask(call.message, call.from_user.id)
+
+
+async def _exam_ask(message: Message, user_id: int):
+    state = await _exam_state(user_id)
+    if not state:
+        return
+    items = state["items"]
+    if state["i"] >= len(items):
+        await _exam_finish(message, user_id, state)
+        return
+
+    code = state["code"]
+    item = items[state["i"]]
+    counter = f"\n\n<i>{state['i'] + 1} / {len(items)}</i>"
+
+    if item["kind"] == "turn":
+        voice = audio_path(code, item["phrase"])
+        markup = _kb(turn_options(code, item["answer"]), "1", "lang_xa_")
+        caption = LISTEN["reply"] + counter
+    else:
+        card = next((c for c in all_cards(code) if c["id"] == item["id"]), None)
+        if not card:
+            state["i"] += 1
+            await database.set_setting(EXAM_KEY + str(user_id),
+                                       json.dumps(state, ensure_ascii=False))
+            await _exam_ask(message, user_id)
+            return
+        task = {"card": card, "kind": item["kind"]}
+        voice = sound(code, task)
+        markup = _kb(options(code, card, item["kind"]), card["id"], "lang_xa_")
+        caption = question(code, task) + counter
+
+    if voice:
+        await message.answer_audio(FSInputFile(voice), title="🎧",
+                                   performer=" ", caption=caption,
+                                   reply_markup=markup)
+        return
+    await message.answer(caption, reply_markup=markup)
+
+
+@router.callback_query(F.data.startswith("lang_xa_"))
+async def exam_answer(call: CallbackQuery):
+    user_id = call.from_user.id
+    state = await _exam_state(user_id)
+    if not state:
+        await call.answer()
+        return
+
+    right = call.data.endswith("1")
+    data = content().get(state["code"]) or {}
+    await call.answer(random.choice(data.get("right" if right else "wrong", ["…"])))
+
+    tier = state["items"][state["i"]]["tier"]
+    state["answers"].append([tier, right])
+    state["i"] += 1
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+
+    # Ступень не взята ни разу — дальше только сложнее. Останавливаемся:
+    # добивать человека тем, чего он не понимает, незачем.
+    if exam_over([tuple(a) for a in state["answers"]], tier):
+        await _exam_finish(call.message, user_id, state)
+        return
+
+    await database.set_setting(EXAM_KEY + str(user_id),
+                               json.dumps(state, ensure_ascii=False))
+    await _exam_ask(call.message, user_id)
+
+
+async def _exam_finish(message: Message, user_id: int, state: dict):
+    code = state["code"]
+    at = level_of([tuple(a) for a in state["answers"]])
+    await database.set_setting(EXAM_KEY + str(user_id), "")
+    await set_level(user_id, code, at)
+
+    await message.answer(
+        f"🎚 <b>{LEVEL_NAMES[at]}</b>\n\n{LEVEL_NEXT[at]}")
+    await _topics(message, user_id, code)
 
 
 @router.callback_query(F.data.startswith("lang_t_"))
@@ -286,7 +565,7 @@ async def pick_topic(call: CallbackQuery):
     await call.answer()
 
     known = await database.lang_known(call.from_user.id)
-    tasks = build(code, topic, known)
+    tasks = build(code, topic, known, await level(call.from_user.id, code))
     if not tasks:
         await call.message.answer("Здесь пока пусто.")
         return

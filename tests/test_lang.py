@@ -86,7 +86,7 @@ def test_both_kinds_of_task_appear():
     Только узнавание — и человек понимает, но молчит; только ответы — и
     он отвечает наугад, не расслышав вопроса.
     """
-    kinds = {t["kind"] for t in lang.build("fr", "ecole", set())}
+    kinds = {t["kind"] for t in lang.build("fr", "ecole", set(), level=2)}
     assert kinds == {"hear", "reply"}
 
 
@@ -151,7 +151,7 @@ def test_file_name_hides_the_phrase():
 
 def test_listening_comes_first():
     """Пока у фразы есть звук, читать её незачем."""
-    kinds = {t["kind"] for t in lang.build("he", "mirpaa", set())}
+    kinds = {t["kind"] for t in lang.build("he", "mirpaa", set(), level=2)}
     assert kinds <= {"hear", "reply"}
 
 
@@ -254,3 +254,75 @@ def test_language_lives_with_travel():
 def test_language_screen_is_not_a_dead_end():
     assert any(b.callback_data == "go_home"
                for row in lang._langs_kb().inline_keyboard for b in row)
+
+
+# --- ступени ----------------------------------------------------------
+#
+# Уровень определяет не сложность слов, а то, на что человек опирается:
+# на картинку, на вопрос или ни на что. Проверяем, что ступени и правда
+# разные, — иначе тест на входе показывает цифру и ничего не меняет.
+
+@pytest.mark.parametrize("code", ["he", "fr", "en"])
+def test_first_level_leans_on_pictures(code):
+    kinds = {t["kind"] for t in lang.build(code, list(
+        lang.content()[code]["topics"])[0], set(), level=1)}
+    assert kinds == {"hear"}
+
+
+@pytest.mark.parametrize("code", ["he", "fr", "en"])
+def test_top_level_drops_the_pictures(code):
+    kinds = {t["kind"] for t in lang.build(code, list(
+        lang.content()[code]["topics"])[0], set(), level=3)}
+    assert "hear" not in kinds
+
+
+def test_levels_differ_from_each_other():
+    topic = list(lang.content()["he"]["topics"])[0]
+    made = [tuple(t["kind"] for t in lang.build("he", topic, set(), lvl))
+            for lvl in (1, 2, 3)]
+    assert len(set(made)) == 3, "ступени дают одинаковые уроки"
+
+
+# --- входной тест -----------------------------------------------------
+
+@pytest.mark.parametrize("code", ["he", "fr", "en"])
+def test_exam_climbs_all_three_steps(code):
+    """Тест из одних слов покажет всем первый уровень."""
+    tiers = [t["tier"] for t in lang.exam(code)]
+    assert set(tiers) == {1, 2, 3}
+    assert tiers == sorted(tiers), "ступени идут не по порядку"
+
+
+@pytest.mark.parametrize("code", ["he", "fr", "en"])
+def test_exam_only_asks_what_can_be_heard(code):
+    for item in lang.exam(code):
+        if item["kind"] == "turn":
+            assert lang.audio_path(code, item["phrase"])
+        else:
+            card = next(c for c in lang.all_cards(code) if c["id"] == item["id"])
+            text = card["word"] if item["kind"] == "hear" else card["lines"][0]["q"]
+            assert lang.audio_path(code, text)
+
+
+def test_turn_options_have_one_right_answer():
+    items = lang.turn_options("he", "בסדר.")
+    assert len(items) == 4
+    assert sum(1 for _, mark in items if mark == "1") == 1
+
+
+def test_level_is_the_highest_step_taken():
+    assert lang.level_of([(1, True), (1, True), (2, False), (2, True)]) == 2
+    assert lang.level_of([(1, True), (2, True), (3, True)]) == 3
+    assert lang.level_of([(1, False), (1, False)]) == 1
+
+
+def test_one_hit_is_enough_for_the_step():
+    """Требовать оба ответа — ронять человека на ступень за одну помарку."""
+    assert lang.level_of([(1, True), (1, False), (2, True), (2, False)]) == 2
+
+
+def test_failed_step_ends_the_exam():
+    """Дальше только сложнее — добивать незачем."""
+    assert lang.exam_over([(1, False), (1, False)], 1)
+    assert not lang.exam_over([(1, False)], 1)
+    assert not lang.exam_over([(1, True), (1, False)], 1)
