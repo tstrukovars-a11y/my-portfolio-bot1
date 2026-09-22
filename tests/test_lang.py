@@ -326,3 +326,34 @@ def test_failed_step_ends_the_exam():
     assert lang.exam_over([(1, False), (1, False)], 1)
     assert not lang.exam_over([(1, False)], 1)
     assert not lang.exam_over([(1, True), (1, False)], 1)
+
+
+# --- помощник в звонке -------------------------------------------------
+
+def test_call_helper_needs_a_public_address(monkeypatch):
+    monkeypatch.delenv("RENDER_EXTERNAL_URL", raising=False)
+    assert lang.call_url() == ""
+    monkeypatch.setenv("RENDER_EXTERNAL_URL", "https://bot.example.com/")
+    assert lang.call_url() == "https://bot.example.com/call"
+
+
+def test_call_helper_is_not_offered_over_http(monkeypatch):
+    """Микрофон браузер даёт только на https — ссылка вела бы в тупик."""
+    monkeypatch.setenv("RENDER_EXTERNAL_URL", "http://localhost:8080")
+    assert lang.call_url() == ""
+
+
+def test_call_helper_hangs_on_hebrew_only(monkeypatch):
+    monkeypatch.setenv("RENDER_EXTERNAL_URL", "https://bot.example.com")
+    he = [b.url for row in lang._topics_kb("he").inline_keyboard for b in row]
+    fr = [b.url for row in lang._topics_kb("fr").inline_keyboard for b in row]
+    assert any(u and u.endswith("/call") for u in he)
+    assert not any(u and u.endswith("/call") for u in fr)
+
+
+def test_call_page_speaks_hebrew_and_listens():
+    page = (Path(__file__).resolve().parent.parent / "call.html").read_text(
+        encoding="utf-8")
+    assert 'lang = "he-IL"' in page, "распознаём не тот язык"
+    assert 'utter.lang = "he-IL"' in page, "говорим не на том языке"
+    assert "הקישו" in page, "цифру из меню автоответчика взять нечем"

@@ -394,6 +394,12 @@ def _langs_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def call_url() -> str:
+    """Адрес помощника в звонке. Пусто — значит внешнего адреса нет."""
+    base = os.environ.get("RENDER_EXTERNAL_URL", "").rstrip("/")
+    return f"{base}/call" if base.startswith("https://") else ""
+
+
 def _topics_kb(code: str, at_level: int = 0, paid: bool = True) -> InlineKeyboardMarkup:
     topics = (content().get(code) or {}).get("topics") or {}
     free = free_topics(code)
@@ -405,6 +411,12 @@ def _topics_kb(code: str, at_level: int = 0, paid: bool = True) -> InlineKeyboar
         rows.append([InlineKeyboardButton(
             text=("🔒 " if shut else "") + t["title"],
             callback_data=f"lang_t_{code}_{key}")])
+    # Помощник в звонке — только у иврита: ради поликлиники он и делался.
+    # Ссылкой, а не мини-приложением: распознавание речи есть в Chrome, а
+    # во встроенном браузере Telegram его нет.
+    if code == "he" and call_url():
+        rows.append([InlineKeyboardButton(text="📞 Помощник в звонке",
+                                          url=call_url())])
     if at_level:
         rows.append([InlineKeyboardButton(
             text=f"🎚 {LEVEL_NAMES[at_level]} · проверить заново",
@@ -421,6 +433,29 @@ async def lang_command(message: Message):
         "расслышать и ответить хоть как-то: в кафе и по телефону текста "
         "нет, а переводчик не поможет.",
         reply_markup=_langs_kb())
+
+
+@router.message(F.text.regexp(r"^/(звонок|call)\b"))
+async def call_command(message: Message):
+    """Ссылка на помощника — с предупреждением про браузер.
+
+    Открытая во встроенном браузере Telegram, страница молча не будет
+    слышать: человек решит, что сломано, а сломан выбор браузера.
+    """
+    url = call_url()
+    if not url:
+        await message.answer("Помощник открывается только на сервере — "
+                             "локально внешнего адреса нет.")
+        return
+    await message.answer(
+        "📞 <b>Помощник в звонке</b>\n\n"
+        "Телефон — на громкую связь, ноутбук рядом. Компьютер слышит "
+        "автоответчик, показывает, какую цифру нажать, и говорит за вас "
+        "на иврите: произносить самой ничего не нужно.\n\n"
+        f"<b>Откройте в Chrome:</b>\n{url}\n\n"
+        "<i>Именно в Chrome — в других браузерах распознавания речи нет. "
+        "Звук уходит в Google, разговор медицинский: решайте сами.</i>",
+        disable_web_page_preview=True)
 
 
 @router.callback_query(F.data == "lang_open")

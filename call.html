@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Звонок в клинику</title>
+<!--
+  Помощник в разговоре по телефону.
+
+  Телефон в руке и на громкой связи, ноутбук рядом. Микрофон ноутбука
+  слышит динамик телефона — записывать сам звонок операционные системы
+  запрещают, а слушать комнату не запрещает никто.
+
+  Две работы, и вторая важнее первой:
+
+  1. Слышит и пишет. Речь на иврите превращается в текст, а из фразы
+     автоответчика «להעברת תור הקישו 2» вытаскивается цифра и выводится
+     во весь экран. В меню важно не понять, а успеть.
+
+  2. Говорит. Готовые фразы произносятся вслух голосом браузера — в
+     трубку. Это снимает главный страх: не нужно выговаривать иврит
+     самой и не нужно, чтобы вас поняли с первого раза.
+
+  Распознавание работает в Chrome: он единственный даёт Web Speech API с
+  ивритом. Звук уходит в Google — для медицинского разговора это стоит
+  знать, поэтому сказано прямо на экране.
+-->
+<style>
+  :root {
+    --bg: #0f1115; --card: #171a21; --line: #262b36;
+    --text: #e8eaf0; --dim: #8a90a0; --accent: #4f8cff;
+    --hot: #ffb020; --ok: #35c07a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: 16px;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--dim); font-size: 14px; margin-bottom: 16px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 14px; padding: 14px; margin-bottom: 12px;
+  }
+  label { display: block; color: var(--dim); font-size: 13px; margin-bottom: 6px; }
+  textarea, input {
+    width: 100%; background: #0c0e13; color: var(--text);
+    border: 1px solid var(--line); border-radius: 10px;
+    padding: 10px; font: inherit; resize: vertical;
+  }
+  textarea { min-height: 84px; }
+  button {
+    background: var(--accent); color: #fff; border: 0; border-radius: 10px;
+    padding: 11px 16px; font: inherit; font-weight: 600; cursor: pointer;
+  }
+  button.ghost { background: #222735; color: var(--text); }
+  button.wide { width: 100%; }
+  button:disabled { opacity: .45; cursor: default; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
+
+  /* Цифра меню — единственное, что нужно увидеть за полсекунды. */
+  #press {
+    display: none; background: var(--hot); color: #000;
+    border-radius: 14px; padding: 18px; text-align: center;
+    font-size: 40px; font-weight: 800; margin-bottom: 12px;
+  }
+  #press small { display: block; font-size: 15px; font-weight: 600; opacity: .75; }
+
+  .say {
+    display: block; width: 100%; text-align: right; direction: rtl;
+    background: #1d2330; border: 1px solid var(--line); color: var(--text);
+    border-radius: 10px; padding: 12px; margin-bottom: 8px;
+    font-size: 18px; cursor: pointer;
+  }
+  .say .ru { display: block; direction: ltr; text-align: left;
+             color: var(--dim); font-size: 13px; margin-top: 4px; }
+  .say:hover { border-color: var(--accent); }
+
+  #heard { max-height: 320px; overflow-y: auto; }
+  .line { padding: 8px 0; border-bottom: 1px solid var(--line); direction: rtl;
+          text-align: right; font-size: 17px; }
+  .line:last-child { border-bottom: 0; }
+  .line.partial { color: var(--dim); }
+  .tag { display: inline-block; font-size: 12px; color: var(--dim);
+         direction: ltr; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+         background: #555; margin-left: 6px; vertical-align: middle; }
+  .dot.on { background: var(--ok); }
+  .warn { color: var(--dim); font-size: 13px; margin-top: 10px; }
+  .hide { display: none; }
+</style>
+</head>
+<body>
+
+<h1>Звонок в клинику</h1>
+<div class="sub">Телефон — на громкую связь. Ноутбук слушает и говорит за вас.</div>
+
+<!-- ПОДГОТОВКА -->
+<div id="prep">
+  <div class="card">
+    <label>Что нужно решить — своими словами</label>
+    <textarea id="context" placeholder="Записана на 25 сентября на МРТ груди, не могу прийти, надо перенести. Сегодня седьмой день цикла, следующий с 21 октября."></textarea>
+  </div>
+
+  <div class="card grid">
+    <div>
+      <label>Теудат зеут</label>
+      <input id="id" inputmode="numeric" placeholder="000000000">
+    </div>
+    <div>
+      <label>Имя, как в клинике</label>
+      <input id="name" placeholder="Татьяна">
+    </div>
+  </div>
+
+  <div class="card">
+    <label>Зачем звоним</label>
+    <div class="row" id="goals"></div>
+  </div>
+
+  <button class="wide" id="start">📞 Начинаю звонить</button>
+  <div class="warn">
+    Распознавание речи работает в Chrome и отправляет звук в Google.
+    Разговор медицинский — решайте сами. Кнопки с фразами работают и без
+    распознавания: они просто говорят вслух.
+  </div>
+</div>
+
+<!-- ЗВОНОК -->
+<div id="call" class="hide">
+  <div id="press"></div>
+
+  <div class="grid">
+    <div>
+      <div class="card">
+        <div class="row" style="justify-content: space-between; align-items: center;">
+          <b>Слышу</b>
+          <span><span class="dot" id="dot"></span><span class="tag" id="state">выключено</span></span>
+        </div>
+        <div id="heard"></div>
+      </div>
+      <div class="row">
+        <button class="ghost" id="mic">🎙 Слушать</button>
+        <button class="ghost" id="clear">Очистить</button>
+        <button class="ghost" id="back">⇦ К подготовке</button>
+      </div>
+    </div>
+
+    <div>
+      <div class="card">
+        <b>Сказать</b>
+        <div id="phrases" style="margin-top: 10px;"></div>
+      </div>
+      <div class="card">
+        <label>Своя фраза на иврите — скажу вслух</label>
+        <input id="custom" dir="rtl" placeholder="…">
+        <div class="row" style="margin-top: 8px;">
+          <button id="speakCustom">🔊 Сказать</button>
+        </div>
+      </div>
+      <div class="card">
+        <b>Мои данные</b>
+        <div id="facts" style="margin-top: 8px;"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---------------------------------------------------------------------
+// ФРАЗЫ
+// ---------------------------------------------------------------------
+//
+// Русская подпись — для того, кто нажимает, ивритская — для того, кто
+// слушает в трубке. Первой всегда идёт фраза, которая объясняет, кто
+// звонит: администратор должен понять это раньше, чем начнёт спрашивать.
+
+const GOALS = {
+  move:   "перенести запись",
+  cancel: "отменить запись",
+  make:   "записаться",
+  ask:    "спросить о результате",
+};
+
+const COMMON = [
+  ["שלום, אני מדברת דרך מתרגם. בבקשה, לאט.", "Здравствуйте, я говорю через переводчик. Медленнее, пожалуйста."],
+  ["סליחה? עוד פעם, בבקשה.", "Простите? Ещё раз, пожалуйста."],
+  ["לאט, בבקשה.", "Медленнее, пожалуйста."],
+  ["רגע, בבקשה.", "Минутку, пожалуйста."],
+  ["הבנתי. תודה רבה!", "Поняла. Спасибо!"],
+  ["אפשר באנגלית?", "Можно по-английски?"],
+];
+
+const BY_GOAL = {
+  move: [
+    ["אני רוצה להעביר תור.", "Хочу перенести запись."],
+    ["יש לי תור ואני לא יכולה להגיע.", "У меня есть запись, я не смогу прийти."],
+    ["אפשר תור אחר?", "Можно другую запись?"],
+    ["מתי יש תור פנוי?", "Когда есть свободная запись?"],
+  ],
+  cancel: [
+    ["אני רוצה לבטל תור.", "Хочу отменить запись."],
+    ["לא אוכל להגיע.", "Не смогу прийти."],
+  ],
+  make: [
+    ["אני רוצה תור.", "Хочу записаться."],
+    ["יש לי הפניה.", "У меня есть направление."],
+    ["מתי יש תור פנוי?", "Когда есть свободная запись?"],
+  ],
+  ask: [
+    ["אני רוצה לשאול על תוצאה.", "Хочу спросить о результате."],
+    ["עשיתי בדיקה.", "Я сдавала анализ."],
+  ],
+};
+
+let goal = "move";
+
+// ---------------------------------------------------------------------
+// ЦИФРА В МЕНЮ
+// ---------------------------------------------------------------------
+//
+// Автоответчик говорит «הקישו 2» либо словом — «הקישו שתיים». Цифру он
+// произносит быстро и один раз, поэтому её вынимаем из любой формы и
+// показываем во весь экран, пока не скажут следующую.
+
+const WORDS = {
+  "אפס": 0, "אחת": 1, "אחד": 1, "שתיים": 2, "שניים": 2, "שלוש": 3,
+  "שלושה": 3, "ארבע": 4, "ארבעה": 4, "חמש": 5, "חמישה": 5, "שש": 6,
+  "שישה": 6, "שבע": 7, "שבעה": 7, "שמונה": 8, "תשע": 9, "תשעה": 9,
+};
+const PRESS_WORDS = ["הקישו", "הקש", "הקישי", "לחצו", "לחץ", "חייגו"];
+
+function digitFrom(text) {
+  if (!PRESS_WORDS.some(w => text.includes(w))) return null;
+  const digits = text.match(/[0-9]/);
+  if (digits) return digits[0];
+  for (const [word, value] of Object.entries(WORDS)) {
+    if (text.includes(word)) return String(value);
+  }
+  return null;
+}
+
+function showPress(digit, why) {
+  const box = document.getElementById("press");
+  box.style.display = "block";
+  box.innerHTML = "ЖМИ " + digit + "<small>" + why + "</small>";
+}
+
+// ---------------------------------------------------------------------
+// ГОЛОС
+// ---------------------------------------------------------------------
+//
+// Говорит браузер. Голос выбираем ивритский: английским движком иврит
+// читается так, что его не понимает никто.
+
+let voice = null;
+function pickVoice() {
+  const all = speechSynthesis.getVoices();
+  voice = all.find(v => v.lang && v.lang.toLowerCase().startsWith("he")) || null;
+}
+speechSynthesis.onvoiceschanged = pickVoice;
+pickVoice();
+
+function say(text) {
+  if (!text.trim()) return;
+  // Пока говорим — не слушаем: иначе браузер распознаёт сам себя и
+  // экран заполняется тем, что мы только что сказали.
+  const wasOn = listening;
+  if (wasOn) stopMic();
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.lang = "he-IL";
+  if (voice) utter.voice = voice;
+  utter.rate = 0.9;
+  utter.onend = () => { if (wasOn) startMic(); };
+  speechSynthesis.cancel();
+  speechSynthesis.speak(utter);
+}
+
+// ---------------------------------------------------------------------
+// СЛУХ
+// ---------------------------------------------------------------------
+
+let recogniser = null, listening = false, wantListening = false;
+
+function setState(on, note) {
+  document.getElementById("dot").className = "dot" + (on ? " on" : "");
+  document.getElementById("state").textContent = note;
+  document.getElementById("mic").textContent = on ? "⏸ Не слушать" : "🎙 Слушать";
+}
+
+function addLine(text, partial) {
+  const box = document.getElementById("heard");
+  let last = box.lastElementChild;
+  if (partial && last && last.classList.contains("partial")) {
+    last.textContent = text;
+    return;
+  }
+  const line = document.createElement("div");
+  line.className = "line" + (partial ? " partial" : "");
+  line.textContent = text;
+  if (last && last.classList.contains("partial") && !partial) last.remove();
+  box.appendChild(line);
+  box.scrollTop = box.scrollHeight;
+}
+
+function startMic() {
+  const Recogniser = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!Recogniser) {
+    setState(false, "нет распознавания — нужен Chrome");
+    return;
+  }
+  wantListening = true;
+  if (listening) return;
+
+  recogniser = new Recogniser();
+  recogniser.lang = "he-IL";
+  recogniser.continuous = true;
+  recogniser.interimResults = true;
+
+  recogniser.onstart = () => { listening = true; setState(true, "слушаю"); };
+  recogniser.onerror = (e) => {
+    setState(false, e.error === "not-allowed" ? "нет доступа к микрофону" : e.error);
+    if (e.error === "not-allowed") wantListening = false;
+  };
+  // Браузер обрывает распознавание сам через минуту-две тишины. Молча
+  // поднимаем обратно, иначе посреди разговора всё замолкает.
+  recogniser.onend = () => {
+    listening = false;
+    if (wantListening) { setTimeout(startMic, 300); } else { setState(false, "выключено"); }
+  };
+  recogniser.onresult = (event) => {
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const text = event.results[i][0].transcript.trim();
+      const final = event.results[i].isFinal;
+      addLine(text, !final);
+      const digit = digitFrom(text);
+      if (digit !== null) showPress(digit, text);
+    }
+  };
+  try { recogniser.start(); } catch (e) { /* уже запущено */ }
+}
+
+function stopMic() {
+  wantListening = false;
+  if (recogniser) { try { recogniser.stop(); } catch (e) {} }
+  listening = false;
+  setState(false, "выключено");
+}
+
+// ---------------------------------------------------------------------
+// ЭКРАНЫ
+// ---------------------------------------------------------------------
+
+function drawGoals() {
+  const box = document.getElementById("goals");
+  box.innerHTML = "";
+  for (const [key, name] of Object.entries(GOALS)) {
+    const button = document.createElement("button");
+    button.className = key === goal ? "" : "ghost";
+    button.textContent = name;
+    button.onclick = () => { goal = key; drawGoals(); };
+    box.appendChild(button);
+  }
+}
+
+function drawPhrases() {
+  const box = document.getElementById("phrases");
+  box.innerHTML = "";
+  const name = document.getElementById("name").value.trim();
+  const list = [...(BY_GOAL[goal] || []), ...COMMON];
+  if (name) {
+    list.splice(1, 0, ["קוראים לי " + name + ".", "Меня зовут " + name + "."]);
+  }
+  for (const [he, ru] of list) {
+    const button = document.createElement("button");
+    button.className = "say";
+    button.innerHTML = he + '<span class="ru">' + ru + "</span>";
+    button.onclick = () => say(he);
+    box.appendChild(button);
+  }
+}
+
+function drawFacts() {
+  // Свои данные под рукой: теудат зеут диктуют в каждом звонке, а
+  // контекст держать в голове во время разговора на чужом языке нельзя.
+  const box = document.getElementById("facts");
+  const id = document.getElementById("id").value.trim();
+  const context = document.getElementById("context").value.trim();
+  box.innerHTML = "";
+  if (id) {
+    const line = document.createElement("div");
+    line.className = "line";
+    line.style.direction = "ltr";
+    line.style.textAlign = "left";
+    line.style.fontSize = "22px";
+    line.textContent = id.split("").join(" ");
+    box.appendChild(line);
+  }
+  if (context) {
+    const line = document.createElement("div");
+    line.style.direction = "ltr";
+    line.style.textAlign = "left";
+    line.style.color = "#8a90a0";
+    line.style.paddingTop = "8px";
+    line.textContent = context;
+    box.appendChild(line);
+  }
+}
+
+document.getElementById("start").onclick = () => {
+  // Разговор сохраняем в этом браузере: позвонят ещё раз, и не придётся
+  // вспоминать теудат зеут и то, о чём был прошлый звонок.
+  try {
+    localStorage.setItem("call", JSON.stringify({
+      context: document.getElementById("context").value,
+      id: document.getElementById("id").value,
+      name: document.getElementById("name").value,
+      goal: goal,
+    }));
+  } catch (e) {}
+  drawPhrases();
+  drawFacts();
+  document.getElementById("prep").classList.add("hide");
+  document.getElementById("call").classList.remove("hide");
+  startMic();
+};
+
+document.getElementById("back").onclick = () => {
+  stopMic();
+  document.getElementById("call").classList.add("hide");
+  document.getElementById("prep").classList.remove("hide");
+};
+document.getElementById("mic").onclick = () => { listening ? stopMic() : startMic(); };
+document.getElementById("clear").onclick = () => {
+  document.getElementById("heard").innerHTML = "";
+  document.getElementById("press").style.display = "none";
+};
+document.getElementById("speakCustom").onclick = () => {
+  say(document.getElementById("custom").value);
+};
+
+try {
+  const saved = JSON.parse(localStorage.getItem("call") || "{}");
+  if (saved.context) document.getElementById("context").value = saved.context;
+  if (saved.id) document.getElementById("id").value = saved.id;
+  if (saved.name) document.getElementById("name").value = saved.name;
+  if (saved.goal) goal = saved.goal;
+} catch (e) {}
+drawGoals();
+</script>
+</body>
+</html>

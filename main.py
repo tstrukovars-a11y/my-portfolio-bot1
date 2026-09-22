@@ -188,6 +188,24 @@ def make_handle_ping(bot: Bot, dp: Dispatcher):
                     "Connection: close\r\n\r\n"
                 ).encode("utf-8") + payload
 
+        elif path == "/call" and method == "GET":
+            # Помощник в телефонном разговоре. Открывается в Chrome, а не
+            # в Telegram: распознавание речи есть только у него.
+            try:
+                with open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                       "call.html"), "rb") as f:
+                    body_bytes = f.read()
+            except OSError as e:
+                logging.error(f"Страница звонка не читается: {e}")
+                body_bytes = b"<h1>404</h1>"
+            response = (
+                f"HTTP/1.1 200 OK\r\n"
+                f"Content-Type: text/html; charset=utf-8\r\n"
+                f"Cache-Control: no-cache\r\n"
+                f"Content-Length: {len(body_bytes)}\r\n"
+                f"Connection: close\r\n\r\n"
+            ).encode('utf-8') + body_bytes
+
         elif path == "/rally" and method == "GET":
             body_bytes = rally.page()
             response = (
