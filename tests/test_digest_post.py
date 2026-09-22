@@ -208,3 +208,64 @@ def test_telegram_silence_does_not_erase_the_name(settings):
 
     assert run(digest.refresh_bot_name(Broken())) is False
     assert settings[digest.BOT_KEY] == "accent_hub_bot"
+
+
+# --- обзор генетики ---------------------------------------------------
+#
+# Источники англоязычные: термины в переводе плывут. Значит, сводка —
+# единственное место, где читатель вообще поймёт, о чём речь, и без неё
+# блок публиковать нельзя.
+
+def test_genetics_block_needs_a_summary(monkeypatch, settings):
+    async def headlines():
+        return "US scientists map the genome of…"
+
+    async def no_summary(*args, **kwargs):
+        return ""
+
+    monkeypatch.setattr(digest, "_genetics_text", headlines)
+    monkeypatch.setattr(digest, "_summary", no_summary)
+    assert run(digest._genetics_post()) == ""
+
+
+def test_genetics_block_is_skipped_without_headlines(monkeypatch, settings):
+    async def nothing():
+        return ""
+
+    monkeypatch.setattr(digest, "_genetics_text", nothing)
+    assert run(digest._genetics_post()) == ""
+
+
+def test_genetics_block_shows_summary_and_links(monkeypatch, settings):
+    async def headlines():
+        return "[Первый](http://a)\n[Второй](http://b)\n[Третий](http://c)\n[Лишний](http://d)"
+
+    async def summary(text, prompt, key, what):
+        return "Короткий разбор."
+
+    monkeypatch.setattr(digest, "_genetics_text", headlines)
+    monkeypatch.setattr(digest, "_summary", summary)
+    post = run(digest._genetics_post())
+    assert "🧬" in post and "Короткий разбор" in post
+    assert "Первый" in post and "Лишний" not in post, "в пост лезет всё подряд"
+
+
+def test_genetics_prompt_forbids_medical_advice():
+    """Канал ведёт врач, и намёк на рекомендацию здесь дороже ошибки."""
+    low = digest.GEN_PROMPT.lower()
+    assert "нельзя" in low
+    assert "мышах" in low or "клетках" in low, "нет запрета выдавать опыт за лечение"
+    assert "учёные доказали" in low
+
+
+def test_summaries_do_not_share_a_slot():
+    """Одна настройка на две темы — и генетика затрёт экономику."""
+    assert digest.GEN_SUMMARY_KEY != digest.SUMMARY_KEY
+
+
+def test_rates_heading_has_no_time_of_day():
+    import fx_rates
+
+    assert "утром" not in fx_rates.morning_block.__doc__.split("\n")[0].lower()
+    source = open(fx_rates.__file__, encoding="utf-8").read()
+    assert '"💱 *Курсы*' in source

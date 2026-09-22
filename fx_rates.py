@@ -398,7 +398,7 @@ async def morning_block() -> str:
     # Разметка Markdown, а не HTML: утренний выпуск собирается вместе с
     # новостными ссылками, которые приходят из RSS уже в Markdown, и
     # смешивать две разметки в одном сообщении нельзя.
-    return "💱 *Курсы утром*\n\n" + "\n\n".join(lines) if lines else ""
+    return "💱 *Курсы*\n\n" + "\n\n".join(lines) if lines else ""
 
 
 async def latest_rates() -> dict:

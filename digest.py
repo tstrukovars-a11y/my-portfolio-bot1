@@ -1016,13 +1016,18 @@ SUMMARY_PROMPT = (
 )
 
 
-async def _news_summary(headlines: str) -> str:
-    """Несколько строк о том, что стоит за заголовками. Пусто — не вышло."""
+async def _summary(headlines: str, prompt: str, key: str, what: str) -> str:
+    """Несколько строк о том, что стоит за заголовками. Пусто — не вышло.
+
+    Одна и та же работа на любую тему: заголовки внутрь, связный текст
+    наружу. Раз в сутки на тему — ответ кладётся в настройку с датой,
+    иначе каждый показ поста стоил бы обращения к модели.
+    """
     if not headlines.strip():
         return ""
 
     today = (await _local_now()).strftime("%Y-%m-%d")
-    saved = await database.get_setting(SUMMARY_KEY) or ""
+    saved = await database.get_setting(key) or ""
     if saved.startswith(today + "|"):
         return saved.split("|", 1)[1]
 
@@ -1038,21 +1043,92 @@ async def _news_summary(headlines: str) -> str:
     try:
         answer = await client.messages.create(
             model=SUMMARY_MODEL, max_tokens=SUMMARY_MAX,
-            system=SUMMARY_PROMPT,
+            system=prompt,
             messages=[{"role": "user", "content": headlines[:4000]}])
         text = (answer.content[0].text or "").strip()
     except Exception as e:
         # Молчим в канале, но говорим владельцу: иначе сводка пропадёт
         # незаметно и причина останется только в логах Render.
-        logging.error(f"Сводка новостей не собралась: {type(e).__name__}: {e}")
+        logging.error(f"Сводка «{what}» не собралась: {type(e).__name__}: {e}")
         await database.set_setting(
             "digest_last_error",
-            f"сводка новостей: {type(e).__name__}: {str(e)[:120]}")
+            f"сводка «{what}»: {type(e).__name__}: {str(e)[:120]}")
         return ""
 
     if text:
-        await database.set_setting(SUMMARY_KEY, f"{today}|{text}")
+        await database.set_setting(key, f"{today}|{text}")
     return text
+
+
+async def _news_summary(headlines: str) -> str:
+    return await _summary(headlines, SUMMARY_PROMPT, SUMMARY_KEY, "новости")
+
+
+# ---------------------------------------------------------------------
+# ГЕНЕТИКА
+# ---------------------------------------------------------------------
+#
+# Обзор устроен как деловой: те же заголовки, тот же разбор — но тема
+# требует двух вещей, которых нет в экономике.
+#
+# Первое: источники англоязычные, потому что термины в переводе плывут.
+# Значит, сводка — единственное место, где читатель вообще поймёт, о чём
+# речь, и её задача не пересказать заголовки, а объяснить смысл.
+#
+# Второе: это медицина. Ни диагнозов, ни советов сдать анализ, ни
+# «учёные доказали» — исследование на мышах не лечит людей, и канал не
+# вправе намекать на обратное.
+
+GEN_SUMMARY_KEY = "digest_genetics_summary"
+GEN_HEADLINES = 3                        # больше в пост не влезает
+
+GEN_PROMPT = (
+    "Ты редактор телеграм-канала, который ведёт врач-генетик. "
+    "Читатели — обычные люди без медицинского образования.\n\n"
+    "Из англоязычных заголовков ниже сделай короткую сводку на русском: "
+    "2–3 предложения о том, что произошло и почему это важно.\n\n"
+    "Правила:\n"
+    "— пиши только о том, что есть в заголовках, ничего не додумывай;\n"
+    "— объясняй термины простыми словами: читатель не знает, что такое "
+    "экзом или CRISPR;\n"
+    "— никаких советов сдать анализ, принять препарат или обратиться к "
+    "врачу — это медицинская рекомендация, её давать нельзя;\n"
+    "— не превращай исследование в вывод: работа на клетках или мышах "
+    "не означает лечения для людей, так и пиши;\n"
+    "— без «учёные доказали» и сенсационного тона;\n"
+    "— обычный текст без разметки."
+)
+
+
+async def _genetics_text() -> str:
+    """Заголовки по генетике из всех стран, сколько поместится в пост"""
+    lines = []
+    for key in ("gen_us", "gen_il", "gen_kr", "gen_cn"):
+        got = await database.get_daily_news(key)
+        content = (got[0] if isinstance(got, (tuple, list)) else got) or ""
+        lines += [x for x in content.split("\n") if x.strip()]
+    return "\n".join(lines[:GEN_HEADLINES * 3])
+
+
+async def _genetics_post() -> str:
+    """Блок «Генетика» для утреннего выпуска. Пусто — блока не будет.
+
+    Без сводки блок не выходит вовсе: голый список английских заголовков
+    в русском канале — это не материал, а ссылки, которые никто не
+    откроет.
+    """
+    headlines = await _genetics_text()
+    if not headlines:
+        return ""
+
+    summary = await _summary(headlines, GEN_PROMPT, GEN_SUMMARY_KEY, "генетика")
+    if not summary:
+        return ""
+
+    import news_fetcher
+    head = "\n".join(headlines.split("\n")[:GEN_HEADLINES])
+    return (f"🧬 *Генетика*\n\n{news_fetcher._escape_markdown(summary)}\n\n"
+            f"{head}")
 
 
 async def _news_post() -> str:
@@ -1180,6 +1256,16 @@ async def publish_slot(bot: Bot, force: str = None) -> str:
             # заголовками нельзя.
             parts.append(f"_{_motto(await _local_now())}_")
         parts.append(news)
+
+        # Генетика идёт до курсов: это чтение, а курсы — цифра, к которой
+        # возвращаются. Цифру внизу найти легче, чем текст между блоками.
+        try:
+            genetics = await _genetics_post()
+            if genetics:
+                parts.append(genetics)
+        except Exception as e:
+            logging.warning(f"Дайджест: обзор генетики не собрался: {e}")
+
         try:
             import fx_rates
             rates = await fx_rates.morning_block()
@@ -1689,6 +1775,27 @@ async def digest_command(message: Message, bot: Bot):
             + "\n\nСобрать заново: <code>/digest сводка заново</code>")
         return
 
+    if command in ("генетика", "genetics"):
+        if len(parts) > 2 and parts[2].strip().lower() in ("заново", "reset"):
+            await database.set_setting(GEN_SUMMARY_KEY, "")
+            await message.answer("✅ Обзор генетики соберу заново.")
+            return
+        headlines = await _genetics_text()
+        if not headlines:
+            await message.answer("Заголовков по генетике пока нет — "
+                                 "сборщик обновляет ленты раз в сутки.")
+            return
+        summary = await _summary(headlines, GEN_PROMPT, GEN_SUMMARY_KEY,
+                                 "генетика")
+        await message.answer(
+            (f"🧬 <b>Обзор генетики</b>\n\n{html.escape(summary)}"
+             if summary else
+             "Обзор не собрался — вероятно, нет ключа Anthropic. Без него "
+             "блок в канал не выйдет: одни английские заголовки читать "
+             "никто не станет.")
+            + "\n\nСобрать заново: <code>/digest генетика заново</code>")
+        return
+
     if command == "motto":
         now = await _local_now()
         if len(parts) > 2:
@@ -1869,6 +1976,7 @@ async def digest_command(message: Message, bot: Bot):
     lines.append("\n<code>/digest slot</code> — выпустить то, что по времени\n"
                  "<code>/digest tz 3</code> — часовой пояс читателя\n"
                  "<code>/digest country Россия</code> — чьи новости утром\n"
+                 "<code>/digest генетика</code> — обзор генетики\n"
                  "<code>/digest ref travel https://t.me/…</code> — справочник раздела\n"
                  "<code>/digest bot имя_бота</code> — куда ведут кнопки заказа\n"
                  "<code>/digest club ссылка</code> — приглашение в группу под постами\n"
