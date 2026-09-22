@@ -2079,7 +2079,7 @@ async def update_visitor_identity(user_id: int, username, full_name) -> bool:
 
 
 async def forget_visitor(user_id: int) -> bool:
-    """Полное удаление посетителя — на случай, если человек попросит"""
+    """Удаление посетителя из журналов — по просьбе владельца"""
     try:
         pool = await get_pool()
         async with pool.acquire() as conn:
@@ -2088,6 +2088,86 @@ async def forget_visitor(user_id: int) -> bool:
         return True
     except Exception as e:
         logging.error(f"Не удалось удалить посетителя: {type(e).__name__}: {e}")
+        return False
+
+
+# Всё, где человек хранится по своему номеру. Перечислено явно, а не
+# найдено перебором таблиц: обещание «удалим всё» должно быть проверяемо
+# глазами, а новая таблица с user_id обязана попадать сюда осознанно.
+PERSONAL_TABLES = (
+    "visitors", "user_logs", "users", "subscriptions", "skill_access",
+    "match_alerts", "match_picks", "lang_progress", "ai_limits",
+    "user_answers", "puzzle_answers", "rally_scores", "tennis_scores",
+    "race_scores",
+)
+
+# Тут человек записан не под именем user_id. Пары «таблица — колонка»
+# перечислены отдельно, потому что удаление по чужому имени колонки
+# молча не сработало бы: запрос падает, а ошибка глотается.
+PERSONAL_BY_COLUMN = (
+    ("lang_reviews", "reviewer"),
+)
+
+# Партию в чужом чате удалять нельзя — доска висит в переписке у других
+# людей, и они не виноваты. Поэтому имя стирается, а поле остаётся.
+ANONYMISE = (
+    ("xo_games", "x_id", "x_name"),
+    ("xo_games", "o_id", "o_name"),
+)
+
+# Настройки с номером в ключе: место для погоды, ход урока, ступень языка.
+PERSONAL_SETTINGS = (
+    "wx_place_{id}", "lang_state_{id}", "course_state_{id}",
+    "lang_check_wait_{id}", "lang_check_ui_{id}", "lang_checker_{id}",
+)
+PERSONAL_SETTING_PREFIXES = ("lang_level_{id}_",)
+
+
+async def forget_everything(user_id: int) -> bool:
+    """Стереть человека целиком — по его собственной просьбе.
+
+    Записи об оплатах не трогаем: это бухгалтерия, и человеку об этом
+    сказано на экране. Отсутствие таблицы не останавливает удаление —
+    иначе одна забытая миграция оставила бы данные лежать.
+    """
+    async def wipe():
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            for table in PERSONAL_TABLES:
+                try:
+                    await conn.execute(
+                        f"DELETE FROM {SCHEMA}.{table} WHERE user_id = $1", user_id)
+                except Exception as e:
+                    logging.warning(f"Удаление из {table} не прошло: {e}")
+
+            for table, column in PERSONAL_BY_COLUMN:
+                try:
+                    await conn.execute(
+                        f"DELETE FROM {SCHEMA}.{table} WHERE {column} = $1", user_id)
+                except Exception as e:
+                    logging.warning(f"Удаление из {table} не прошло: {e}")
+
+            for table, column, name in ANONYMISE:
+                try:
+                    await conn.execute(
+                        f"UPDATE {SCHEMA}.{table} SET {column} = NULL, {name} = '' "
+                        f"WHERE {column} = $1", user_id)
+                except Exception as e:
+                    logging.warning(f"Обезличивание в {table} не прошло: {e}")
+
+            keys = [pattern.format(id=user_id) for pattern in PERSONAL_SETTINGS]
+            await conn.execute(
+                f"DELETE FROM {SCHEMA}.settings WHERE key = ANY($1::text[])", keys)
+            for prefix in PERSONAL_SETTING_PREFIXES:
+                await conn.execute(
+                    f"DELETE FROM {SCHEMA}.settings WHERE key LIKE $1",
+                    prefix.format(id=user_id) + "%")
+        return True
+
+    try:
+        return bool(await retry_write("Удаление данных человека", wipe))
+    except Exception as e:
+        logging.error(f"Не удалось стереть данные: {type(e).__name__}: {e}")
         return False
 
 

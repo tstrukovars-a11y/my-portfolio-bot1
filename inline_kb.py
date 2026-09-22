@@ -15,11 +15,15 @@ HOME_TEXTS = {"ru": "⇦ В главное меню", "en": "⇦ Main menu",
 def label(mapping: dict, lang: str) -> str:
     return mapping.get(lang, mapping["en"])
 
+# Строка про данные — на самом первом экране, до того как человек начнёт
+# пользоваться. Сказанное после первого десятка нажатий звучит как
+# оправдание, а не как предупреждение.
 language_menu = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="🇷🇺 Русский", callback_data="lang_ru"),
      InlineKeyboardButton(text="🇬🇧 English", callback_data="lang_en")],
     [InlineKeyboardButton(text="🇫🇷 Français", callback_data="lang_fr"),
-     InlineKeyboardButton(text="🇮🇱 עברית", callback_data="lang_he")]
+     InlineKeyboardButton(text="🇮🇱 עברית", callback_data="lang_he")],
+    [InlineKeyboardButton(text="🔒 Данные · Data", callback_data="privacy_open")]
 ])
 
 # Ссылка на канал. Меню собирается синхронно и в базу сходить не может,

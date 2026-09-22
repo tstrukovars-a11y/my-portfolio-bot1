@@ -42,6 +42,7 @@ import xo
 import rally
 import access
 import courses
+import privacy
 import lang
 import lang_review
 import tennis_game
@@ -609,6 +610,7 @@ async def main():
     dp.include_router(lang_review.router)
     dp.include_router(access.router)
     dp.include_router(courses.router)
+    dp.include_router(privacy.router)
 
     dp.include_router(tennis_live.router)
     dp.include_router(travel.router)
