@@ -89,16 +89,16 @@ def test_empty_line_is_not_a_service():
 # --- экран ------------------------------------------------------------
 
 def test_empty_list_says_so(settings, monkeypatch):
-    async def no_rate():
+    async def no_rate(src=None, dst=None):
         return 0.035
 
     monkeypatch.setattr(exchange, "cross_rate", no_rate)
     text = run(exchange.report(50000))
-    assert "пуст" in text
+    assert "сервисов пока нет" in text
 
 
 def test_report_survives_missing_rates(settings, monkeypatch):
-    async def no_rate():
+    async def no_rate(src=None, dst=None):
         return None
 
     monkeypatch.setattr(exchange, "cross_rate", no_rate)
@@ -109,7 +109,7 @@ def test_report_survives_missing_rates(settings, monkeypatch):
 
 
 def test_report_shows_the_gap_in_money(settings, monkeypatch):
-    async def rate():
+    async def rate(src=None, dst=None):
         return 0.035
 
     monkeypatch.setattr(exchange, "cross_rate", rate)
@@ -126,7 +126,7 @@ def test_report_shows_the_gap_in_money(settings, monkeypatch):
 
 def test_disclaimer_is_always_there(settings, monkeypatch):
     """Человек должен понимать, с кем имеет дело, в любом состоянии."""
-    async def rate():
+    async def rate(src=None, dst=None):
         return 0.035
 
     monkeypatch.setattr(exchange, "cross_rate", rate)
@@ -164,3 +164,92 @@ def test_service_list_is_owner_only(settings, monkeypatch):
     run(exchange.services_command(stranger))
     assert not stranger.said
     assert run(exchange.services()) == []
+
+
+# --- четыре страны ----------------------------------------------------
+#
+# Карты будут в России, Израиле, США и Франции. Направлений между ними
+# двенадцать, и половина ошибок здесь — перепутанная сторона: считать
+# комиссию в валюте получателя значит соврать в разы.
+
+@pytest.mark.parametrize("text,expected", [
+    ("USD→ILS", ("USD", "ILS")),
+    ("rub-ils", ("RUB", "ILS")),
+    ("₽ → ₪", ("RUB", "ILS")),
+    ("eur usd", ("EUR", "USD")),
+])
+def test_direction_is_understood_in_any_form(text, expected):
+    assert exchange.parse_pair(text) == expected
+
+
+@pytest.mark.parametrize("text", ["чушь", "RUB→RUB", "USD", ""])
+def test_nonsense_is_not_a_direction(text):
+    assert exchange.parse_pair(text) is None
+
+
+def test_service_remembers_its_direction():
+    item = exchange.parse_service("Wise | USD→EUR | https://w.com | 0.6%")
+    assert (item["from"], item["to"]) == ("USD", "EUR")
+
+
+def test_service_without_direction_falls_back():
+    """Старые записи заводились без направления — они не должны пропасть."""
+    item = exchange.parse_service("Старый сервис | 1%")
+    assert (item["from"], item["to"]) == exchange.DEFAULT_PAIR
+
+
+def test_report_shows_only_its_own_direction(settings, monkeypatch):
+    async def rate(src=None, dst=None):
+        return 0.9
+
+    monkeypatch.setattr(exchange, "cross_rate", rate)
+    run(exchange.save_services([
+        {"name": "Для шекелей", "from": "RUB", "to": "ILS", "percent": 1},
+        {"name": "Для евро", "from": "USD", "to": "EUR", "percent": 1},
+    ]))
+    text = run(exchange.report(500, "USD", "EUR"))
+    assert "Для евро" in text
+    assert "Для шекелей" not in text, "смешали направления"
+
+
+def test_empty_direction_says_so(settings, monkeypatch):
+    async def rate(src=None, dst=None):
+        return 0.9
+
+    monkeypatch.setattr(exchange, "cross_rate", rate)
+    run(exchange.save_services([{"name": "Только рубли", "from": "RUB", "to": "ILS"}]))
+    assert "по этому направлению сервисов пока нет" in \
+        run(exchange.report(500, "USD", "EUR")).lower()
+
+
+def test_fee_is_shown_in_the_sending_currency(settings, monkeypatch):
+    """Комиссия берётся с того, что отправляем, и в той же валюте."""
+    async def rate(src=None, dst=None):
+        return 0.9
+
+    monkeypatch.setattr(exchange, "cross_rate", rate)
+    run(exchange.save_services([
+        {"name": "Сервис", "from": "USD", "to": "EUR", "fixed": 5}]))
+    text = run(exchange.report(500, "USD", "EUR"))
+    assert "5.00 $" in text or "5 $" in text
+
+
+def test_only_filled_directions_get_buttons(settings):
+    items = [{"name": "A", "from": "RUB", "to": "ILS"},
+             {"name": "B", "from": "USD", "to": "EUR"},
+             {"name": "C", "from": "RUB", "to": "ILS"}]
+    assert exchange.pairs_with_services(items) == [("RUB", "ILS"), ("USD", "EUR")]
+
+
+def test_amount_steps_fit_the_currency():
+    """Сто тысяч долларов так же нелепы, как пятьсот рублей."""
+    assert max(exchange.MONEY["RUB"]["steps"]) > max(exchange.MONEY["USD"]["steps"])
+    assert all(code in exchange.MONEY for code in ("RUB", "USD", "EUR", "ILS"))
+
+
+def test_all_four_currencies_have_a_rate_source():
+    """Курс берётся из fx_rates — валюты без ряда там посчитать нечем."""
+    import fx_rates
+
+    known = set(fx_rates.CURRENCIES) | {"USD"}
+    assert set(exchange.MONEY) <= known

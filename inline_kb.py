@@ -151,7 +151,7 @@ def get_travel_main_menu(lang):
     # ровно там, где кончается родная страна.
     ca = "📞 Помощь со звонком" if lang == "ru" else "📞 Phone call helper"
     # Сколько дойдёт при переводе: считаем итог, а не курс.
-    ex = "💱 Перевод в Израиль" if lang == "ru" else "💱 Money transfer"
+    ex = "💱 Перевод денег между странами" if lang == "ru" else "💱 Money transfer"
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=la, callback_data="lang_open")],
         [InlineKeyboardButton(text=ca, callback_data="lang_call")],
