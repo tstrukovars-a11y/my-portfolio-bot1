@@ -399,3 +399,52 @@ def test_without_a_card_link_stars_stand_alone(paid, settings):
              for b in row]
     assert not any("из другой страны" in t for t in texts)
     assert "российская карта" not in access.wall_text("lang_he")
+
+
+# --- вторая касса -----------------------------------------------------
+#
+# У покупателя из Израиля нет российской карты, и без второй кассы ему
+# остаются звёзды — а на них до владелицы доходит около половины
+# заплаченного.
+
+def test_foreign_card_button_appears_with_its_link(paid, settings):
+    data = [b.url for row in run(access.buy_kb("lang_he")).inline_keyboard
+            for b in row]
+    assert not any(data)
+
+    settings["pay_intl"] = "https://pay.example.com/intl"
+    urls = [b.url for row in run(access.buy_kb("lang_he")).inline_keyboard
+            for b in row]
+    assert "https://pay.example.com/intl" in urls
+
+
+def test_two_tills_do_not_overwrite_each_other(settings, monkeypatch):
+    monkeypatch.setattr(config, "ADMIN_ID", 1)
+    run(access.till_command(Msg("/касса https://ru.example.com")))
+    run(access.till_command(Msg("/касса мир https://world.example.com")))
+    assert settings["pay_url"] == "https://ru.example.com"
+    assert settings["pay_intl"] == "https://world.example.com"
+
+
+def test_foreign_till_can_be_per_skill(settings, monkeypatch):
+    monkeypatch.setattr(config, "ADMIN_ID", 1)
+    run(access.till_command(Msg("/касса мир lang_he https://x.example.com")))
+    assert settings[access.INTL_URL_KEY + "lang_he"] == "https://x.example.com"
+
+
+def test_stars_stop_being_the_foreign_option(settings, paid):
+    """Пока второй кассы нет, звёзды подписаны «из другой страны».
+    Появилась касса — подпись лишняя и только путает."""
+    settings["pay_url_lang_he"] = "https://ru.example.com"
+    texts = [b.text for row in run(access.buy_kb("lang_he")).inline_keyboard
+             for b in row]
+    assert any("из другой страны" in t for t in texts)
+
+    settings["pay_intl_lang_he"] = "https://world.example.com"
+    texts = [b.text for row in run(access.buy_kb("lang_he")).inline_keyboard
+             for b in row]
+    assert not any("из другой страны" in t for t in texts)
+
+
+def test_every_tariff_has_a_dollar_price():
+    assert set(access.PRICE_USD) == set(access.TARIFFS)

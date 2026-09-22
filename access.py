@@ -63,6 +63,16 @@ CLAIM_PAUSE = 300                # секунд между заявками од
 # или общая pay_url. Пока её нет, кнопки просто не будет.
 PAY_URL_KEY = "pay_url_"
 
+# Вторая касса — для тех, у кого нет российской карты. Пока её нет,
+# такому человеку остаются только звёзды, а на них до владелицы доходит
+# примерно половина заплаченного.
+INTL_URL_KEY = "pay_intl_"
+
+# Цена той же подписки для зарубежного покупателя, в долларах. Отдельно
+# от рублёвой: переводить курсом на лету — показывать каждый раз новое
+# число там, где человек ждёт ценник.
+PRICE_USD = {"1": 3, "3": 8, "12": 22}
+
 
 async def has(user_id: int, skill: str) -> bool:
     if config.is_admin(user_id):
@@ -73,6 +83,11 @@ async def has(user_id: int, skill: str) -> bool:
 async def pay_url(skill: str) -> str:
     return (await database.get_setting(PAY_URL_KEY + skill)
             or await database.get_setting("pay_url") or "")
+
+
+async def intl_url(skill: str) -> str:
+    return (await database.get_setting(INTL_URL_KEY + skill)
+            or await database.get_setting("pay_intl") or "")
 
 
 async def buy_kb(skill: str) -> InlineKeyboardMarkup:
@@ -95,9 +110,18 @@ async def buy_kb(skill: str) -> InlineKeyboardMarkup:
             text="✅ Я оплатил переводом",
             callback_data=f"pay_claim_{skill}_1")])
 
+    world = await intl_url(skill)
+    if world:
+        rows.append([InlineKeyboardButton(
+            text=f"💳 Card — ${PRICE_USD['1']} / month", url=world)])
+        rows.append([InlineKeyboardButton(
+            text="✅ I have paid",
+            callback_data=f"pay_claim_{skill}_1")])
+
     rows += [[InlineKeyboardButton(
         text=f"⭐ {TARIFF_NAMES[code]} — {stars}"
-             + (" · из другой страны" if code == "1" and card else ""),
+             + (" · из другой страны" if code == "1" and card and not world
+                else ""),
         callback_data=f"buy_skill_{skill}_{code}")]
         for code, (_, stars) in TARIFFS.items()]
 
@@ -297,26 +321,40 @@ async def till_command(message: Message):
 
     parts = (message.text or "").split()
     if len(parts) < 2:
-        lines = ["<b>Ссылка на оплату картой</b>", ""]
+        lines = ["<b>Ссылки на оплату картой</b>", ""]
         common = await database.get_setting("pay_url")
-        lines.append(f"Общая: {html.escape(common) if common else '—'}")
+        world = await database.get_setting("pay_intl")
+        lines.append(f"🇷🇺 Россия: {html.escape(common) if common else '—'}")
+        lines.append(f"🌍 Зарубежные карты: {html.escape(world) if world else '—'}")
         for skill, name in SKILLS.items():
             own = await database.get_setting(PAY_URL_KEY + skill)
-            if own:
-                lines.append(f"{name}: {html.escape(own)}")
-        lines += ["", "<code>/касса https://ссылка</code> — на все навыки",
-                  "<code>/касса lang_he https://ссылка</code> — на один",
-                  "<code>/касса lang_he -</code> — убрать",
+            mine = await database.get_setting(INTL_URL_KEY + skill)
+            if own or mine:
+                lines.append(f"{name}: {html.escape(own or mine)}")
+        lines += ["", "<code>/касса https://ссылка</code> — российские карты",
+                  "<code>/касса мир https://ссылка</code> — зарубежные",
+                  "<code>/касса lang_he https://ссылка</code> — на один навык",
+                  "<code>/касса -</code> — убрать",
                   "",
-                  "Пока ссылки нет, кнопки «оплатить картой» не будет: "
-                  "вести в никуда хуже, чем не предлагать."]
+                  "Пока ссылки нет, кнопки не будет: вести в никуда хуже, "
+                  "чем не предлагать. Без второй кассы зарубежный "
+                  "покупатель платит звёздами, а на них до вас доходит "
+                  "около половины."]
         await message.answer("\n".join(lines), disable_web_page_preview=True)
         return
 
-    if parts[1] in SKILLS:
-        key, value = PAY_URL_KEY + parts[1], " ".join(parts[2:]).strip()
+    # «/касса мир …» заводит вторую кассу — ту, что принимает зарубежные
+    # карты. Ключи разные, чтобы одна не затирала другую.
+    rest = parts[1:]
+    prefix, common = PAY_URL_KEY, "pay_url"
+    if rest and rest[0].lower() in ("мир", "intl", "world", "зарубеж"):
+        prefix, common = INTL_URL_KEY, "pay_intl"
+        rest = rest[1:]
+
+    if rest and rest[0] in SKILLS:
+        key, value = prefix + rest[0], " ".join(rest[1:]).strip()
     else:
-        key, value = "pay_url", " ".join(parts[1:]).strip()
+        key, value = common, " ".join(rest).strip()
 
     if value in ("-", "—", ""):
         await database.set_setting(key, "")
