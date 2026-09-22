@@ -188,8 +188,11 @@ def test_till_is_not_for_readers(settings, monkeypatch):
 def test_owed_list_starts_with_what_was_promised(settings):
     import checklist
 
-    assert any("ЮKassa" in x for x in run(checklist._owed()))
-    assert any("картин" in x for x in run(checklist._owed()))
+    owed = run(checklist._owed())
+    assert any("Т-Банка" in x for x in owed)
+    assert any("Travelpayouts" in x for x in owed)
+    assert any("после развода" in x for x in owed), "ждущее дело потеряется"
+    assert any("картин" in x for x in owed)
 
 
 def test_crossing_off_the_last_item_leaves_it_empty(settings):
