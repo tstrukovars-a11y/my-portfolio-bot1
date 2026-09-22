@@ -76,18 +76,17 @@ async def pay_url(skill: str) -> str:
 
 
 async def buy_kb(skill: str) -> InlineKeyboardMarkup:
-    """Чем платить.
+    """Чем платить — и в каком порядке.
 
-    Звёзды работают всегда и открывают доступ мгновенно. Перевод даёт
-    деньги на счёт, но подтверждение приходит не в бот, а в банк —
-    поэтому рядом с ним кнопка «я оплатил»: она зовёт владельца, а не
-    просит человека писать в личку и объясняться.
+    Перевод идёт первым: он дешевле обоим. Покупатель платит ровно
+    столько, сколько написано, и деньги приходят на счёт целиком.
+
+    Звёзды стоят ниже и подписаны «из другой страны» — они здесь не для
+    экономии, а ради тех, у кого нет российской карты. Человеку с
+    израильской картой ссылка на перевод бесполезна, и без звёзд он не
+    заплатит никак.
     """
-    rows = [[InlineKeyboardButton(
-        text=f"⭐ {TARIFF_NAMES[code]} — {stars}",
-        callback_data=f"buy_skill_{skill}_{code}")]
-        for code, (_, stars) in TARIFFS.items()]
-
+    rows = []
     card = await pay_url(skill)
     if card:
         rows.append([InlineKeyboardButton(
@@ -95,19 +94,34 @@ async def buy_kb(skill: str) -> InlineKeyboardMarkup:
         rows.append([InlineKeyboardButton(
             text="✅ Я оплатил переводом",
             callback_data=f"pay_claim_{skill}_1")])
+
+    rows += [[InlineKeyboardButton(
+        text=f"⭐ {TARIFF_NAMES[code]} — {stars}"
+             + (" · из другой страны" if code == "1" and card else ""),
+        callback_data=f"buy_skill_{skill}_{code}")]
+        for code, (_, stars) in TARIFFS.items()]
+
     rows.append([InlineKeyboardButton(text="⇦", callback_data="go_home")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def wall_text(skill: str, done: str = "") -> str:
+def wall_text(skill: str, done: str = "", card: bool = False) -> str:
     """Экран «продолжить». Говорим, что человек уже прошёл, а не чего
     лишён: первое — его результат, второе — упрёк."""
     name = SKILLS.get(skill, "этот раздел")
-    return (f"{done}\n\n" if done else "") + (
+    text = (f"{done}\n\n" if done else "") + (
         f"<b>{html.escape(name)}</b>\n\n"
         "Дальше — остальные темы и разбор ошибок. Доступ открывается "
         "на месяц, три или год, и только к этому разделу: платить за то, "
         "чем не пользуетесь, незачем.")
+    if card:
+        # Звёзды без объяснения выглядят дороже и страннее перевода.
+        # Сказать, кому они нужны, — дешевле, чем потерять покупателя
+        # из-за границы.
+        text += ("\n\n<i>Перевод — если у вас российская карта. "
+                 "Звёзды Telegram — если нет: они покупаются прямо в "
+                 "приложении и работают из любой страны.</i>")
+    return text
 
 
 # ---------------------------------------------------------------------

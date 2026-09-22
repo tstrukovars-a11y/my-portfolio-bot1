@@ -237,6 +237,7 @@ async def _finish(message: Message, user_id: int, state: dict):
 
 async def _wall(message: Message, course: str, done: str = ""):
     skill = skill_of(course)
-    await message.answer(access.wall_text(skill, done),
-                         reply_markup=await access.buy_kb(skill),
-                         disable_web_page_preview=True)
+    await message.answer(
+        access.wall_text(skill, done, card=bool(await access.pay_url(skill))),
+        reply_markup=await access.buy_kb(skill),
+        disable_web_page_preview=True)

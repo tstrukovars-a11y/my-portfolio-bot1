@@ -373,3 +373,29 @@ def test_sale_is_recorded_even_if_the_buyer_is_unreachable(paid, settings, monke
 
 def test_months_table_covers_the_year():
     assert len(access.MONTHS) == 13 and access.MONTHS[9] == "сентябрь"
+
+
+def test_transfer_comes_before_stars(paid, settings):
+    """Перевод дешевле обоим — он и должен попадаться первым."""
+    settings["pay_url_lang_he"] = "https://example.com/pay"
+    rows = run(access.buy_kb("lang_he")).inline_keyboard
+    texts = [b.text for row in rows for b in row]
+    assert texts[0].startswith("💳")
+    assert any(t.startswith("⭐") for t in texts)
+
+
+def test_stars_say_who_they_are_for(paid, settings):
+    """Звёзды без объяснения выглядят дороже и страннее перевода."""
+    settings["pay_url_lang_he"] = "https://example.com/pay"
+    texts = [b.text for row in run(access.buy_kb("lang_he")).inline_keyboard
+             for b in row]
+    assert any("из другой страны" in t for t in texts)
+    assert "российская карта" in access.wall_text("lang_he", card=True)
+
+
+def test_without_a_card_link_stars_stand_alone(paid, settings):
+    """Пока перевода нет, объяснять нечего — и подпись только мешает."""
+    texts = [b.text for row in run(access.buy_kb("lang_he")).inline_keyboard
+             for b in row]
+    assert not any("из другой страны" in t for t in texts)
+    assert "российская карта" not in access.wall_text("lang_he")
