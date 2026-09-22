@@ -140,8 +140,11 @@ def get_music_back_button(lang, target_callback="creative_music"):
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=text, callback_data=target_callback)]])
 
 def get_travel_main_menu(lang):
-    geo = "🗺 География визитов" if lang == "ru" else "🗺 Geography of Visits"
-    tool = "🧮 Travel Toolkit" if lang == "ru" else "🧮 Travel Toolkit"
+    # «География визитов» и «Travel Toolkit» были статичными текстами без
+    # действия — их место заняли связь и отели: то, что человек ищет
+    # перед поездкой и не находит собранным в одном месте.
+    sim = "📶 Связь в поездке" if lang == "ru" else "📶 Staying connected"
+    hotel = "🏨 Бронирование" if lang == "ru" else "🏨 Booking"
     back = "🔙 Назад" if lang == "ru" else "🔙 Back"
     places = "🌍 Страны и локации" if lang == "ru" else "🌍 Countries & places"
     # Язык на слух — здесь, а не в «Интеллекте»: он нужен не для развития,
@@ -157,8 +160,8 @@ def get_travel_main_menu(lang):
         [InlineKeyboardButton(text=ca, callback_data="lang_call")],
         [InlineKeyboardButton(text=ex, callback_data="xch_open")],
         [InlineKeyboardButton(text=places, callback_data="travel_places")],
-        [InlineKeyboardButton(text=geo, callback_data="travel_geography")],
-        [InlineKeyboardButton(text=tool, callback_data="travel_toolkit")],
+        [InlineKeyboardButton(text=sim, callback_data="sim_open")],
+        [InlineKeyboardButton(text=hotel, callback_data="hotel_open")],
         [InlineKeyboardButton(text=back, callback_data="menu_sport")]
     ])
 

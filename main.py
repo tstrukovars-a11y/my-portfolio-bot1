@@ -42,7 +42,9 @@ import xo
 import rally
 import access
 import courses
+import esim
 import exchange
+import hotels
 import privacy
 import lang
 import lang_review
@@ -630,6 +632,8 @@ async def main():
     dp.include_router(access.router)
     dp.include_router(courses.router)
     dp.include_router(exchange.router)
+    dp.include_router(esim.router)
+    dp.include_router(hotels.router)
     dp.include_router(privacy.router)
 
     dp.include_router(tennis_live.router)

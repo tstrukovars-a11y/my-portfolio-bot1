@@ -28,6 +28,7 @@ from aiogram.types import (Message, CallbackQuery, InlineKeyboardMarkup,
 
 import config
 import database
+import freshness
 
 router = Router()
 
@@ -120,7 +121,7 @@ def parse_service(text: str):
             seen_percent += 1
         else:
             item["fixed"] = number
-    return item
+    return freshness.stamp(item)
 
 
 # ---------------------------------------------------------------------
@@ -277,20 +278,22 @@ async def report(amount: float, src: str = None, dst: str = None) -> str:
         behind = best - row["out"]
         tail = (f" · <i>−{_money(behind, dst)}</i>"
                 if behind >= (1 if dst == "RUB" else 0.01) else " · 👍")
+        card = next((s for s in items if s.get("name") == row["name"]), {})
         seen = checked.get((row["name"], src, dst))
         mark = " ✓" if seen is not None else ""
         lines.append(f"{title}{mark} — <b>{_money(row['out'], dst)}</b>{tail}")
         note = (f"    <i>комиссия {_money(row['fee'], src)}, "
                 f"курс {row['rate']:.4f}")
         note += (f" · проверено: теряли {seen:.1f}%</i>" if seen is not None
-                 else "</i>")
+                 else f" · {freshness.label(card)}</i>")
         lines.append(note)
 
     if checked:
         lines.append("\n<i>✓ — цифры проверены своим переводом, "
                      "остальные взяты с витрины сервиса.</i>")
+    lines.append(freshness.warning(items))
     lines += ["", DISCLAIMER]
-    return "\n".join(lines)
+    return "\n".join(line for line in lines if line)
 
 
 # ---------------------------------------------------------------------
