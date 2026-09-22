@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Звонок в клинику</title>
+<title>Помощь со звонком</title>
 <!--
   Помощник в разговоре по телефону.
 
@@ -71,6 +71,7 @@
 
   .say {
     display: block; width: 100%; text-align: right; direction: rtl;
+    /* Латиница читается слева направо — иначе точка уезжает в начало. */
     background: #1d2330; border: 1px solid var(--line); color: var(--text);
     border-radius: 10px; padding: 12px; margin-bottom: 8px;
     font-size: 18px; cursor: pointer;
@@ -95,8 +96,12 @@
 </head>
 <body>
 
-<h1>Звонок в клинику</h1>
-<div class="sub">Телефон — на громкую связь. Ноутбук слушает и говорит за вас.</div>
+<h1>Помощь со звонком</h1>
+<div class="sub">
+  Нужны два устройства: с телефона звоните и включаете громкую связь,
+  на компьютере открыта эта страница. На одном телефоне не выйдет —
+  во время звонка микрофон занят самим звонком.
+</div>
 
 <!-- ПОДГОТОВКА -->
 <div id="prep">
@@ -117,8 +122,13 @@
   </div>
 
   <div class="card">
-    <label>Зачем звоним</label>
-    <div class="row" id="goals"></div>
+    <label>На каком языке говорят в трубке</label>
+    <div class="row" id="langs"></div>
+  </div>
+
+  <div class="card">
+    <label>Куда звоним</label>
+    <div class="row" id="scenes"></div>
   </div>
 
   <button class="wide" id="start">📞 Начинаю звонить</button>
@@ -188,45 +198,159 @@
 // слушает в трубке. Первой всегда идёт фраза, которая объясняет, кто
 // звонит: администратор должен понять это раньше, чем начнёт спрашивать.
 
-const GOALS = {
-  move:   "перенести запись",
-  cancel: "отменить запись",
-  make:   "записаться",
-  ask:    "спросить о результате",
+// Язык звонка и повод. Разговор в клинике и разговор с банком не
+// отличаются механикой — отличаются десятком фраз, поэтому это данные,
+// а не отдельные страницы.
+//
+// Интерфейс остаётся русским: им пользуется тот, кто языка не знает.
+// Переводить подписи на иврит было бы странно — человеку, читающему на
+// иврите, помощник не нужен.
+
+const LANGS = {
+  he: { name: "עברית · иврит",     code: "he-IL",
+        press: ["הקישו", "הקש", "הקישי", "לחצו", "לחץ", "חייגו"],
+        words: {"אפס":0,"אחת":1,"אחד":1,"שתיים":2,"שניים":2,"שלוש":3,
+                "שלושה":3,"ארבע":4,"ארבעה":4,"חמש":5,"חמישה":5,"שש":6,
+                "שישה":6,"שבע":7,"שבעה":7,"שמונה":8,"תשע":9,"תשעה":9} },
+  en: { name: "English · английский", code: "en-US",
+        press: ["press", "dial", "enter"],
+        words: {"zero":0,"one":1,"two":2,"three":3,"four":4,"five":5,
+                "six":6,"seven":7,"eight":8,"nine":9} },
+  fr: { name: "Français · французский", code: "fr-FR",
+        press: ["appuyez", "tapez", "composez"],
+        words: {"zéro":0,"un":1,"deux":2,"trois":3,"quatre":4,"cinq":5,
+                "six":6,"sept":7,"huit":8,"neuf":9} },
 };
 
-const COMMON = [
-  ["שלום, אני מדברת דרך מתרגם. בבקשה, לאט.", "Здравствуйте, я говорю через переводчик. Медленнее, пожалуйста."],
-  ["סליחה? עוד פעם, בבקשה.", "Простите? Ещё раз, пожалуйста."],
-  ["לאט, בבקשה.", "Медленнее, пожалуйста."],
-  ["רגע, בבקשה.", "Минутку, пожалуйста."],
-  ["הבנתי. תודה רבה!", "Поняла. Спасибо!"],
-  ["אפשר באנגלית?", "Можно по-английски?"],
-];
+const SCENES = {
+  clinic:  "🩺 Клиника",
+  bank:    "🏦 Банк и счета",
+  home:    "🏠 Жильё",
+  service: "📦 Служба, доставка",
+};
 
-const BY_GOAL = {
-  move: [
-    ["אני רוצה להעביר תור.", "Хочу перенести запись."],
-    ["יש לי תור ואני לא יכולה להגיע.", "У меня есть запись, я не смогу прийти."],
-    ["אפשר תור אחר?", "Можно другую запись?"],
-    ["מתי יש תור פנוי?", "Когда есть свободная запись?"],
+// Первой всегда идёт фраза, которая объясняет, кто звонит: собеседник
+// должен понять это раньше, чем начнёт спрашивать.
+const COMMON = {
+  he: [
+    ["שלום, אני מדברת דרך מתרגם. בבקשה, לאט.", "Здравствуйте, я говорю через переводчик. Медленнее, пожалуйста."],
+    ["סליחה? עוד פעם, בבקשה.", "Простите? Ещё раз, пожалуйста."],
+    ["לאט, בבקשה.", "Медленнее, пожалуйста."],
+    ["רגע, בבקשה.", "Минутку, пожалуйста."],
+    ["אפשר באנגלית?", "Можно по-английски?"],
+    ["הבנתי. תודה רבה!", "Поняла. Спасибо!"],
   ],
-  cancel: [
-    ["אני רוצה לבטל תור.", "Хочу отменить запись."],
-    ["לא אוכל להגיע.", "Не смогу прийти."],
+  en: [
+    ["Hello, I am speaking through a translator. Slowly, please.", "Здравствуйте, я говорю через переводчик. Медленнее, пожалуйста."],
+    ["Sorry? Could you repeat that?", "Простите? Повторите, пожалуйста."],
+    ["More slowly, please.", "Медленнее, пожалуйста."],
+    ["One moment, please.", "Минутку, пожалуйста."],
+    ["Could you write it to me instead?", "Можете прислать это письменно?"],
+    ["I understand. Thank you!", "Поняла. Спасибо!"],
   ],
-  make: [
-    ["אני רוצה תור.", "Хочу записаться."],
-    ["יש לי הפניה.", "У меня есть направление."],
-    ["מתי יש תור פנוי?", "Когда есть свободная запись?"],
-  ],
-  ask: [
-    ["אני רוצה לשאול על תוצאה.", "Хочу спросить о результате."],
-    ["עשיתי בדיקה.", "Я сдавала анализ."],
+  fr: [
+    ["Bonjour, je parle par un traducteur. Lentement, s'il vous plaît.", "Здравствуйте, я говорю через переводчик. Медленнее, пожалуйста."],
+    ["Pardon ? Vous pouvez répéter ?", "Простите? Повторите, пожалуйста."],
+    ["Plus lentement, s'il vous plaît.", "Медленнее, пожалуйста."],
+    ["Un instant, s'il vous plaît.", "Минутку, пожалуйста."],
+    ["Vous pouvez me l'écrire ?", "Можете прислать письменно?"],
+    ["J'ai compris. Merci beaucoup !", "Поняла. Спасибо!"],
   ],
 };
 
-let goal = "move";
+const BY_SCENE = {
+  clinic: {
+    he: [
+      ["אני רוצה להעביר תור.", "Хочу перенести запись."],
+      ["אני רוצה לבטל תור.", "Хочу отменить запись."],
+      ["אני רוצה תור.", "Хочу записаться."],
+      ["מתי יש תור פנוי?", "Когда есть свободная запись?"],
+      ["יש לי הפניה.", "У меня есть направление."],
+      ["אני רוצה לשאול על תוצאה.", "Хочу спросить о результате."],
+    ],
+    en: [
+      ["I need to reschedule my appointment.", "Нужно перенести запись."],
+      ["I need to cancel my appointment.", "Нужно отменить запись."],
+      ["I would like to book an appointment.", "Хочу записаться."],
+      ["When is the next available slot?", "Когда ближайшее свободное время?"],
+      ["I have a referral.", "У меня есть направление."],
+      ["I am calling about my test results.", "Звоню по поводу результатов."],
+    ],
+    fr: [
+      ["Je voudrais déplacer mon rendez-vous.", "Хочу перенести запись."],
+      ["Je voudrais annuler mon rendez-vous.", "Хочу отменить запись."],
+      ["Je voudrais prendre un rendez-vous.", "Хочу записаться."],
+      ["Quand avez-vous de la place ?", "Когда есть свободное время?"],
+      ["J'ai une ordonnance.", "У меня есть направление."],
+      ["J'appelle pour mes résultats.", "Звоню по поводу результатов."],
+    ],
+  },
+  bank: {
+    he: [
+      ["יש לי שאלה על החשבון.", "У меня вопрос по счёту."],
+      ["הכרטיס שלי חסום.", "Моя карта заблокирована."],
+      ["לא זיהיתי חיוב.", "Я не узнаю это списание."],
+      ["אני רוצה לדבר עם נציג.", "Хочу поговорить с оператором."],
+    ],
+    en: [
+      ["I have a question about my account.", "Вопрос по моему счёту."],
+      ["My card is blocked.", "Моя карта заблокирована."],
+      ["I do not recognise this charge.", "Я не узнаю это списание."],
+      ["I would like to speak to a person.", "Хочу поговорить с человеком."],
+    ],
+    fr: [
+      ["J'ai une question sur mon compte.", "Вопрос по счёту."],
+      ["Ma carte est bloquée.", "Карта заблокирована."],
+      ["Je ne reconnais pas ce prélèvement.", "Я не узнаю это списание."],
+      ["Je voudrais parler à un conseiller.", "Хочу поговорить с человеком."],
+    ],
+  },
+  home: {
+    he: [
+      ["יש לי בעיה בדירה.", "У меня проблема в квартире."],
+      ["אין מים חמים.", "Нет горячей воды."],
+      ["מתי אפשר לבוא לתקן?", "Когда смогут прийти починить?"],
+      ["אני שוכרת את הדירה.", "Я снимаю эту квартиру."],
+    ],
+    en: [
+      ["There is a problem in the flat.", "Проблема в квартире."],
+      ["There is no hot water.", "Нет горячей воды."],
+      ["When can someone come to fix it?", "Когда смогут прийти починить?"],
+      ["I am renting this flat.", "Я снимаю эту квартиру."],
+    ],
+    fr: [
+      ["J'ai un problème dans l'appartement.", "Проблема в квартире."],
+      ["Il n'y a pas d'eau chaude.", "Нет горячей воды."],
+      ["Quand pouvez-vous venir réparer ?", "Когда придут починить?"],
+      ["Je loue cet appartement.", "Я снимаю эту квартиру."],
+    ],
+  },
+  service: {
+    he: [
+      ["איפה החבילה שלי?", "Где моя посылка?"],
+      ["לא קיבלתי את ההזמנה.", "Я не получила заказ."],
+      ["מתי זה מגיע?", "Когда это придёт?"],
+      ["אני רוצה לבטל הזמנה.", "Хочу отменить заказ."],
+    ],
+    en: [
+      ["Where is my parcel?", "Где моя посылка?"],
+      ["I have not received my order.", "Я не получила заказ."],
+      ["When will it arrive?", "Когда придёт?"],
+      ["I would like to cancel the order.", "Хочу отменить заказ."],
+    ],
+    fr: [
+      ["Où est mon colis ?", "Где моя посылка?"],
+      ["Je n'ai pas reçu ma commande.", "Я не получила заказ."],
+      ["Quand est-ce que ça arrive ?", "Когда придёт?"],
+      ["Je voudrais annuler la commande.", "Хочу отменить заказ."],
+    ],
+  },
+};
+
+let talk = "he";      // на каком языке говорим в трубку
+let scene = "clinic"; // о чём звоним
+
+
 
 // ---------------------------------------------------------------------
 // ЦИФРА В МЕНЮ
@@ -236,19 +360,14 @@ let goal = "move";
 // произносит быстро и один раз, поэтому её вынимаем из любой формы и
 // показываем во весь экран, пока не скажут следующую.
 
-const WORDS = {
-  "אפס": 0, "אחת": 1, "אחד": 1, "שתיים": 2, "שניים": 2, "שלוש": 3,
-  "שלושה": 3, "ארבע": 4, "ארבעה": 4, "חמש": 5, "חמישה": 5, "שש": 6,
-  "שישה": 6, "שבע": 7, "שבעה": 7, "שמונה": 8, "תשע": 9, "תשעה": 9,
-};
-const PRESS_WORDS = ["הקישו", "הקש", "הקישי", "לחצו", "לחץ", "חייגו"];
-
 function digitFrom(text) {
-  if (!PRESS_WORDS.some(w => text.includes(w))) return null;
+  const lang = LANGS[talk];
+  const lower = text.toLowerCase();
+  if (!lang.press.some(w => lower.includes(w))) return null;
   const digits = text.match(/[0-9]/);
   if (digits) return digits[0];
-  for (const [word, value] of Object.entries(WORDS)) {
-    if (text.includes(word)) return String(value);
+  for (const [word, value] of Object.entries(lang.words)) {
+    if (lower.includes(word)) return String(value);
   }
   return null;
 }
@@ -268,8 +387,11 @@ function showPress(digit, why) {
 
 let voice = null;
 function pickVoice() {
+  // Голос под язык звонка: иврит, прочитанный английским движком, не
+  // понимает никто.
   const all = speechSynthesis.getVoices();
-  voice = all.find(v => v.lang && v.lang.toLowerCase().startsWith("he")) || null;
+  const want = LANGS[talk].code.slice(0, 2).toLowerCase();
+  voice = all.find(v => v.lang && v.lang.toLowerCase().startsWith(want)) || null;
 }
 speechSynthesis.onvoiceschanged = pickVoice;
 pickVoice();
@@ -281,7 +403,7 @@ function say(text) {
   const wasOn = listening;
   if (wasOn) stopMic();
   const utter = new SpeechSynthesisUtterance(text);
-  utter.lang = "he-IL";
+  utter.lang = LANGS[talk].code;
   if (voice) utter.voice = voice;
   utter.rate = 0.9;
   utter.onend = () => { if (wasOn) startMic(); };
@@ -330,7 +452,7 @@ function startMic() {
   if (listening) return;
 
   recogniser = new Recogniser();
-  recogniser.lang = "he-IL";
+  recogniser.lang = LANGS[talk].code;
   recogniser.continuous = true;
   recogniser.interimResults = true;
 
@@ -368,15 +490,25 @@ function stopMic() {
 // ЭКРАНЫ
 // ---------------------------------------------------------------------
 
-function drawGoals() {
-  const box = document.getElementById("goals");
-  box.innerHTML = "";
-  for (const [key, name] of Object.entries(GOALS)) {
+function drawChoices() {
+  const langs = document.getElementById("langs");
+  langs.innerHTML = "";
+  for (const [key, meta] of Object.entries(LANGS)) {
     const button = document.createElement("button");
-    button.className = key === goal ? "" : "ghost";
+    button.className = key === talk ? "" : "ghost";
+    button.textContent = meta.name;
+    button.onclick = () => { talk = key; pickVoice(); drawChoices(); };
+    langs.appendChild(button);
+  }
+
+  const scenes = document.getElementById("scenes");
+  scenes.innerHTML = "";
+  for (const [key, name] of Object.entries(SCENES)) {
+    const button = document.createElement("button");
+    button.className = key === scene ? "" : "ghost";
     button.textContent = name;
-    button.onclick = () => { goal = key; drawGoals(); };
-    box.appendChild(button);
+    button.onclick = () => { scene = key; drawChoices(); };
+    scenes.appendChild(button);
   }
 }
 
@@ -384,13 +516,17 @@ function drawPhrases() {
   const box = document.getElementById("phrases");
   box.innerHTML = "";
   const name = document.getElementById("name").value.trim();
-  const list = [...(BY_GOAL[goal] || []), ...COMMON];
+  const list = [...((BY_SCENE[scene] || {})[talk] || []), ...(COMMON[talk] || [])];
   if (name) {
-    list.splice(1, 0, ["קוראים לי " + name + ".", "Меня зовут " + name + "."]);
+    const my = {he: "קוראים לי " + name + ".",
+                en: "My name is " + name + ".",
+                fr: "Je m'appelle " + name + "."};
+    list.splice(1, 0, [my[talk], "Меня зовут " + name + "."]);
   }
   for (const [he, ru] of list) {
     const button = document.createElement("button");
     button.className = "say";
+    if (talk !== "he") { button.style.direction = "ltr"; button.style.textAlign = "left"; }
     button.innerHTML = he + '<span class="ru">' + ru + "</span>";
     button.onclick = () => say(he);
     box.appendChild(button);
@@ -432,7 +568,7 @@ document.getElementById("start").onclick = () => {
       context: document.getElementById("context").value,
       id: document.getElementById("id").value,
       name: document.getElementById("name").value,
-      goal: goal,
+      talk: talk, scene: scene,
     }));
   } catch (e) {}
   drawPhrases();
@@ -461,9 +597,11 @@ try {
   if (saved.context) document.getElementById("context").value = saved.context;
   if (saved.id) document.getElementById("id").value = saved.id;
   if (saved.name) document.getElementById("name").value = saved.name;
-  if (saved.goal) goal = saved.goal;
+  if (saved.talk) talk = saved.talk;
+  if (saved.scene) scene = saved.scene;
 } catch (e) {}
-drawGoals();
+pickVoice();
+drawChoices();
 </script>
 </body>
 </html>

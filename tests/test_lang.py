@@ -351,12 +351,15 @@ def test_call_helper_hangs_on_hebrew_only(monkeypatch):
     assert not any(u and u.endswith("/call") for u in fr)
 
 
-def test_call_page_speaks_hebrew_and_listens():
+def test_call_page_speaks_and_listens_in_the_same_language():
+    """Слушать на одном языке и говорить на другом — обычная ошибка при
+    добавлении второго языка, и заметна она только на живом звонке."""
     page = (Path(__file__).resolve().parent.parent / "call.html").read_text(
         encoding="utf-8")
-    assert 'lang = "he-IL"' in page, "распознаём не тот язык"
-    assert 'utter.lang = "he-IL"' in page, "говорим не на том языке"
-    assert "הקישו" in page, "цифру из меню автоответчика взять нечем"
+    assert "recogniser.lang = LANGS[talk].code" in page
+    assert "utter.lang = LANGS[talk].code" in page
+    assert "הקישו" in page, "цифру из ивритского меню взять нечем"
+    assert '"press"' in page, "цифру из английского меню взять нечем"
 
 
 def test_call_card_explains_itself_to_a_stranger():
@@ -372,3 +375,33 @@ def test_call_page_warns_when_it_cannot_listen():
         encoding="utf-8")
     assert "noEars" in page
     assert "ограничение браузера" in page
+
+
+def test_call_helper_is_in_travel_menu():
+    """Чужой язык в трубке начинается там же, где кончается своя страна."""
+    import inline_kb
+
+    data = [b.callback_data for row in
+            inline_kb.get_travel_main_menu("ru").inline_keyboard for b in row]
+    assert "lang_call" in data
+
+
+def test_call_card_says_two_devices_are_needed():
+    """На одном телефоне не выйдет, и узнать это надо до звонка."""
+    card = lang.CALL_CARD.format(url="https://x/call")
+    assert "два устройства" in card
+    assert "громкую связь" in card
+
+
+def test_call_page_speaks_three_languages():
+    page = (Path(__file__).resolve().parent.parent / "call.html").read_text(
+        encoding="utf-8")
+    for code in ("he-IL", "en-US", "fr-FR"):
+        assert code in page, code
+
+
+def test_call_page_covers_more_than_medicine():
+    page = (Path(__file__).resolve().parent.parent / "call.html").read_text(
+        encoding="utf-8")
+    for scene in ("Клиника", "Банк", "Жильё", "доставка"):
+        assert scene in page, scene

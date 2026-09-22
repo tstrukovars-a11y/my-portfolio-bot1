@@ -147,8 +147,12 @@ def get_travel_main_menu(lang):
     # Язык на слух — здесь, а не в «Интеллекте»: он нужен не для развития,
     # а чтобы понять автоответчик и заказать кофе в чужой стране.
     la = "🎧 Язык на слух" if lang == "ru" else "🎧 Language by ear"
+    # Помощь со звонком — тоже путешествия: чужой язык в трубке начинается
+    # ровно там, где кончается родная страна.
+    ca = "📞 Помощь со звонком" if lang == "ru" else "📞 Phone call helper"
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=la, callback_data="lang_open")],
+        [InlineKeyboardButton(text=ca, callback_data="lang_call")],
         [InlineKeyboardButton(text=places, callback_data="travel_places")],
         [InlineKeyboardButton(text=geo, callback_data="travel_geography")],
         [InlineKeyboardButton(text=tool, callback_data="travel_toolkit")],
