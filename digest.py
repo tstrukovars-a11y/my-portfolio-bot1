@@ -9,6 +9,7 @@
 # и это не повод трогать код. Пока она пуста, публикация просто не идёт.
 import asyncio
 import html
+import re
 import json
 import logging
 import os
@@ -1016,6 +1017,24 @@ SUMMARY_PROMPT = (
 )
 
 
+# Вступление модель приписывает даже там, где промпт его прямо запрещает:
+# «Вот сводка по заголовкам:», «Краткий обзор:». Просить второй раз
+# бесполезно — срезаем сами. Правило узкое нарочно: короткое начало до
+# двоеточия, без точки внутри и с одним из служебных слов. «Главное:
+# геном прочитан» под него не попадёт и останется как есть.
+INTRO_WORDS = ("сводк", "обзор", "вот ", "кратко", "краткий", "итог",
+               "summary", "заголовк")
+
+
+def _no_intro(text: str) -> str:
+    text = (text or "").strip().strip("\"«»").strip()
+    head, sep, rest = text.partition(":")
+    if sep and rest.strip() and len(head) <= 80 and "." not in head \
+            and any(word in head.lower() for word in INTRO_WORDS):
+        return rest.strip()
+    return text
+
+
 async def _summary(headlines: str, prompt: str, key: str, what: str) -> str:
     """Несколько строк о том, что стоит за заголовками. Пусто — не вышло.
 
@@ -1045,7 +1064,7 @@ async def _summary(headlines: str, prompt: str, key: str, what: str) -> str:
             model=SUMMARY_MODEL, max_tokens=SUMMARY_MAX,
             system=prompt,
             messages=[{"role": "user", "content": headlines[:4000]}])
-        text = (answer.content[0].text or "").strip()
+        text = _no_intro(answer.content[0].text or "")
     except Exception as e:
         # Молчим в канале, но говорим владельцу: иначе сводка пропадёт
         # незаметно и причина останется только в логах Render.
@@ -1128,7 +1147,24 @@ async def _genetics_post() -> str:
     import news_fetcher
     head = "\n".join(headlines.split("\n")[:GEN_HEADLINES])
     return (f"🧬 *Генетика*\n\n{news_fetcher._escape_markdown(summary)}\n\n"
-            f"{head}")
+            f"*Источники:*\n{head}")
+
+
+def _sources_html(headlines: str) -> str:
+    """Ссылки из markdown-строк ленты — для служебных экранов на HTML.
+
+    Лента приходит в markdown, а служебные сообщения бот шлёт в HTML:
+    без перевода читатель увидел бы квадратные скобки вместо ссылок.
+    """
+    out = []
+    for line in headlines.split("\n")[:GEN_HEADLINES]:
+        match = re.match(r"\s*\[(.+?)\]\((https?://[^)]+)\)", line)
+        if match:
+            out.append(f'• <a href="{html.escape(match.group(2))}">'
+                       f'{html.escape(match.group(1))}</a>')
+        elif line.strip():
+            out.append(f"• {html.escape(line.strip())}")
+    return "\n".join(out)
 
 
 async def _news_post() -> str:
@@ -1787,13 +1823,20 @@ async def digest_command(message: Message, bot: Bot):
             return
         summary = await _summary(headlines, GEN_PROMPT, GEN_SUMMARY_KEY,
                                  "генетика")
+        if not summary:
+            await message.answer(
+                "Обзор не собрался — вероятно, нет ключа Anthropic. Без него "
+                "блок в канал не выйдет: одни английские заголовки читать "
+                "никто не станет.\n\n"
+                "Собрать заново: <code>/digest генетика заново</code>")
+            return
+        # Показываем ровно то, что уйдёт в канал, вместе с источниками:
+        # сводку без ссылок нечем проверить.
         await message.answer(
-            (f"🧬 <b>Обзор генетики</b>\n\n{html.escape(summary)}"
-             if summary else
-             "Обзор не собрался — вероятно, нет ключа Anthropic. Без него "
-             "блок в канал не выйдет: одни английские заголовки читать "
-             "никто не станет.")
-            + "\n\nСобрать заново: <code>/digest генетика заново</code>")
+            f"🧬 <b>Обзор генетики</b>\n\n{html.escape(summary)}\n\n"
+            f"<b>Источники:</b>\n{_sources_html(headlines)}\n\n"
+            f"Собрать заново: <code>/digest генетика заново</code>",
+            disable_web_page_preview=True)
         return
 
     if command == "motto":

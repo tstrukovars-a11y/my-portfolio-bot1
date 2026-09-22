@@ -5,6 +5,8 @@
 # выпусков, который на выходных сдвигается.
 from datetime import datetime
 
+import pytest
+
 from conftest import run
 
 import digest
@@ -269,3 +271,61 @@ def test_rates_heading_has_no_time_of_day():
     assert "утром" not in fx_rates.morning_block.__doc__.split("\n")[0].lower()
     source = open(fx_rates.__file__, encoding="utf-8").read()
     assert '"💱 *Курсы*' in source
+
+
+# --- вступление, которого не просили ----------------------------------
+#
+# Промпт запрещает вступления, модель их всё равно приписывает. Просить
+# второй раз бесполезно: срезаем механически.
+
+@pytest.mark.parametrize("text,expected", [
+    ("Вот сводка по заголовкам:\n\nГеном прочитан.", "Геном прочитан."),
+    ("Краткий обзор: геном прочитан.", "геном прочитан."),
+    ("Сводка:\nГеном прочитан.", "Геном прочитан."),
+    ("  Геном прочитан.  ", "Геном прочитан."),
+])
+def test_intro_is_cut_off(text, expected):
+    assert digest._no_intro(text) == expected
+
+
+@pytest.mark.parametrize("text", [
+    "Главное: геном пшеницы прочитан.",
+    "Учёные из Израиля: работа идёт третий год.",
+    "Итого получилось три исследования, и все на мышах.",
+])
+def test_real_text_is_not_cut(text):
+    """Узкое правило: двоеточие бывает и в живой фразе."""
+    assert digest._no_intro(text) == text
+
+
+def test_empty_summary_stays_empty():
+    assert digest._no_intro("") == ""
+    assert digest._no_intro(None) == ""
+
+
+# --- источники --------------------------------------------------------
+
+def test_sources_become_links():
+    """Лента приходит в markdown, служебные экраны — в HTML: без перевода
+    читатель увидел бы квадратные скобки вместо ссылок."""
+    out = digest._sources_html("[Genome mapped](http://a)\n[CRISPR](http://b)")
+    assert '<a href="http://a">Genome mapped</a>' in out
+    assert out.count("•") == 2
+
+
+def test_sources_survive_a_line_without_a_link():
+    out = digest._sources_html("просто строка")
+    assert "просто строка" in out and "<a" not in out
+
+
+def test_channel_block_names_its_sources(monkeypatch, settings):
+    async def headlines():
+        return "[Первый](http://a)\n[Второй](http://b)"
+
+    async def summary(text, prompt, key, what):
+        return "Разбор."
+
+    monkeypatch.setattr(digest, "_genetics_text", headlines)
+    monkeypatch.setattr(digest, "_summary", summary)
+    post = run(digest._genetics_post())
+    assert "Источники" in post and "http://a" in post
