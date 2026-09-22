@@ -205,3 +205,112 @@ def test_owed_survives_a_broken_record(settings):
 
     settings[checklist.OWED_KEY] = "не json"
     assert run(checklist._owed()) == []
+
+
+# --- «я оплатил переводом» --------------------------------------------
+#
+# Перевод приходит в банк, а не в бот: узнать о нём бот не может никак.
+# Значит, единственная связь между деньгами и доступом — эта кнопка, и
+# сломаться она не должна ни с одной стороны.
+
+class Call:
+    """Нажатие кнопки: данные, кто нажал и куда отвечать"""
+
+    def __init__(self, data, user_id=42):
+        self.data = data
+        self.message = Msg("", user_id=user_id)
+        self.from_user = type("U", (), {"id": user_id, "first_name": "Пётр",
+                                        "last_name": None, "username": "petr"})()
+        self.answers = []
+
+    async def answer(self, text="", **kw):
+        self.answers.append(text)
+
+
+class Bot_:
+    def __init__(self):
+        self.sent = []
+
+    async def send_message(self, chat_id, text, **kw):
+        self.sent.append((chat_id, text, kw.get("reply_markup")))
+
+
+def test_claim_reaches_the_owner(paid, settings, monkeypatch):
+    monkeypatch.setattr(config, "ADMIN_ID", 1)
+    bot = Bot_()
+    call = Call("pay_claim_lang_he_1", user_id=42)
+    run(access.claim(call, bot))
+
+    assert bot.sent and bot.sent[0][0] == 1
+    card = bot.sent[0][1]
+    assert "42" in card, "без номера доступ открыть нечем"
+    assert "199" in card, "не видно, сколько ждать на счету"
+
+
+def test_claim_tells_the_person_to_wait(paid, settings, monkeypatch):
+    monkeypatch.setattr(config, "ADMIN_ID", 1)
+    call = Call("pay_claim_lang_he_1", user_id=42)
+    run(access.claim(call, Bot_()))
+    assert any("откроет доступ" in t for t in call.message.said)
+
+
+def test_second_press_does_not_spam(paid, settings, monkeypatch):
+    monkeypatch.setattr(config, "ADMIN_ID", 1)
+    bot = Bot_()
+    for _ in range(3):
+        run(access.claim(Call("pay_claim_lang_he_1", user_id=42), bot))
+    assert len(bot.sent) == 1, "владелице придёт три одинаковых карточки"
+
+
+def test_approve_opens_exactly_what_was_asked(paid, settings, monkeypatch):
+    monkeypatch.setattr(config, "ADMIN_ID", 1)
+    import database
+
+    opened = {}
+
+    async def grant_skill(user_id, skill, days, source=""):
+        opened.update(user_id=user_id, skill=skill, days=days, source=source)
+        return True
+
+    monkeypatch.setattr(database, "grant_skill", grant_skill)
+    run(access.approve(Call("pay_ok_42_lang_he_3", user_id=1), Bot_()))
+    assert opened == {"user_id": 42, "skill": "lang_he", "days": 90,
+                      "source": "перевод"}
+
+
+def test_approve_is_only_for_the_owner(paid, settings, monkeypatch):
+    monkeypatch.setattr(config, "ADMIN_ID", 1)
+    import database
+
+    touched = []
+
+    async def grant_skill(*args, **kwargs):
+        touched.append(args)
+        return True
+
+    monkeypatch.setattr(database, "grant_skill", grant_skill)
+    run(access.approve(Call("pay_ok_42_lang_he_1", user_id=999), Bot_()))
+    assert not touched, "чужой человек открывает себе доступ кнопкой"
+
+
+def test_buyer_learns_that_access_is_open(paid, settings, monkeypatch):
+    monkeypatch.setattr(config, "ADMIN_ID", 1)
+    bot = Bot_()
+    run(access.approve(Call("pay_ok_42_lang_he_1", user_id=1), bot))
+    assert any(chat == 42 for chat, _, _ in bot.sent), "человек не узнает"
+
+
+def test_transfer_button_appears_only_with_a_link(paid, settings):
+    """Без ссылки «я оплатил» — кнопка в пустоту: платить некуда."""
+    data = [b.callback_data for row in run(access.buy_kb("lang_he")).inline_keyboard
+            for b in row]
+    assert not any((d or "").startswith("pay_claim_") for d in data)
+
+    settings["pay_url_lang_he"] = "https://example.com/pay"
+    data = [b.callback_data for row in run(access.buy_kb("lang_he")).inline_keyboard
+            for b in row]
+    assert "pay_claim_lang_he_1" in data
+
+
+def test_every_tariff_has_a_ruble_price():
+    assert set(access.PRICE_RUB) == set(access.TARIFFS)

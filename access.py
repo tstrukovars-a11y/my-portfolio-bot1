@@ -18,8 +18,9 @@
 # database.grant_skill.
 import html
 import logging
+import time
 
-from aiogram import Router, F
+from aiogram import Router, F, Bot
 from aiogram.types import (Message, CallbackQuery, InlineKeyboardMarkup,
                            InlineKeyboardButton)
 
@@ -48,6 +49,16 @@ TARIFFS = {
 
 TARIFF_NAMES = {"1": "месяц", "3": "три месяца", "12": "год"}
 
+# Цена переводом, в рублях. Отдельно от звёзд: у звезды свой курс, и
+# пересчитывать его на лету — значит показывать человеку каждый раз
+# новое число. Правится здесь.
+PRICE_RUB = {"1": 199, "3": 499, "12": 1490}
+
+# Заявка «я оплатил»: кто, что и когда. Живёт в настройках, чтобы
+# пережить перезапуск, — человек ждёт ответа, а не деплоя.
+CLAIM_KEY = "pay_claim_"         # + id: «навык|тариф|время»
+CLAIM_PAUSE = 300                # секунд между заявками одного человека
+
 # Ссылка на оплату картой, если она заведена: настройка pay_url_<навык>
 # или общая pay_url. Пока её нет, кнопки просто не будет.
 PAY_URL_KEY = "pay_url_"
@@ -65,7 +76,13 @@ async def pay_url(skill: str) -> str:
 
 
 async def buy_kb(skill: str) -> InlineKeyboardMarkup:
-    """Чем платить. Звёзды всегда, карта — если заведена касса."""
+    """Чем платить.
+
+    Звёзды работают всегда и открывают доступ мгновенно. Перевод даёт
+    деньги на счёт, но подтверждение приходит не в бот, а в банк —
+    поэтому рядом с ним кнопка «я оплатил»: она зовёт владельца, а не
+    просит человека писать в личку и объясняться.
+    """
     rows = [[InlineKeyboardButton(
         text=f"⭐ {TARIFF_NAMES[code]} — {stars}",
         callback_data=f"buy_skill_{skill}_{code}")]
@@ -73,7 +90,11 @@ async def buy_kb(skill: str) -> InlineKeyboardMarkup:
 
     card = await pay_url(skill)
     if card:
-        rows.append([InlineKeyboardButton(text="💳 Оплатить картой", url=card)])
+        rows.append([InlineKeyboardButton(
+            text=f"💳 Перевод — {PRICE_RUB['1']} ₽ за месяц", url=card)])
+        rows.append([InlineKeyboardButton(
+            text="✅ Я оплатил переводом",
+            callback_data=f"pay_claim_{skill}_1")])
     rows.append([InlineKeyboardButton(text="⇦", callback_data="go_home")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -87,6 +108,105 @@ def wall_text(skill: str, done: str = "") -> str:
         "Дальше — остальные темы и разбор ошибок. Доступ открывается "
         "на месяц, три или год, и только к этому разделу: платить за то, "
         "чем не пользуетесь, незачем.")
+
+
+# ---------------------------------------------------------------------
+# «Я ОПЛАТИЛ»
+# ---------------------------------------------------------------------
+#
+# Перевод приходит в банк, а не в бот: узнать о нём бот не может никак.
+# Просить человека «напишите мне в личку» — потерять половину: он уже
+# заплатил и не обязан ничего доказывать.
+#
+# Поэтому он нажимает кнопку, а владелица получает карточку с одной
+# кнопкой «открыть». Сверить с выпиской — её работа, но на неё уходит
+# секунда, а не переписка.
+
+async def _claim_seen(user_id: int) -> bool:
+    """Повторное нажатие в ближайшие минуты — не новая заявка"""
+    raw = await database.get_setting(CLAIM_KEY + str(user_id)) or ""
+    parts = raw.split("|")
+    if len(parts) < 3:
+        return False
+    try:
+        return time.time() - float(parts[2]) < CLAIM_PAUSE
+    except ValueError:
+        return False
+
+
+@router.callback_query(F.data.startswith("pay_claim_"))
+async def claim(call: CallbackQuery, bot: Bot):
+    body = call.data[len("pay_claim_"):]
+    skill, _, tier = body.rpartition("_")
+    if skill not in SKILLS or tier not in TARIFFS:
+        await call.answer()
+        return
+
+    if await _claim_seen(call.from_user.id):
+        await call.answer("Заявка уже отправлена, жду ответа", show_alert=True)
+        return
+
+    await database.set_setting(CLAIM_KEY + str(call.from_user.id),
+                               f"{skill}|{tier}|{time.time()}")
+    await call.answer()
+    await call.message.answer(
+        "Спасибо! Сказала владелице — она сверит перевод и откроет доступ. "
+        "Обычно это занимает несколько часов; бот напишет вам сам, "
+        "отвечать не нужно.")
+
+    who = call.from_user
+    name = " ".join(x for x in [who.first_name, who.last_name] if x) or "—"
+    tag = f"@{who.username}" if who.username else "без @"
+    days = TARIFFS[tier][0]
+    if not config.ADMIN_ID:
+        return
+    try:
+        await bot.send_message(
+            config.ADMIN_ID,
+            f"💳 <b>Говорит, что оплатил переводом</b>\n\n"
+            f"{html.escape(name)} · {html.escape(tag)} · <code>{who.id}</code>\n"
+            f"{SKILLS[skill]} — {TARIFF_NAMES[tier]}, {PRICE_RUB[tier]} ₽\n\n"
+            f"Сверьте с выпиской и откройте:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(
+                    text=f"✅ Открыть на {days} дней",
+                    callback_data=f"pay_ok_{who.id}_{skill}_{tier}")]]))
+    except Exception as e:
+        logging.error(f"Заявка об оплате не дошла до владельца: {e}")
+
+
+@router.callback_query(F.data.startswith("pay_ok_"))
+async def approve(call: CallbackQuery, bot: Bot):
+    if not config.is_admin(call.from_user.id):
+        await call.answer()
+        return
+
+    body = call.data[len("pay_ok_"):]
+    head, _, tier = body.rpartition("_")
+    buyer, _, skill = head.partition("_")
+    if skill not in SKILLS or tier not in TARIFFS:
+        await call.answer()
+        return
+
+    days = TARIFFS[tier][0]
+    if not await database.grant_skill(int(buyer), skill, days, "перевод"):
+        await call.answer("Не записалось — проверьте /db", show_alert=True)
+        return
+
+    await database.set_setting(CLAIM_KEY + buyer, "")
+    await call.answer("Открыла")
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await call.message.answer(f"✅ {SKILLS[skill]} — открыт на {days} дней.")
+    try:
+        await bot.send_message(
+            int(buyer), f"{SKILLS[skill]}\n\nДоступ открыт на {days} дней. "
+                        f"Спасибо!")
+    except Exception as e:
+        logging.info(f"Купившему не написать: {e}")
+        await call.message.answer("Сообщить ему не вышло — бот ему не писал раньше.")
 
 
 # ---------------------------------------------------------------------
