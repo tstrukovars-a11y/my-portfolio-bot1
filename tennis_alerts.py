@@ -108,6 +108,57 @@ def _names(match):
 PICK_MIN = 5
 
 
+def _tops(match) -> int:
+    """Сколько игроков из первой двадцатки"""
+    return sum(1 for side in (match.get("sides") or [])[:2]
+               if players_ru.is_top(((side.get("athlete") or {})
+                                     .get("displayName") or "")))
+
+
+def _ours(match) -> bool:
+    return any(players_ru.is_nash(((side.get("athlete") or {})
+                                   .get("displayName") or ""))
+               for side in (match.get("sides") or [])[:2])
+
+
+def _for_pick(matches: list):
+    """Матч, под которым стоит спрашивать прогноз.
+
+    Раньше брали первый из списка — а список отсортирован по турниру и
+    времени, и наверху оказывался самый ранний матч случайного турнира.
+    Первый круг никому не интересен: голосуют за исход, который чего-то
+    стоит. Поэтому сначала стадия, потом свои, потом сила игроков — и
+    лишь при полном равенстве тот, что начнётся раньше: у голосования
+    будет больше времени собраться до начала.
+    """
+    if not matches:
+        return None
+    return sorted(matches, key=lambda m: (
+        -players_ru.stage(m.get("round") or ""),
+        0 if _ours(m) else 1,
+        -_tops(m),
+        m.get("date") or ""))[0]
+
+
+# Вопрос под кнопками. На финале спрашивать «кто победит в матче» — терять
+# то единственное, что делает этот матч особенным.
+PICK_ASK = {
+    "финал": "Сегодня финал: {who} — кто возьмёт титул?",
+    "1/2 финала": "Полуфинал: {who} — кто выйдет в финал?",
+    "1/4 финала": "Четвертьфинал: {who} — кто пройдёт дальше?",
+}
+
+
+def _pick_question(match) -> str:
+    who = html.escape(_title(match))
+    stage_name = players_ru.rnd(match.get("round") or "")
+    ask = PICK_ASK.get(stage_name)
+    if ask:
+        return ask.format(who=who) + " Нажмите — покажу, что думают остальные."
+    return (f"А кто победит в матче {who}? Нажмите — покажу, "
+            f"что думают остальные.")
+
+
 def _pick_labels(match_id: str, names, counts) -> list:
     """Кнопки прогноза с долями, когда доли уже что-то значат"""
     total = sum(counts)
@@ -319,12 +370,10 @@ async def publish_schedule(bot: Bot, chat: int, thread=None) -> str:
         # Прогноз — только на один матч поста, самый заметный. Две кнопки
         # к каждому из десяти превратили бы пост в стену: спрашивать надо
         # там, где человеку и правда интересно ответить.
-        top = matches[0] if matches else None
+        top = _for_pick(matches)
         picks = await _pick_row(top) if top else None
         if picks:
-            lines.append(f"\nА кто победит в матче "
-                         f"{html.escape(_title(top))}? Нажмите — покажу, "
-                         f"что думают остальные.")
+            lines.append("\n" + _pick_question(top))
             rows.append(picks)
 
         # Сетка — последней строкой кнопок: список матчей на сегодня

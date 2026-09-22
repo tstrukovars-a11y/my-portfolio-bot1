@@ -121,3 +121,63 @@ def test_early_morning_tomorrow_is_still_ours(monkeypatch):
     assert [m["id"] for m in got] == ["today", "early"]
     assert got[1].get("tomorrow") is True
     assert not got[0].get("tomorrow")
+
+
+# --- под каким матчем спрашивать прогноз ------------------------------
+#
+# Раньше брали первый из списка, а он отсортирован по турниру и времени:
+# наверху оказывался самый ранний матч случайного турнира, обычно первого
+# круга. Голосовать за исход, который ничего не решает, никто не станет.
+
+def _match(round_name, names=("Ivan Petrov", "John Doe"), date="2026-09-22T10:00Z"):
+    return {"id": f"{round_name}-{date}", "round": round_name, "date": date,
+            "sides": [{"athlete": {"displayName": n}} for n in names]}
+
+
+def test_final_beats_the_first_round():
+    early = _match("1st Round", date="2026-09-22T08:00Z")
+    final = _match("Final", date="2026-09-22T19:00Z")
+    assert ta._for_pick([early, final]) is final
+
+
+def test_later_stage_wins():
+    stages = [_match("Round of 16"), _match("Quarterfinals"), _match("Semifinals")]
+    assert ta._for_pick(stages)["round"] == "Semifinals"
+
+
+def test_ours_wins_at_the_same_stage(monkeypatch):
+    import players_ru
+
+    monkeypatch.setattr(players_ru, "is_nash",
+                        lambda name: "Rublev" in name)
+    plain = _match("Quarterfinals", ("John Doe", "Jane Roe"))
+    ours = _match("Quarterfinals", ("Andrey Rublev", "Jane Roe"))
+    assert ta._for_pick([plain, ours]) is ours
+
+
+def test_earlier_match_wins_only_when_all_else_is_equal():
+    """У раннего голосование успеет собраться до начала."""
+    late = _match("Final", date="2026-09-22T20:00Z")
+    early = _match("Final", date="2026-09-22T12:00Z")
+    assert ta._for_pick([late, early]) is early
+
+
+def test_unknown_stage_does_not_outrank_a_final():
+    assert ta._for_pick(
+        [_match("Exhibition"), _match("Final")])["round"] == "Final"
+
+
+def test_empty_list_asks_nothing():
+    assert ta._for_pick([]) is None
+
+
+def test_final_is_called_a_final():
+    """«Кто победит в матче» на финале теряет единственное, что делает
+    этот матч особенным."""
+    text = ta._pick_question(_match("Final"))
+    assert "финал" in text and "титул" in text
+
+
+def test_ordinary_match_keeps_the_plain_question():
+    text = ta._pick_question(_match("2nd Round"))
+    assert "кто победит" in text.lower()
