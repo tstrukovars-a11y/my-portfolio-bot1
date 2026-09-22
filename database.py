@@ -2463,6 +2463,27 @@ async def totals_by_asset(year: int):
         return []
 
 
+async def sales(days: int = 60) -> list:
+    """Продажи доступа за период — для сверки с «Моим налогом».
+
+    Звёзды и рубли лежат в одной таблице, но в разных валютах: сводить
+    их в одно число нельзя, поэтому отдаём как есть, а считает уже экран.
+    """
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"""SELECT asset, amount, note, occurred_at
+                    FROM {FINANCE_SCHEMA}.transactions
+                    WHERE kind = 'income' AND category = 'subscription'
+                      AND occurred_at > CURRENT_TIMESTAMP - ($1 || ' days')::interval
+                    ORDER BY occurred_at DESC""", str(days))
+        return [dict(r) for r in rows]
+    except Exception as e:
+        logging.error(f"Продажи недоступны: {e}")
+        return []
+
+
 # --- НАСТРОЙКИ, МЕНЯЕМЫЕ ИЗ БОТА ---
 
 async def save_cartoon(user_id: int, story: str, board_json: str):

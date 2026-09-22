@@ -194,6 +194,20 @@ async def approve(call: CallbackQuery, bot: Bot):
         return
 
     await database.set_setting(CLAIM_KEY + buyer, "")
+
+    # В журнал операций — туда же, где звёзды. Иначе половина выручки
+    # живёт только в банковской выписке, и сверять её с «Моим налогом»
+    # приходится по памяти.
+    try:
+        import finance
+        await finance.record(
+            kind="income", asset="RUB", amount=PRICE_RUB[tier],
+            category="subscription",
+            note=f"{skill}: {days} дней, перевод, user {buyer}",
+            external_id=f"transfer_{buyer}_{int(time.time())}")
+    except Exception as e:
+        logging.error(f"Продажа не записана в журнал: {e}")
+
     await call.answer("Открыла")
     try:
         await call.message.edit_reply_markup(reply_markup=None)
@@ -304,6 +318,53 @@ async def till_command(message: Message):
     await database.set_setting(key, value)
     await message.answer(f"✅ Записала.\n{html.escape(value)}",
                          disable_web_page_preview=True)
+
+
+@router.message(F.text.regexp(r"^/продажи"))
+async def sales_command(message: Message):
+    """Что продано — по месяцам, в той валюте, в которой пришло.
+
+    Экран нужен для сверки: в «Моём налоге» чек выбивается на каждую
+    оплату, и без списка их легко пропустить. Звёзды и рубли не
+    складываем: это разные деньги, и в налог идут по-разному.
+    """
+    if not config.is_admin(message.from_user.id):
+        return
+
+    rows = await database.sales(90)
+    if not rows:
+        await message.answer(
+            "Продаж пока нет.\n\nЗдесь появятся оплаты звёздами и "
+            "переводом — с датой и суммой, чтобы сверять с «Моим налогом».")
+        return
+
+    by_month = {}
+    for row in rows:
+        key = row["occurred_at"].strftime("%Y-%m")
+        by_month.setdefault(key, {}).setdefault(row["asset"], 0)
+        by_month[key][row["asset"]] += float(row["amount"])
+
+    lines = ["💳 <b>Продажи доступа</b>", ""]
+    for month in sorted(by_month, reverse=True):
+        year, mon = month.split("-")
+        totals = ", ".join(
+            f"{amount:.0f} {'⭐' if asset == 'XTR' else '₽'}"
+            for asset, amount in sorted(by_month[month].items()))
+        lines.append(f"<b>{MONTHS[int(mon)]} {year}</b> — {totals}")
+
+    lines += ["", "<b>Последние:</b>"]
+    for row in rows[:12]:
+        mark = "⭐" if row["asset"] == "XTR" else "₽"
+        lines.append(f"{row['occurred_at']:%d.%m} · {float(row['amount']):.0f} {mark} "
+                     f"· {html.escape((row['note'] or '')[:40])}")
+
+    lines += ["", "<i>Чек на каждую рублёвую оплату выбивается в «Моём "
+              "налоге» — этот список для сверки.</i>"]
+    await message.answer("\n".join(lines))
+
+
+MONTHS = ["", "январь", "февраль", "март", "апрель", "май", "июнь", "июль",
+          "август", "сентябрь", "октябрь", "ноябрь", "декабрь"]
 
 
 @router.message(F.text.regexp(r"^/мои_навыки"))

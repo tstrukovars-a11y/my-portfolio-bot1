@@ -314,3 +314,62 @@ def test_transfer_button_appears_only_with_a_link(paid, settings):
 
 def test_every_tariff_has_a_ruble_price():
     assert set(access.PRICE_RUB) == set(access.TARIFFS)
+
+
+# --- учёт продаж ------------------------------------------------------
+#
+# Половина выручки приходит переводом, и если её не записать, она живёт
+# только в банковской выписке. Сверять чеки в «Моём налоге» по памяти —
+# верный способ пропустить оплату.
+
+def test_transfer_sale_lands_in_the_ledger(paid, settings, monkeypatch):
+    monkeypatch.setattr(config, "ADMIN_ID", 1)
+    import database
+    import finance
+
+    written = {}
+
+    async def grant_skill(*args, **kwargs):
+        return True
+
+    async def record(**kwargs):
+        written.update(kwargs)
+        return "ok"
+
+    monkeypatch.setattr(database, "grant_skill", grant_skill)
+    monkeypatch.setattr(finance, "record", record)
+    run(access.approve(Call("pay_ok_42_lang_he_3", user_id=1), Bot_()))
+
+    assert written["kind"] == "income"
+    assert written["asset"] == "RUB", "рубли нельзя записать как звёзды"
+    assert written["amount"] == access.PRICE_RUB["3"]
+    assert written["category"] == "subscription"
+
+
+def test_sale_is_recorded_even_if_the_buyer_is_unreachable(paid, settings, monkeypatch):
+    """Деньги пришли независимо от того, дошло ли уведомление."""
+    monkeypatch.setattr(config, "ADMIN_ID", 1)
+    import database
+    import finance
+
+    calls = []
+
+    async def grant_skill(*args, **kwargs):
+        return True
+
+    async def record(**kwargs):
+        calls.append(kwargs)
+        return "ok"
+
+    class Deaf(Bot_):
+        async def send_message(self, *args, **kwargs):
+            raise RuntimeError("бот ему не писал")
+
+    monkeypatch.setattr(database, "grant_skill", grant_skill)
+    monkeypatch.setattr(finance, "record", record)
+    run(access.approve(Call("pay_ok_42_lang_he_1", user_id=1), Deaf()))
+    assert calls, "продажа потерялась из-за недоставленного сообщения"
+
+
+def test_months_table_covers_the_year():
+    assert len(access.MONTHS) == 13 and access.MONTHS[9] == "сентябрь"
