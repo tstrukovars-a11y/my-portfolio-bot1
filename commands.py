@@ -56,6 +56,7 @@ GROUPS = (
     ("lang_review", "🎧 Проверка озвучки"),
     ("access", "🔑 Доступ и оплата"),
     ("courses", "🎓 Курсы"),
+    ("exchange", "💱 Перевод денег"),
     ("privacy", "🔒 Данные"),
     ("puzzle_daily", "🧩 Головоломки"),
     ("travel_spots", "🌍 Места"),

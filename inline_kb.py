@@ -150,9 +150,12 @@ def get_travel_main_menu(lang):
     # Помощь со звонком — тоже путешествия: чужой язык в трубке начинается
     # ровно там, где кончается родная страна.
     ca = "📞 Помощь со звонком" if lang == "ru" else "📞 Phone call helper"
+    # Сколько дойдёт при переводе: считаем итог, а не курс.
+    ex = "💱 Перевод в Израиль" if lang == "ru" else "💱 Money transfer"
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=la, callback_data="lang_open")],
         [InlineKeyboardButton(text=ca, callback_data="lang_call")],
+        [InlineKeyboardButton(text=ex, callback_data="xch_open")],
         [InlineKeyboardButton(text=places, callback_data="travel_places")],
         [InlineKeyboardButton(text=geo, callback_data="travel_geography")],
         [InlineKeyboardButton(text=tool, callback_data="travel_toolkit")],
