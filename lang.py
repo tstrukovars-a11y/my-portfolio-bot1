@@ -435,6 +435,30 @@ async def lang_command(message: Message):
         reply_markup=_langs_kb())
 
 
+# Карточка написана не для владелицы, а для того, кому её перешлют:
+# человек должен понять, что это и зачем, не читая ничего сверх.
+CALL_CARD = (
+    "📞 <b>Помощник в разговоре по телефону на иврите</b>\n\n"
+    "Звоните в клинику или в кассу больничную — положите телефон на "
+    "громкую связь и откройте эту страницу на компьютере.\n\n"
+    "Она показывает, <b>какую цифру нажать</b>, когда автоответчик "
+    "диктует меню, и <b>говорит за вас</b> нужные фразы на иврите вслух, "
+    "в трубку. Произносить самому ничего не нужно.\n\n"
+    "Бесплатно, ничего ставить не надо, запись не сохраняется.\n\n"
+    "{url}\n\n"
+    "<i>Открывать в Chrome: в Safari и на айфоне браузер не умеет "
+    "распознавать речь. Кнопки с фразами работают везде.</i>")
+
+
+def _share_call(url: str) -> str:
+    from urllib.parse import quote
+
+    text = ("Помощник для звонка на иврите: показывает, какую цифру нажать, "
+            "и говорит фразы за вас")
+    return (f"https://t.me/share/url?url={quote(url, safe='')}"
+            f"&text={quote(text, safe='')}")
+
+
 @router.message(F.text.regexp(r"^/(звонок|call)\b"))
 async def call_command(message: Message):
     """Ссылка на помощника — с предупреждением про браузер.
@@ -448,14 +472,11 @@ async def call_command(message: Message):
                              "локально внешнего адреса нет.")
         return
     await message.answer(
-        "📞 <b>Помощник в звонке</b>\n\n"
-        "Телефон — на громкую связь, ноутбук рядом. Компьютер слышит "
-        "автоответчик, показывает, какую цифру нажать, и говорит за вас "
-        "на иврите: произносить самой ничего не нужно.\n\n"
-        f"<b>Откройте в Chrome:</b>\n{url}\n\n"
-        "<i>Именно в Chrome — в других браузерах распознавания речи нет. "
-        "Звук уходит в Google, разговор медицинский: решайте сами.</i>",
-        disable_web_page_preview=True)
+        CALL_CARD.format(url=url),
+        disable_web_page_preview=True,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="📤 Отправить в чат",
+                                 url=_share_call(url))]]))
 
 
 @router.callback_query(F.data == "lang_open")

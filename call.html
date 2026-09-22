@@ -132,6 +132,16 @@
 <!-- ЗВОНОК -->
 <div id="call" class="hide">
   <div id="press"></div>
+  <div class="card" id="noEars" style="display:none; border-color:#6b4a12; background:#241c0d;">
+    <b>Здесь я не слышу</b>
+    <div style="color:var(--dim); margin-top:6px;">
+      Распознавание речи есть только в Chrome на компьютере и на Android.
+      В Safari и на айфоне его нет — это ограничение браузера, а не поломка.
+      <br><br>
+      Кнопки справа работают: нажимаете — телефон говорит фразу на иврите
+      вслух. Этого хватает, чтобы вас поняли.
+    </div>
+  </div>
 
   <div class="grid">
     <div>
@@ -309,7 +319,11 @@ function addLine(text, partial) {
 function startMic() {
   const Recogniser = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!Recogniser) {
-    setState(false, "нет распознавания — нужен Chrome");
+    // Молча не слушать — худшее, что можно сделать: человек решит, что
+    // сломано, и уйдёт, хотя половина страницы работает.
+    setState(false, "нет распознавания");
+    document.getElementById("noEars").style.display = "block";
+    document.getElementById("mic").disabled = true;
     return;
   }
   wantListening = true;

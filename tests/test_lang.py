@@ -357,3 +357,18 @@ def test_call_page_speaks_hebrew_and_listens():
     assert 'lang = "he-IL"' in page, "распознаём не тот язык"
     assert 'utter.lang = "he-IL"' in page, "говорим не на том языке"
     assert "הקישו" in page, "цифру из меню автоответчика взять нечем"
+
+
+def test_call_card_explains_itself_to_a_stranger():
+    """Карточку перешлют человеку, который про бота ничего не знает."""
+    card = lang.CALL_CARD.format(url="https://x/call")
+    for word in ("иврит", "громкую связь", "Chrome"):
+        assert word in card, word
+
+
+def test_call_page_warns_when_it_cannot_listen():
+    """Молчащая страница выглядит сломанной, хотя половина работает."""
+    page = (Path(__file__).resolve().parent.parent / "call.html").read_text(
+        encoding="utf-8")
+    assert "noEars" in page
+    assert "ограничение браузера" in page
