@@ -32,6 +32,8 @@ import database
 router = Router()
 
 SERVICES_KEY = "transfer_services"
+LOG_KEY = "transfer_log"        # свои переводы: что обещали и что дошло
+LOG_MAX = 100                   # больше в настройку класть незачем
 
 # Четыре страны, между которыми ходят деньги. Доллар и евро считаются
 # через биржевой курс так же, как рубль с шекелем: разницы в арифметике
@@ -119,6 +121,56 @@ def parse_service(text: str):
         else:
             item["fixed"] = number
     return item
+
+
+# ---------------------------------------------------------------------
+# СВОИ ПЕРЕВОДЫ
+# ---------------------------------------------------------------------
+#
+# Витрина сервиса показывает курс, а не итог, и почти всегда лучше
+# правды. Единственный источник настоящих цифр — собственная выписка.
+#
+# Поэтому каждый свой перевод записывается фактом: отправлено столько,
+# дошло столько. Из этого считается действительная потеря в процентах —
+# та самая, которую нигде не публикуют, — и она же поправляет карточку
+# сервиса. Через полгода получается сравнение, проверенное деньгами.
+
+async def log() -> list:
+    raw = await database.get_setting(LOG_KEY)
+    if not raw:
+        return []
+    try:
+        items = json.loads(raw)
+        return items if isinstance(items, list) else []
+    except (ValueError, TypeError):
+        return []
+
+
+async def save_log(items: list):
+    await database.set_setting(LOG_KEY, json.dumps(items[-LOG_MAX:],
+                                                   ensure_ascii=False))
+
+
+def real_loss(sent: float, got: float, rate: float) -> float:
+    """Сколько процентов съел перевод целиком.
+
+    Считаем от того, что дошло бы по биржевому курсу: это единственная
+    честная точка отсчёта. Комиссия и спред здесь уже не разделяются —
+    человеку и не нужно, ему важна итоговая потеря.
+    """
+    perfect = sent * rate
+    if perfect <= 0:
+        return 0.0
+    return max(0.0, (perfect - got) / perfect * 100)
+
+
+def loss_by_service(items: list) -> dict:
+    """Средняя потеря по каждому сервису, по своим переводам"""
+    sums = {}
+    for row in items:
+        key = (row.get("name", "—"), row.get("from"), row.get("to"))
+        sums.setdefault(key, []).append(row.get("loss", 0))
+    return {key: sum(values) / len(values) for key, values in sums.items()}
 
 
 # ---------------------------------------------------------------------
@@ -210,6 +262,9 @@ async def report(amount: float, src: str = None, dst: str = None) -> str:
 
     rows = compare(amount, items, rate)
     best = rows[0]["out"] if rows else 0
+    # Что проверено своим переводом, а что переписано с витрины — разные
+    # по надёжности вещи, и человек вправе это видеть.
+    checked = loss_by_service(await log())
     lines = [head,
              f"Отправляем <b>{_money(amount, src)}</b>. Биржевой курс: "
              f"1 {MONEY[src]['mark']} = {rate:.4f} {MONEY[dst]['mark']}.", ""]
@@ -222,10 +277,18 @@ async def report(amount: float, src: str = None, dst: str = None) -> str:
         behind = best - row["out"]
         tail = (f" · <i>−{_money(behind, dst)}</i>"
                 if behind >= (1 if dst == "RUB" else 0.01) else " · 👍")
-        lines.append(f"{title} — <b>{_money(row['out'], dst)}</b>{tail}")
-        lines.append(f"    <i>комиссия {_money(row['fee'], src)}, "
-                     f"курс {row['rate']:.4f}</i>")
+        seen = checked.get((row["name"], src, dst))
+        mark = " ✓" if seen is not None else ""
+        lines.append(f"{title}{mark} — <b>{_money(row['out'], dst)}</b>{tail}")
+        note = (f"    <i>комиссия {_money(row['fee'], src)}, "
+                f"курс {row['rate']:.4f}")
+        note += (f" · проверено: теряли {seen:.1f}%</i>" if seen is not None
+                 else "</i>")
+        lines.append(note)
 
+    if checked:
+        lines.append("\n<i>✓ — цифры проверены своим переводом, "
+                     "остальные взяты с витрины сервиса.</i>")
     lines += ["", DISCLAIMER]
     return "\n".join(lines)
 
@@ -321,6 +384,110 @@ HELP = (
     "Удалить: <code>/сервисы -2</code>\n\n"
     "<i>Цифры берите из своего перевода, а не с сайта: там пишут курс, "
     "а не итог.</i>")
+
+
+LOG_HELP = (
+    "🧾 <b>Свои переводы</b>\n\n"
+    "Записать факт из выписки:\n"
+    "<code>/перевёл 50000 RUB→ILS Золотая корона 1736</code>\n\n"
+    "То есть: отправила 50 000 ₽, дошло 1736 ₪. Название сервиса — как в "
+    "справочнике.\n\n"
+    "<i>Цифры берите из выписки, а не из обещаний: витрина показывает "
+    "курс, а не итог, и почти всегда лучше правды.</i>")
+
+
+@router.message(F.text.regexp(r"^/(перевёл|перевел|sent)\b"))
+async def log_command(message: Message):
+    """Записать состоявшийся перевод — и поправить им справочник"""
+    if not config.is_admin(message.from_user.id):
+        return
+
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) < 2:
+        items = await log()
+        if not items:
+            await message.answer(LOG_HELP)
+            return
+        lines = ["🧾 <b>Свои переводы</b>", ""]
+        for row in items[-10:][::-1]:
+            lines.append(
+                f"{MONEY[row['from']]['flag']}→{MONEY[row['to']]['flag']} "
+                f"{html.escape(row['name'])}: "
+                f"{_money(row['sent'], row['from'])} → "
+                f"{_money(row['got'], row['to'])} "
+                f"· <b>−{row['loss']:.1f}%</b>")
+        average = loss_by_service(items)
+        if average:
+            lines += ["", "<b>В среднем теряли:</b>"]
+            for (name, src, dst), value in sorted(average.items(),
+                                                  key=lambda x: x[1]):
+                lines.append(f"{MONEY[src]['flag']}→{MONEY[dst]['flag']} "
+                             f"{html.escape(name)} — {value:.1f}%")
+        lines += ["", LOG_HELP]
+        await message.answer("\n".join(lines))
+        return
+
+    body = parts[1]
+    pair = parse_pair(body)
+    if not pair:
+        await message.answer("Не поняла направление. Нужно, например, "
+                             "<code>RUB→ILS</code>.\n\n" + LOG_HELP)
+        return
+
+    numbers = []
+    words = []
+    for word in body.split():
+        cleaned = word.replace(",", ".").replace(" ", "")
+        if parse_pair(word):
+            continue
+        try:
+            numbers.append(float(cleaned))
+        except ValueError:
+            words.append(word)
+    if len(numbers) < 2:
+        await message.answer("Нужны два числа: сколько отправили и сколько "
+                             "дошло.\n\n" + LOG_HELP)
+        return
+
+    src, dst = pair
+    sent, got = numbers[0], numbers[-1]
+    name = " ".join(words)[:40] or "—"
+
+    rate = await cross_rate(src, dst)
+    if not rate:
+        await message.answer("Курс сейчас недоступен — без него потерю не "
+                             "посчитать. Попробуйте позже.")
+        return
+
+    loss = real_loss(sent, got, rate)
+    items = await log()
+    items.append({"name": name, "from": src, "to": dst, "sent": sent,
+                  "got": got, "loss": round(loss, 2)})
+    await save_log(items)
+
+    # Сразу сравниваем с тем, что записано в справочнике: расхождение
+    # значит, что карточка врёт, и лучше узнать об этом сейчас.
+    promised = None
+    for service in await services():
+        if service.get("name") == name and service.get("from") == src \
+                and service.get("to") == dst:
+            perfect = sent * rate
+            out = arrives(sent, service, rate)["out"]
+            promised = (perfect - out) / perfect * 100 if perfect else None
+            break
+
+    text = (f"✅ Записала.\n\n{MONEY[src]['flag']}→{MONEY[dst]['flag']} "
+            f"{html.escape(name)}: {_money(sent, src)} → {_money(got, dst)}\n"
+            f"Потеря к биржевому курсу: <b>{loss:.1f}%</b>")
+    if promised is not None:
+        diff = loss - promised
+        if abs(diff) >= 0.3:
+            text += (f"\n\n⚠️ В справочнике у него выходит {promised:.1f}% — "
+                     f"расхождение {diff:+.1f}%. Стоит поправить цифры: "
+                     f"<code>/сервисы</code>")
+        else:
+            text += f"\n\nСправочник сходится ({promised:.1f}%)."
+    await message.answer(text)
 
 
 @router.message(F.text.regexp(r"^/сервисы"))

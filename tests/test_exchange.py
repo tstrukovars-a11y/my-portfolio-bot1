@@ -253,3 +253,68 @@ def test_all_four_currencies_have_a_rate_source():
 
     known = set(fx_rates.CURRENCIES) | {"USD"}
     assert set(exchange.MONEY) <= known
+
+
+# --- свои переводы ----------------------------------------------------
+#
+# Витрина показывает курс, а не итог, и почти всегда лучше правды.
+# Единственный источник настоящих цифр — собственная выписка, поэтому
+# расчёт потери должен быть точным: на нём потом строится сравнение.
+
+def test_loss_is_counted_from_the_exchange_rate():
+    """Точка отсчёта — сколько дошло бы по биржевому курсу."""
+    assert exchange.real_loss(50000, 1736, 0.0351) == pytest.approx(
+        (50000 * 0.0351 - 1736) / (50000 * 0.0351) * 100)
+
+
+def test_perfect_transfer_loses_nothing():
+    assert exchange.real_loss(1000, 35, 0.035) == pytest.approx(0)
+
+
+def test_loss_never_goes_negative():
+    """Курс на день записи и на день перевода разные — в минус уходить
+    нельзя, иначе получится «сервис доплатил»."""
+    assert exchange.real_loss(1000, 40, 0.035) == 0
+
+
+def test_loss_survives_a_zero_rate():
+    assert exchange.real_loss(1000, 35, 0) == 0
+
+
+def test_average_is_per_service_and_direction():
+    rows = [
+        {"name": "A", "from": "RUB", "to": "ILS", "loss": 2.0},
+        {"name": "A", "from": "RUB", "to": "ILS", "loss": 4.0},
+        {"name": "A", "from": "USD", "to": "EUR", "loss": 1.0},
+    ]
+    average = exchange.loss_by_service(rows)
+    assert average[("A", "RUB", "ILS")] == 3.0
+    assert average[("A", "USD", "EUR")] == 1.0
+
+
+def test_checked_services_are_marked(settings, monkeypatch):
+    """Проверенное своим переводом и переписанное с витрины — разные по
+    надёжности вещи, и человек вправе это видеть."""
+    async def rate(src=None, dst=None):
+        return 0.035
+
+    monkeypatch.setattr(exchange, "cross_rate", rate)
+    run(exchange.save_services([
+        {"name": "Проверенный", "from": "RUB", "to": "ILS", "percent": 1},
+        {"name": "С витрины", "from": "RUB", "to": "ILS", "percent": 1.2},
+    ]))
+    run(exchange.save_log([{"name": "Проверенный", "from": "RUB", "to": "ILS",
+                            "sent": 50000, "got": 1700, "loss": 3.0}]))
+    text = run(exchange.report(50000, "RUB", "ILS"))
+    assert "Проверенный ✓" in text
+    assert "С витрины ✓" not in text
+    assert "проверены своим переводом" in text
+
+
+def test_log_keeps_only_the_last_records(settings):
+    run(exchange.save_log([{"name": str(i), "from": "RUB", "to": "ILS",
+                            "sent": 1, "got": 1, "loss": 0}
+                           for i in range(exchange.LOG_MAX + 20)]))
+    kept = run(exchange.log())
+    assert len(kept) == exchange.LOG_MAX
+    assert kept[-1]["name"] == str(exchange.LOG_MAX + 19), "выбросили свежие"
