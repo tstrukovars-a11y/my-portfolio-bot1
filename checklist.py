@@ -31,8 +31,18 @@ REMIND_DAY_KEY = "cabinets_remind_day"    # число месяца, 0 — не 
 REMIND_SENT_KEY = "cabinets_reminded"     # какой месяц уже напомнили
 REMIND_DAY_DEFAULT = 5                    # к пятому числу выплаты обычно видны
 REMIND_HOUR = 11
+
+# Решённое, но не сделанное. Строка исчезает сама, как только кабинет с
+# таким названием появляется в списке.
+PLANNED = [
+    "Travelpayouts — отели и eSIM (Airalo)",
+]
+# Кабинеты, которые уже заведены. Список пополняется командой, а здесь
+# лежит то, что известно с самого начала: искать адрес кабинета в почте
+# через полгода — отдельное удовольствие.
 CABINETS_DEFAULT = [
     {"name": "📚 Читай-город", "url": "https://partners.chitai-gorod.ru/"},
+    {"name": "📖 Литрес (AdvCake)", "url": "https://my.advcake.ru/o/litresru/"},
 ]
 
 
@@ -499,8 +509,20 @@ async def cabinets_screen(call: CallbackQuery):
         await call.message.answer("Кабинетов пока нет.\n\n"
                                   "Добавить: <code>/kab + Литрес https://…</code>")
         return
+    # Рядом с подключённым — то, что решено подключить, но ещё не
+    # сделано. Иначе «собрать партнёрки» превращается в дело, о котором
+    # помнишь только в момент разговора.
+    planned = [name for name in PLANNED
+               if not any(name.split()[0].lower() in i["name"].lower()
+                          for i in items)]
+    text = "🗄 <b>Кабинеты партнёрских программ</b>"
+    if planned:
+        text += ("\n\n<b>Ещё не заведены:</b>\n"
+                 + "\n".join(f"• {name}" for name in planned)
+                 + "\n\n<i>Как заведёте — <code>/kab + Название "
+                   "https://ссылка</code></i>")
     await call.message.answer(
-        "🗄 <b>Кабинеты партнёрских программ</b>",
+        text,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=i["name"][:40], url=i["url"])]
             for i in items]))

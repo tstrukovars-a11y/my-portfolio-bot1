@@ -451,3 +451,27 @@ def test_stars_stop_being_the_foreign_option(settings, paid):
 
 def test_every_tariff_has_a_dollar_price():
     assert set(access.PRICE_USD) == set(access.TARIFFS)
+
+
+# --- кабинеты партнёрок -----------------------------------------------
+
+def test_known_cabinets_are_there(settings):
+    import checklist
+
+    names = " ".join(i["name"] for i in run(checklist._cabinets()))
+    assert "Читай-город" in names
+    assert "Литрес" in names
+
+
+def test_cabinet_links_are_real(settings):
+    import checklist
+
+    for item in run(checklist._cabinets()):
+        assert item["url"].startswith("https://"), item["name"]
+
+
+def test_planned_programs_are_named():
+    """Решённое, но не сделанное иначе живёт только в переписке."""
+    import checklist
+
+    assert any("Travelpayouts" in name for name in checklist.PLANNED)
