@@ -23,8 +23,8 @@ import database
 router = Router()
 
 LEAD = "🧩 <b>Задача дня</b>"
-TAIL = ("Нажмите вариант — скажу, верно ли, и почему. "
-        "Ответ виден только вам.")
+TAIL = ("Нажмите вариант — скажу, верно ли. Ответ виден только вам, "
+        "а разбор выйдет завтра вместе со следующей задачей.")
 
 LETTERS = "АБВГДЕ"          # варианты подписываем буквами: текст не влезает
 MAX_OPTIONS = 6
@@ -96,13 +96,48 @@ async def publish(bot: Bot, chat: int, thread=None) -> str:
     return f"задача дня №{puzzle['id']}"
 
 
+# Пока ответов мало, доля врёт и обижает: «верно 0 из 1» читается как
+# приговор одному человеку, который не угадал. Цифру показываем, когда
+# она что-то значит, — а разбор вчерашней задачи выходит всегда.
+MIN_ANSWERS = 3
+
+
 async def yesterday_line() -> str:
-    """«Вчера верно ответили 7 из 11» — либо пусто, если вчера тишина."""
+    """Разбор вчерашней задачи: ответ, объяснение и — если есть смысл —
+    сколько человек справилось.
+
+    Объяснение живёт здесь, а не только во всплывающем окошке после
+    ответа: окошко Telegram обрезает на двухстах знаках, оно исчезает
+    через секунду, и его не перечитать. Разбор назавтра — единственное
+    место, где объяснение можно спокойно дочитать, и заодно повод
+    вернуться в канал.
+    """
     stat = await database.last_puzzle_result()
-    if not stat or not stat["answers"]:
+    if not stat:
         return ""
-    return (f"📊 Вчерашнюю задачу решили верно "
-            f"<b>{stat['correct']}</b> из <b>{stat['answers']}</b>.")
+
+    bank = await database.get_all_puzzles()
+    puzzle = next((p for p in bank if p["id"] == stat.get("puzzle_id")), None)
+    if not puzzle:
+        return ""
+
+    options = puzzle.get("options") or []
+    index = puzzle.get("correct_option_id")
+    if not options or index is None or index >= len(options):
+        return ""
+
+    lines = [f"📊 <b>Вчерашняя задача</b>",
+             f"Верный ответ: <b>{LETTERS[index]}. "
+             f"{html.escape(options[index])}</b>"]
+
+    note = (puzzle.get("explanation") or "").strip()
+    if note:
+        lines.append(html.escape(note))
+
+    if stat.get("answers", 0) >= MIN_ANSWERS:
+        lines.append(f"<i>Справились {stat['correct']} из "
+                     f"{stat['answers']}.</i>")
+    return "\n".join(lines)
 
 
 # =====================================================================
@@ -138,8 +173,22 @@ async def answer(call: CallbackQuery):
     right = puzzle["options"][puzzle["correct_option_id"]]
     verdict = "✅ Верно!" if correct else f"❌ Мимо. Правильный ответ: {right}"
     note = (puzzle.get("explanation") or "").strip()
+
+    # Окошко Telegram обрезает на двухстах знаках и исчезает: длинное
+    # объяснение туда не помещается. Поэтому в окошке — вердикт и начало,
+    # а целиком отправляем в личку тем, кто с ботом уже знаком. Разбор
+    # для всех остальных выйдет завтра в канале.
     await call.answer(f"{verdict}\n\n{note}"[:200] if note else verdict,
                       show_alert=True)
+    if note and len(note) > 150:
+        try:
+            await call.bot.send_message(
+                call.from_user.id,
+                f"🧩 <b>{html.escape(puzzle['question'])}</b>\n\n"
+                f"{verdict}\n\n{html.escape(note)}")
+        except Exception:
+            # Не писал боту — ничего страшного: разбор будет завтра.
+            pass
 
     counts = await database.puzzle_choice_counts(puzzle_id)
     try:
