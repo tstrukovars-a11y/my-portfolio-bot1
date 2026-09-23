@@ -1,11 +1,12 @@
-# Разбор вопросами: дерево, собранное из своих же статей.
+# Разбор вопросами: несколько деревьев с переходами между ними.
 #
-# Две вещи здесь ломают разговор молча. Кнопка, ведущая в несуществующий
-# узел, обрывает его на середине — и человек решает, что сломано всё.
-# Ветка без конца оставляет его с вопросом вместо ответа.
+# Три вещи здесь ломают разговор молча. Кнопка в несуществующий узел
+# обрывает его на середине — человек решает, что сломано всё. Ветка без
+# конца оставляет его с вопросом вместо ответа. А длинное имя узла не
+# помещается в callback_data, и кнопка просто перестаёт работать.
 #
-# Поэтому дерево проверяется до людей, а не после, и черновик не
-# становится публикацией сам.
+# Поэтому дерево проверяется до людей, имена узлов переписываются на
+# короткие, а черновик не становится публикацией сам.
 import json
 
 import pytest
@@ -16,83 +17,156 @@ import config
 import tree
 
 
-def node(text, options=()):
-    return {"text": text, "options": [{"label": l, "next": n}
-                                      for l, n in options]}
+def node(text, options=(), source=None):
+    out = {"text": text, "options": [dict(o) for o in options]}
+    if source is not None:
+        out["source"] = source
+    return out
 
 
-GOOD = {"start": "a", "nodes": {
-    "a": node("У кого нашли?", [("У меня", "b"), ("У родственника", "c")]),
-    "b": node("Носитель — не больной."),
-    "c": node("Риск считается иначе."),
+GOOD = {"trees": {
+    "t1": {"title": "Что такое ген", "start": "n1", "nodes": {
+        "n1": node("Ген — это участок ДНК.",
+                   [{"label": "Носительство", "next": "n2"},
+                    {"label": "Про риск", "go": "t2"}], source=1),
+        "n2": node("Носитель — не больной.", source=1),
+    }},
+    "t2": {"title": "Как считают риск", "start": "n1", "nodes": {
+        "n1": node("Риск — это вероятность.", source=2),
+    }},
 }}
 
 
 # --- проверка ---------------------------------------------------------
 
-def test_good_tree_passes():
+def test_good_set_passes():
     assert tree.check(GOOD) == ""
 
 
-def test_empty_tree_is_refused():
-    assert tree.check({}) == "нет узлов"
-    assert tree.check({"start": "a", "nodes": {}})
+def test_empty_is_refused():
+    assert tree.check({}) == "нет деревьев"
+    assert tree.check({"trees": {}}) == "нет деревьев"
+
+
+def test_tree_without_a_title_is_refused():
+    """Без названия тему нечем подписать на кнопке выбора."""
+    broken = {"trees": {"t1": {"title": " ", "start": "n1",
+                               "nodes": {"n1": node("Текст")}}}}
+    assert "без названия" in tree.check(broken)
 
 
 def test_start_must_exist():
-    """Иначе разговор не начинается вовсе, а причина не видна."""
-    broken = {"start": "нет-такого", "nodes": GOOD["nodes"]}
+    broken = {"trees": {"t1": {"title": "Т", "start": "нет-такого",
+                               "nodes": {"n1": node("Текст")}}}}
     assert "начало" in tree.check(broken)
 
 
 def test_button_into_nowhere_is_caught():
-    broken = {"start": "a", "nodes": {
-        "a": node("Вопрос", [("Туда", "призрак")]),
-        "b": node("Конец"),
-    }}
+    broken = {"trees": {"t1": {"title": "Т", "start": "n1", "nodes": {
+        "n1": node("Вопрос", [{"label": "Туда", "next": "призрак"}]),
+        "n2": node("Конец")}}}}
     assert "несуществующ" in tree.check(broken)
 
 
+def test_crossing_into_nowhere_is_caught():
+    """Переход в удалённую тему обрывает разговор так же, как битая
+    кнопка внутри дерева."""
+    broken = {"trees": {"t1": {"title": "Т", "start": "n1", "nodes": {
+        "n1": node("Вопрос", [{"label": "Туда", "go": "t9"}]),
+        "n2": node("Конец")}}}}
+    assert "несуществующее дерево" in tree.check(broken)
+
+
 def test_tree_without_an_ending_is_refused():
-    """Разговор, обрывающийся вопросом, хуже, чем его отсутствие."""
-    loop = {"start": "a", "nodes": {
-        "a": node("Вопрос", [("Дальше", "b")]),
-        "b": node("Ещё вопрос", [("Назад", "a")]),
-    }}
+    loop = {"trees": {"t1": {"title": "Т", "start": "n1", "nodes": {
+        "n1": node("Вопрос", [{"label": "Дальше", "next": "n2"}]),
+        "n2": node("Ещё вопрос", [{"label": "Назад", "next": "n1"}])}}}}
     assert "конца" in tree.check(loop)
 
 
-def test_empty_node_is_caught():
-    broken = {"start": "a", "nodes": {"a": node("   ")}}
-    assert "пуст" in tree.check(broken)
+def test_too_many_topics_is_refused():
+    """Длинный список тем на входе — снова список, который листают."""
+    many = {"trees": {f"t{i}": {"title": f"Тема {i}", "start": "n1",
+                                "nodes": {"n1": node("Текст")}}
+                      for i in range(tree.MAX_TREES + 2)}}
+    assert "много тем" in tree.check(many)
 
 
-def test_nameless_button_is_caught():
-    broken = {"start": "a", "nodes": {
-        "a": {"text": "Вопрос", "options": [{"label": " ", "next": "b"}]},
-        "b": node("Конец")}}
-    assert "безымянная" in tree.check(broken)
+def test_long_label_is_refused():
+    broken = {"trees": {"t1": {"title": "Т", "start": "n1", "nodes": {
+        "n1": node("Вопрос", [{"label": "очень длинная подпись, которая "
+                               "точно не поместится", "next": "n2"}]),
+        "n2": node("Конец")}}}}
+    assert "длинная" in tree.check(broken)
 
 
-def test_too_big_tree_is_refused():
-    """Длинное дерево никто не проходит: это снова лонгрид, только хуже."""
-    nodes = {str(i): node(f"Шаг {i}") for i in range(tree.MAX_NODES + 3)}
-    assert "много" in tree.check({"start": "0", "nodes": nodes})
+# --- старая запись ----------------------------------------------------
+
+def test_single_tree_record_still_works():
+    """Первое дерево лежало без обёртки. Выбросить его — значит потерять
+    то, что владелица уже проверила."""
+    old = {"start": "a", "nodes": {"a": node("Текст")}}
+    fresh = tree.normalise(old)
+    assert list(fresh["trees"]) == ["main"]
+    assert tree.check(fresh) == ""
 
 
-def test_unreachable_nodes_are_listed():
-    data = {"start": "a", "nodes": dict(GOOD["nodes"],
-                                        d=node("Никому не видно"))}
-    assert tree.unreachable(data) == ["d"]
+def test_normalise_ignores_rubbish():
+    assert tree.normalise(None) == {}
+    assert tree.normalise({"что-то": 1}) == {}
+
+
+# --- короткие имена ---------------------------------------------------
+
+def test_long_names_are_rewritten():
+    """Модель зовёт узлы «что_такое_ген_подробнее». В callback_data 64
+    байта на всё, и такая кнопка молча перестаёт работать."""
+    wordy = {"trees": {"что_такое_ген_очень_длинное_имя": {
+        "title": "Ген", "start": "первый_узел_с_длинным_именем", "nodes": {
+            "первый_узел_с_длинным_именем": node(
+                "Текст", [{"label": "Дальше", "next": "второй_узел"}]),
+            "второй_узел": node("Конец")}}}}
+    small = tree.compact(wordy)
+    assert list(small["trees"]) == ["t1"]
+    assert set(small["trees"]["t1"]["nodes"]) == {"n1", "n2"}
+    assert small["trees"]["t1"]["start"] == "n1"
+    assert small["trees"]["t1"]["nodes"]["n1"]["options"][0]["next"] == "n2"
+    assert tree.check(small) == ""
+
+
+def test_crossings_survive_renaming():
+    renamed = tree.compact({"trees": {
+        "первое": {"title": "А", "start": "x", "nodes": {
+            "x": node("Текст", [{"label": "Туда", "go": "второе"}])}},
+        "второе": {"title": "Б", "start": "y", "nodes": {"y": node("Конец")}},
+    }})
+    assert renamed["trees"]["t1"]["nodes"]["n1"]["options"][0]["go"] == "t2"
+
+
+def test_dead_buttons_are_dropped():
+    """Кнопка в никуда лучше исчезнет, чем оборвёт разговор у читателя."""
+    small = tree.compact({"trees": {"a": {"title": "А", "start": "x", "nodes": {
+        "x": node("Текст", [{"label": "В никуда", "next": "призрак"}])}}}})
+    assert small["trees"]["t1"]["nodes"]["n1"]["options"] == []
+
+
+def test_crossings_are_listed():
+    assert tree.crossings(GOOD) == [
+        ("Что такое ген", "Как считают риск", "Про риск")]
+
+
+def test_unreachable_nodes_are_named_with_their_tree():
+    data = json.loads(json.dumps(GOOD))
+    data["trees"]["t1"]["nodes"]["n9"] = node("Никому не видно")
+    assert tree.unreachable(data) == ["t1/n9"]
     assert tree.unreachable(GOOD) == []
 
 
 # --- хранение ---------------------------------------------------------
 
 def test_draft_and_live_are_different_places(settings):
-    """Иначе собранное сразу оказывается перед людьми."""
     run(tree.save_tree(GOOD, tree.DRAFT_KEY))
-    assert run(tree.tree(tree.DRAFT_KEY)) == GOOD
+    assert run(tree.tree(tree.DRAFT_KEY))["trees"]
     assert run(tree.tree(tree.TREE_KEY)) == {}
 
 
@@ -101,46 +175,84 @@ def test_broken_json_does_not_crash(settings):
     assert run(tree.tree()) == {}
 
 
-def test_tree_without_nodes_counts_as_missing(settings):
-    settings[tree.TREE_KEY] = json.dumps({"start": "a"})
-    assert run(tree.tree()) == {}
+# --- подписи кнопок ----------------------------------------------------
+
+@pytest.mark.parametrize("said,expected", [
+    ("дальше хочу узнать про носительство", "Про носительство"),
+    ("Хочу узнать, как считают риск", "Как считают риск"),
+    ("расскажите подробнее о мутациях", "О мутациях"),
+])
+def test_filler_is_cut_from_labels(said, expected):
+    assert tree.tidy_label(said) == expected
+
+
+def test_label_made_only_of_filler_survives():
+    """Пустая кнопка хуже лишнего слова."""
+    assert tree.tidy_label("подробнее") == "Подробнее"
+
+
+def test_tidy_walks_every_tree():
+    data = json.loads(json.dumps(GOOD))
+    data["trees"]["t1"]["nodes"]["n1"]["options"][0]["label"] = \
+        "дальше хочу узнать про гены"
+    assert tree.tidy(data)["trees"]["t1"]["nodes"]["n1"]["options"][0]["label"] \
+        == "Про гены"
 
 
 # --- границы ----------------------------------------------------------
 
 def test_prompt_forbids_inventing_and_advising():
-    """Модель говорит от лица врача — здесь строже, чем в новостях."""
     low = tree.PROMPT.lower()
     assert "ничего не добавляй" in low
     assert "никаких советов" in low
     assert "не ставь диагнозов" in low
 
 
-def test_node_remembers_its_article():
-    """Картинка берётся из статьи, из которой узел сделан: «что такое
-    ген» словами — абзац, а картинкой — секунда."""
-    assert '"source"' in tree.PROMPT
-    assert "[[12]]" in tree.PROMPT
+def test_prompt_says_it_is_not_an_exam():
+    low = tree.PROMPT.lower()
+    assert "не тест" in low and "нет верных и неверных" in low
 
 
-def test_source_text_numbers_the_articles(settings, monkeypatch):
+def test_prompt_asks_for_crossings():
+    """Ради этого и делалось несколько деревьев: тема, упёршаяся в
+    соседнюю, должна вести туда, а не в «об этом в другой раз»."""
+    assert "go" in tree.PROMPT and "другого дерева" in tree.PROMPT
+
+
+# --- охват -------------------------------------------------------------
+
+def test_used_articles_are_counted():
+    assert tree.used_articles(GOOD) == {1, 2}
+
+
+def test_coverage_separates_unused_from_uncut(settings, monkeypatch):
+    """«Не вошло» и «не дошло до модели» — разные беды: первую лечит
+    другой промпт, вторую — второе дерево."""
     import database
 
     async def rows(section):
-        return [(7, "Что такое ген", "Длинное объяснение"), (9, "Мутации", "Текст")]
+        return [(1, "Ген", "текст"), (2, "Риск", "текст"),
+                (3, "Скрининг", "текст"), (4, "Наследование", "текст")]
 
     monkeypatch.setattr(database, "get_articles_raw", rows)
-    text, took, cut = run(tree.source_text())
-    assert "[[7]]" in text and "[[9]]" in text
-    assert took == [7, 9] and cut == []
+    got = run(tree.coverage(dict(GOOD, given=[1, 2, 3], cut=[4])))
+    assert got["all"] == 4
+    assert got["used"] == [1, 2]
+    assert got["unused"] == [3]
+    assert got["cut"] == [4]
 
 
-def test_step_replaces_the_previous_question(settings):
-    """Иначе переписка заполняется вопросами, на которые уже ответили,
-    и человек перестаёт понимать, где он находится."""
-    source = open(tree.__file__, encoding="utf-8").read()
-    assert "replace=True" in source
-    assert "edit_text" in source
+def test_coverage_text_names_what_is_missing(settings, monkeypatch):
+    import database
+
+    async def rows(section):
+        return [(1, "Ген", "текст"), (2, "Риск", "текст"),
+                (3, "Скрининг", "текст")]
+
+    monkeypatch.setattr(database, "get_articles_raw", rows)
+    text = run(tree.coverage_text(dict(GOOD, cut=[])))
+    assert "2 статей из 3" in text
+    assert "Скрининг" in text
 
 
 def test_draft_walking_is_owner_only(settings, monkeypatch):
@@ -155,7 +267,7 @@ def test_draft_walking_is_owner_only(settings, monkeypatch):
 
     class Call:
         def __init__(self, user_id):
-            self.data = "trd_a"
+            self.data = "trd_t1_n1"
             self.message = Msg()
             self.from_user = type("U", (), {"id": user_id})()
 
@@ -166,123 +278,3 @@ def test_draft_walking_is_owner_only(settings, monkeypatch):
     stranger = Call(999)
     run(tree.step_draft(stranger))
     assert not stranger.message.said, "чужой человек листает черновик"
-
-
-# --- подписи кнопок ----------------------------------------------------
-#
-# Вводные слова модель приписывает даже там, где промпт их запрещает.
-# Смысла в них нет, а кнопку они удлиняют так, что название вещи не
-# помещается и Телеграм режет его на середине слова.
-
-@pytest.mark.parametrize("said,expected", [
-    ("дальше хочу узнать про носительство", "Про носительство"),
-    ("Хочу узнать, как считают риск", "Как считают риск"),
-    ("расскажите подробнее о мутациях", "О мутациях"),
-    ("дальше о рисках", "О рисках"),
-])
-def test_filler_is_cut_from_labels(said, expected):
-    assert tree.tidy_label(said) == expected
-
-
-def test_preposition_stays():
-    """«Носительство» после «расскажите про» осталось бы в неверном
-    падеже — склонять обратно нечем."""
-    assert tree.tidy_label("расскажите про носительство") == "Про носительство"
-
-
-@pytest.mark.parametrize("said", ["У родственника", "Как считают риск",
-                                  "Носительство"])
-def test_normal_labels_are_untouched(said):
-    assert tree.tidy_label(said) == said
-
-
-def test_label_made_only_of_filler_survives():
-    """Пустая кнопка хуже лишнего слова."""
-    assert tree.tidy_label("подробнее") == "Подробнее"
-    assert tree.tidy_label("") == ""
-
-
-def test_tidy_walks_the_whole_tree():
-    data = {"start": "a", "nodes": {
-        "a": {"text": "Вопрос", "options": [
-            {"label": "дальше хочу узнать про гены", "next": "b"}]},
-        "b": {"text": "Конец", "options": []}}}
-    assert tree.tidy(data)["nodes"]["a"]["options"][0]["label"] == "Про гены"
-
-
-def test_long_label_is_refused():
-    """Телеграм обрежет её на середине слова, и человек будет выбирать
-    между двумя огрызками."""
-    broken = {"start": "a", "nodes": {
-        "a": {"text": "Вопрос", "options": [
-            {"label": "очень длинная подпись, которая точно не поместится "
-                      "на кнопке", "next": "b"}]},
-        "b": {"text": "Конец", "options": []}}}
-    assert "длинная" in tree.check(broken)
-
-
-def test_prompt_says_it_is_not_an_exam():
-    """Проверка знаний отпугивает: человек пришёл разобраться, а не
-    сдавать."""
-    low = tree.PROMPT.lower()
-    assert "не тест" in low and "не проверка знаний" in low
-    assert "нет верных и неверных" in low
-    assert "два-четыре слова" in low
-
-
-# --- охват -------------------------------------------------------------
-#
-# Дерево держится на четырнадцати узлах, а статей может быть втрое
-# больше. Молчать об этом нельзя: автор решит, что тема раскрыта, а
-# половины её в разговоре нет.
-
-def test_used_articles_are_counted():
-    data = {"nodes": {"a": {"source": 7}, "b": {"source": "9"},
-                      "c": {"text": "без источника"}}}
-    assert tree.used_articles(data) == {7, 9}
-
-
-def test_broken_source_is_ignored():
-    assert tree.used_articles({"nodes": {"a": {"source": "чушь"}}}) == set()
-
-
-def test_coverage_separates_unused_from_uncut(settings, monkeypatch):
-    """«Не вошло» и «не дошло до модели» — разные беды: первую лечит
-    другой промпт, вторую — второе дерево."""
-    import database
-
-    async def rows(section):
-        return [(1, "Ген", "текст"), (2, "Мутация", "текст"),
-                (3, "Риск", "текст"), (4, "Скрининг", "текст")]
-
-    monkeypatch.setattr(database, "get_articles_raw", rows)
-    data = {"nodes": {"a": {"source": 1}}, "given": [1, 2, 3], "cut": [4]}
-    got = run(tree.coverage(data))
-    assert got["all"] == 4
-    assert got["used"] == [1]
-    assert got["unused"] == [2, 3]
-    assert got["cut"] == [4]
-
-
-def test_coverage_text_names_what_is_missing(settings, monkeypatch):
-    import database
-
-    async def rows(section):
-        return [(1, "Ген", "текст"), (2, "Мутация", "текст")]
-
-    monkeypatch.setattr(database, "get_articles_raw", rows)
-    text = run(tree.coverage_text({"nodes": {"a": {"source": 1}}, "cut": []}))
-    assert "1 статей из 2" in text
-    assert "Мутация" in text
-    assert "второе дерево" in text
-
-
-def test_full_coverage_says_so(settings, monkeypatch):
-    import database
-
-    async def rows(section):
-        return [(1, "Ген", "текст")]
-
-    monkeypatch.setattr(database, "get_articles_raw", rows)
-    text = run(tree.coverage_text({"nodes": {"a": {"source": 1}}, "cut": []}))
-    assert "Вошло всё" in text

@@ -37,14 +37,20 @@ TREE_KEY = "genetics_tree"        # готовое дерево
 DRAFT_KEY = "genetics_tree_draft"  # собранное, но не показанное людям
 SECTION = "genetics"
 MAX_NODES = 14                     # больше человек не проходит
+MAX_TREES = 5                      # больше тем на входе — снова список, который листают
 MODEL = "claude-haiku-4-5-20251001"
 
 PROMPT = (
     "Ты помогаешь врачу-генетику разложить её собственные статьи в "
-    "короткий разговор с читателем.\n\n"
-    "Сделай дерево из вопросов. Каждый узел — одна мысль в две-три "
-    "строки и два-три варианта ответа. Читатель идёт по своим ответам и "
-    "получает объяснение.\n\n"
+    "короткие разговоры с читателем.\n\n"
+    "Сгруппируй статьи по темам и сделай на каждую тему своё дерево "
+    "вопросов. Дерево — это узлы: одна мысль в две-три строки и два-три "
+    "варианта ответа. Читатель идёт по своим ответам и получает "
+    "объяснение.\n\n"
+    "Темы пересекаются, и это хорошо: если в одном дереве человек "
+    "упирается в тему соседнего, дай кнопку с переходом туда — "
+    "go: «id другого дерева». Так разговор продолжается, а не обрывается "
+    "на «об этом в другой раз».\n\n"
     "Это не тест и не проверка знаний. У ответов нет верных и неверных: "
     "человек выбирает, о чём ему интересно, а не угадывает. Не хвали за "
     "выбор, не говори «правильно» и не предлагай пройти тест.\n\n"
@@ -64,11 +70,13 @@ PROMPT = (
     "Каждая статья помечена номером в начале — [[12]]. В каждом узле "
     "укажи source: номер статьи, из которой он сделан.\n\n"
     "Ответь только JSON без пояснений:\n"
-    '{"start": "id", "nodes": {"id": {"text": "вопрос или мысль", '
-    '"source": 12, '
-    '"options": [{"label": "короткий ответ", "next": "id другого узла"}]}}}\n\n'
+    '{"trees": {"gen": {"title": "Что такое ген", "start": "a", '
+    '"nodes": {"a": {"text": "мысль", "source": 12, "options": '
+    '[{"label": "Короткий ответ", "next": "b"}, '
+    '{"label": "Про риск", "go": "risk"}]}}}}}\n\n'
     "У конечного узла options пустой, а text содержит объяснение. "
-    f"Узлов не больше {MAX_NODES}."
+    f"Деревьев от двух до {MAX_TREES}, узлов в каждом не больше "
+    f"{MAX_NODES}."
 )
 
 
@@ -81,8 +89,8 @@ async def tree(key: str = TREE_KEY) -> dict:
     if not raw:
         return {}
     try:
-        data = json.loads(raw)
-        return data if isinstance(data, dict) and data.get("nodes") else {}
+        data = normalise(json.loads(raw))
+        return data if data.get("trees") else {}
     except (ValueError, TypeError):
         logging.error("Дерево разбора не читается")
         return {}
@@ -92,49 +100,137 @@ async def save_tree(data: dict, key: str = TREE_KEY):
     await database.set_setting(key, json.dumps(data, ensure_ascii=False))
 
 
-def check(data: dict) -> str:
-    """Что не так с деревом. Пусто — значит можно показывать.
+def normalise(data: dict) -> dict:
+    """Привести к виду «несколько деревьев».
 
-    Проверяем до людей, а не после: дерево, где кнопка ведёт в
-    несуществующий узел, обрывает разговор на середине, и человек решает,
-    что сломано всё.
+    Первое дерево собиралось одно и лежало без обёртки. Старую запись
+    не выбрасываем: она превращается в набор из одного дерева, и человек
+    ничего не замечает.
     """
-    nodes = (data or {}).get("nodes")
-    if not isinstance(nodes, dict) or not nodes:
-        return "нет узлов"
-    start = data.get("start")
-    if start not in nodes:
-        return "начало указывает в никуда"
-    if len(nodes) > MAX_NODES:
-        return f"слишком много узлов: {len(nodes)}"
+    if not isinstance(data, dict):
+        return {}
+    if data.get("trees"):
+        return data
+    if data.get("nodes"):
+        return {"trees": {"main": {"title": "Разбор", **data}},
+                "given": data.get("given") or [], "cut": data.get("cut") or []}
+    return {}
 
-    for node_id, node in nodes.items():
-        if not isinstance(node, dict) or not str(node.get("text", "")).strip():
-            return f"узел {node_id} пуст"
-        for option in node.get("options") or []:
-            label = str(option.get("label", "")).strip()
-            if not label:
-                return f"в узле {node_id} безымянная кнопка"
-            # Длинная подпись обрезается Телеграмом на середине слова, и
-            # человек выбирает между двумя огрызками.
-            if len(label) > 40:
-                return f"в узле {node_id} слишком длинная кнопка: «{label[:30]}…»"
-            if option.get("next") not in nodes:
-                return f"из {node_id} ведёт в несуществующий {option.get('next')}"
 
-    # Узел, из которого нет выхода и нет объяснения, — тупик. Разговор,
-    # обрывающийся вопросом, хуже, чем его отсутствие.
-    if not any(not (node.get("options") or []) for node in nodes.values()):
-        return "нет ни одного конца — разговор не заканчивается"
+def compact(data: dict) -> dict:
+    """Переименовать деревья и узлы в короткие имена.
+
+    Модель называет узлы как хочет — «что_такое_ген_подробнее». Такое имя
+    не помещается в callback_data (64 байта на всё), и кнопка молча
+    перестаёт работать. Переименовываем сами: t1/n3 влезут всегда.
+    """
+    trees = data.get("trees") or {}
+    tree_names = {old: f"t{i}" for i, old in enumerate(trees, 1)}
+
+    out = {}
+    for old_tree, tree_body in trees.items():
+        nodes = tree_body.get("nodes") or {}
+        node_names = {old: f"n{i}" for i, old in enumerate(nodes, 1)}
+        new_nodes = {}
+        for old_node, node in nodes.items():
+            options = []
+            for option in node.get("options") or []:
+                fresh = {"label": option.get("label", "")}
+                if option.get("go") in tree_names:
+                    fresh["go"] = tree_names[option["go"]]
+                elif option.get("next") in node_names:
+                    fresh["next"] = node_names[option["next"]]
+                else:
+                    continue          # ведёт в никуда — кнопку не рисуем
+                options.append(fresh)
+            new_nodes[node_names[old_node]] = {
+                "text": node.get("text", ""),
+                "source": node.get("source"),
+                "options": options,
+            }
+        out[tree_names[old_tree]] = {
+            "title": str(tree_body.get("title") or "Разбор")[:40],
+            "start": node_names.get(tree_body.get("start"),
+                                    next(iter(new_nodes), "")),
+            "nodes": new_nodes,
+        }
+    return {"trees": out, "given": data.get("given") or [],
+            "cut": data.get("cut") or []}
+
+
+def check(data: dict) -> str:
+    """Что не так. Пусто — значит можно показывать.
+
+    Проверяем до людей, а не после: кнопка в несуществующий узел
+    обрывает разговор на середине, и человек решает, что сломано всё.
+    """
+    trees = (data or {}).get("trees")
+    if not isinstance(trees, dict) or not trees:
+        return "нет деревьев"
+    if len(trees) > MAX_TREES:
+        return f"слишком много тем: {len(trees)}"
+
+    for tree_id, body in trees.items():
+        if not str(body.get("title") or "").strip():
+            return f"дерево {tree_id} без названия"
+        nodes = body.get("nodes")
+        if not isinstance(nodes, dict) or not nodes:
+            return f"в дереве {tree_id} нет узлов"
+        if body.get("start") not in nodes:
+            return f"в дереве {tree_id} начало указывает в никуда"
+        if len(nodes) > MAX_NODES:
+            return f"в дереве {tree_id} слишком много узлов: {len(nodes)}"
+
+        for node_id, node in nodes.items():
+            if not isinstance(node, dict) or not str(node.get("text", "")).strip():
+                return f"узел {tree_id}/{node_id} пуст"
+            for option in node.get("options") or []:
+                label = str(option.get("label", "")).strip()
+                if not label:
+                    return f"в узле {tree_id}/{node_id} безымянная кнопка"
+                # Длинная подпись обрезается Телеграмом на середине слова,
+                # и человек выбирает между двумя огрызками.
+                if len(label) > 40:
+                    return (f"в узле {tree_id}/{node_id} слишком длинная "
+                            f"кнопка: «{label[:30]}…»")
+                if option.get("go"):
+                    if option["go"] not in trees:
+                        return (f"из {tree_id}/{node_id} переход в "
+                                f"несуществующее дерево {option['go']}")
+                elif option.get("next") not in nodes:
+                    return (f"из {tree_id}/{node_id} ведёт в несуществующий "
+                            f"{option.get('next')}")
+
+        # Узел без выхода и без объяснения — тупик. Разговор,
+        # обрывающийся вопросом, хуже, чем его отсутствие.
+        if not any(not (node.get("options") or []) for node in nodes.values()):
+            return f"в дереве {tree_id} нет ни одного конца"
     return ""
 
 
+def unreachable(data: dict) -> list:
+    """Узлы, до которых не дойти. Не ошибка, но мёртвый груз."""
+    lost = []
+    for tree_id, body in (data.get("trees") or {}).items():
+        nodes = body.get("nodes") or {}
+        seen, queue = set(), [body.get("start")]
+        while queue:
+            node_id = queue.pop()
+            if node_id in seen or node_id not in nodes:
+                continue
+            seen.add(node_id)
+            queue += [o.get("next") for o in nodes[node_id].get("options") or []
+                      if o.get("next")]
+        lost += [f"{tree_id}/{x}" for x in sorted(set(nodes) - seen)]
+    return lost
+
+
 # Вводные слова модель приписывает даже там, где промпт их запрещает:
-# «дальше хочу узнать про…», «расскажите подробнее о…». Смысла в них
-# нет, а кнопку они удлиняют так, что название вещи не помещается.
-# Предлог оставляем: «про носительство» читается, а «носительство» после
-# «расскажите про» осталось бы в неверном падеже — склонять обратно
-# нечем. Поэтому режем только глагольную часть.
+# «дальше хочу узнать про…». Смысла в них нет, а кнопку они удлиняют так,
+# что название вещи не помещается.
+#
+# Предлог оставляем: «носительство» после «расскажите про» осталось бы в
+# неверном падеже — склонять обратно нечем. Режем только глагольную часть.
 FILLER = (
     "дальше хочу узнать", "я хочу узнать", "хочу узнать",
     "расскажите подробнее", "расскажи подробнее", "расскажите",
@@ -164,23 +260,25 @@ def tidy_label(text: str) -> str:
 
 def tidy(data: dict) -> dict:
     """Пройтись по всем подписям разом — после сборки, до показа"""
-    for node in (data.get("nodes") or {}).values():
-        for option in node.get("options") or []:
-            option["label"] = tidy_label(option.get("label"))
+    for body in (data.get("trees") or {}).values():
+        for node in (body.get("nodes") or {}).values():
+            for option in node.get("options") or []:
+                option["label"] = tidy_label(option.get("label"))
     return data
 
 
-def unreachable(data: dict) -> list:
-    """Узлы, до которых не дойти. Не ошибка, но мёртвый груз."""
-    nodes = data.get("nodes") or {}
-    seen, queue = set(), [data.get("start")]
-    while queue:
-        node_id = queue.pop()
-        if node_id in seen or node_id not in nodes:
-            continue
-        seen.add(node_id)
-        queue += [o.get("next") for o in nodes[node_id].get("options") or []]
-    return sorted(set(nodes) - seen)
+def crossings(data: dict) -> list:
+    """Переходы между деревьями: («откуда», «куда», подпись)"""
+    out = []
+    trees = data.get("trees") or {}
+    for tree_id, body in trees.items():
+        for node in (body.get("nodes") or {}).values():
+            for option in node.get("options") or []:
+                if option.get("go") in trees:
+                    out.append((body.get("title", tree_id),
+                                trees[option["go"]].get("title", option["go"]),
+                                option.get("label", "")))
+    return out
 
 
 # ---------------------------------------------------------------------
@@ -242,7 +340,7 @@ async def build() -> tuple:
     except ValueError as e:
         return {}, f"JSON не разобрался: {e}"
 
-    data = tidy(data)
+    data = tidy(compact(normalise(data)))
     problem = check(data)
     if problem:
         return {}, problem
@@ -256,14 +354,15 @@ async def build() -> tuple:
 def used_articles(data: dict) -> set:
     """Номера статей, на которые опирается хоть один узел"""
     out = set()
-    for node in (data.get("nodes") or {}).values():
-        source = node.get("source")
-        if source is None:
-            continue
-        try:
-            out.add(int(source))
-        except (TypeError, ValueError):
-            continue
+    for body in (data.get("trees") or {}).values():
+        for node in (body.get("nodes") or {}).values():
+            source = node.get("source")
+            if source is None:
+                continue
+            try:
+                out.add(int(source))
+            except (TypeError, ValueError):
+                continue
     return out
 
 
@@ -288,23 +387,61 @@ async def coverage(data: dict) -> dict:
 # РАЗГОВОР
 # ---------------------------------------------------------------------
 
-def _node_kb(node_id: str, node: dict, draft: bool) -> InlineKeyboardMarkup:
+def _node_kb(tree_id: str, node: dict, draft: bool) -> InlineKeyboardMarkup:
     prefix = "trd_" if draft else "tre_"
-    rows = [[InlineKeyboardButton(text=str(option["label"])[:64],
-                                  callback_data=f"{prefix}{option['next']}")]
-            for option in (node.get("options") or [])]
+    rows = []
+    for option in node.get("options") or []:
+        if option.get("go"):
+            # Переход в соседнюю тему: туда же, но с её начала.
+            target = f"{option['go']}_start"
+        else:
+            target = f"{tree_id}_{option['next']}"
+        rows.append([InlineKeyboardButton(text=str(option["label"])[:64],
+                                          callback_data=prefix + target)])
     if not rows:
-        # Конец ветки: отсюда либо заново, либо в раздел — но не в пустоту.
-        rows.append([InlineKeyboardButton(text="🔁 Ещё раз",
-                                          callback_data=f"{prefix}start")])
+        # Конец ветки: отсюда либо в другую тему, либо в раздел — но не
+        # в пустоту. Человек дочитал и должен видеть, куда идти дальше.
+        rows.append([InlineKeyboardButton(text="📚 Другие темы",
+                                          callback_data=prefix + "list")])
         rows.append([InlineKeyboardButton(text="🧬 Генетика в боте",
                                           callback_data="intellect_genetics")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-async def show(message: Message, node_id: str, draft: bool = False,
+def _list_kb(data: dict, draft: bool) -> InlineKeyboardMarkup:
+    prefix = "trd_" if draft else "tre_"
+    rows = [[InlineKeyboardButton(text=body.get("title", tree_id)[:60],
+                                  callback_data=f"{prefix}{tree_id}_start")]
+            for tree_id, body in (data.get("trees") or {}).items()]
+    rows.append([InlineKeyboardButton(text="⇦", callback_data="go_home")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+LIST_TEXT = ("🌳 <b>Разбор вопросами</b>\n\n"
+             "С чего начать? Темы связаны между собой — из любой можно "
+             "перейти в соседнюю, когда до неё дойдёт разговор.")
+
+
+async def show_list(message: Message, draft: bool = False, replace: bool = False):
+    data = await tree(DRAFT_KEY if draft else TREE_KEY)
+    if not data:
+        await message.answer("Разбор пока не собран.")
+        return
+    if replace:
+        try:
+            await message.edit_text(LIST_TEXT, reply_markup=_list_kb(data, draft))
+            return
+        except Exception:
+            try:
+                await message.delete()
+            except Exception:
+                pass
+    await message.answer(LIST_TEXT, reply_markup=_list_kb(data, draft))
+
+
+async def show(message: Message, where: str, draft: bool = False,
                replace: bool = False):
-    """Показать узел.
+    """Показать узел. where — «дерево_узел».
 
     Шаг разговора заменяет предыдущий, а не добавляет новый: иначе
     переписка заполняется вопросами, на которые уже ответили, и человек
@@ -314,17 +451,25 @@ async def show(message: Message, node_id: str, draft: bool = False,
     текстовое. Поэтому узел с картинкой присылается новым сообщением, а
     старое убирается.
     """
+    if where == "list":
+        await show_list(message, draft, replace)
+        return
+
     data = await tree(DRAFT_KEY if draft else TREE_KEY)
-    nodes = data.get("nodes") or {}
-    if node_id == "start":
-        node_id = data.get("start")
-    node = nodes.get(node_id)
+    tree_id, _, node_id = where.partition("_")
+    body = (data.get("trees") or {}).get(tree_id)
+    if not body:
+        await message.answer("Этот разбор больше недоступен.")
+        return
+    if node_id in ("", "start"):
+        node_id = body.get("start")
+    node = (body.get("nodes") or {}).get(node_id)
     if not node:
         await message.answer("Этот разбор больше недоступен.")
         return
 
     text = html.escape(str(node.get("text", "")))
-    markup = _node_kb(node_id, node, draft)
+    markup = _node_kb(tree_id, node, draft)
     photo = await _photo_of(node)
 
     if replace:
@@ -367,19 +512,13 @@ async def _photo_of(node: dict):
 
 @router.message(F.text.regexp(r"^/(разбор|explain)\b"))
 async def start_command(message: Message):
-    if not await tree():
-        await message.answer("Разбор пока не собран.")
-        return
-    await show(message, "start")
+    await show_list(message)
 
 
 @router.callback_query(F.data == "tree_open")
 async def open_tree(call: CallbackQuery):
     await call.answer()
-    if not await tree():
-        await call.answer("Разбор пока не собран", show_alert=True)
-        return
-    await show(call.message, "start")
+    await show_list(call.message)
 
 
 @router.callback_query(F.data.startswith("tre_"))
@@ -447,8 +586,13 @@ async def tree_command(message: Message):
         lost = unreachable(data)
         note = (f"\nНедостижимых узлов: {len(lost)} — {', '.join(lost)}"
                 if lost else "")
+        trees = data.get("trees") or {}
+        links = crossings(data)
+        note += (f"\nПереходов между темами: {len(links)}" if links else
+                 "\nПереходов между темами нет — темы не связаны.")
+        total = sum(len(b.get("nodes") or {}) for b in trees.values())
         await message.answer(
-            f"✅ Собрала: узлов {len(data['nodes'])}.{note}\n\n"
+            f"✅ Собрала: тем {len(trees)}, узлов {total}.{note}\n\n"
             + await coverage_text(data) +
             f"\n\nПосмотрите черновик — <code>/дерево черновик</code>. "
             f"Людям он пока не виден.\n"
@@ -469,7 +613,7 @@ async def tree_command(message: Message):
             await message.answer("Черновика нет. Собрать: "
                                  "<code>/дерево собрать</code>")
             return
-        await show(message, "start", draft=True)
+        await show_list(message, draft=True)
         return
 
     if action in ("опубликовать", "publish"):
@@ -491,8 +635,8 @@ async def tree_command(message: Message):
     draft = await tree(DRAFT_KEY)
     await message.answer(
         "🌳 <b>Разбор вопросами</b>\n\n"
-        f"Показывается людям: {len(live.get('nodes') or {})} узлов\n"
-        f"Черновик: {len(draft.get('nodes') or {})} узлов\n\n"
+        f"Показывается людям: {len(live.get('trees') or {})} тем\n"
+        f"Черновик: {len(draft.get('trees') or {})} тем\n\n"
         "Собирается из ваших статей раздела «генетика». Модель не "
         "сочиняет содержание — она перекладывает написанное в вопросы.\n\n"
         "<code>/дерево собрать</code> — заново из статей\n"
