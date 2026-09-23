@@ -36,6 +36,25 @@ router = Router()
 TREE_KEY = "genetics_tree"        # готовое дерево
 DRAFT_KEY = "genetics_tree_draft"  # собранное, но не показанное людям
 SECTION = "genetics"
+
+# Два вида разбора. Механика одна — вопросы, ветки, переходы, — а
+# отличаются они источником и сроком жизни.
+#
+# Генетика собирается из статей и живёт месяцами: что такое ген, не
+# меняется к четвергу. Экономика собирается из событий дня и устаревает
+# вместе с ними — её пересобирают каждое утро, и вчерашняя сборка в ней
+# бесполезна так же, как вчерашняя газета.
+KINDS = {
+    "g": {"title": "🧬 Генетика", "live": "genetics_tree",
+          "draft": "genetics_tree_draft", "articles": True},
+    "e": {"title": "📊 Экономика", "live": "economy_tree",
+          "draft": "economy_tree_draft", "articles": False},
+}
+
+
+def keys(kind: str) -> tuple:
+    meta = KINDS.get(kind) or KINDS["g"]
+    return meta["live"], meta["draft"]
 MAX_NODES = 14                     # больше человек не проходит
 MAX_TREES = 5                      # больше тем на входе — снова список, который листают
 MODEL = "claude-haiku-4-5-20251001"
@@ -80,11 +99,45 @@ PROMPT = (
 )
 
 
+ECONOMY_PROMPT = (
+    "Ты помогаешь автору делового телеграм-канала объяснить сегодняшние "
+    "новости обычному человеку.\n\n"
+    "Начни с главного вопроса: как это касается лично его. Первый узел "
+    "каждого дерева — про положение читателя, а не про рынок: он "
+    "наёмный работник, у него своё дело, он копит или тратит в валюте. "
+    "От его ответа и разворачивается объяснение.\n\n"
+    "Дальше — связь события с цифрой: почему индекс двинулся именно "
+    "так, что стоит за движением. Объясняй механику, а не итог.\n\n"
+    "Сгруппируй по темам и сделай на каждую своё дерево. Где тема "
+    "упирается в соседнюю, ставь переход go: «id другого дерева».\n\n"
+    "Это не тест и не проверка знаний. У ответов нет верных и неверных. "
+    "Подписи кнопок — два-четыре слова, без «хочу», «дальше», "
+    "«расскажите».\n\n"
+    "Строгие правила:\n"
+    "— бери только то, что есть в заголовках и цифрах ниже; ничего не "
+    "додумывай, не вспоминай прошлые события;\n"
+    "— никаких советов покупать, продавать, вкладывать, переводить "
+    "сбережения или менять валюту — ни прямо, ни намёком;\n"
+    "— не называй отдельные компании как удачную или неудачную покупку;\n"
+    "— не предсказывай, что будет дальше: объясняй, что уже случилось;\n"
+    "— спокойный тон, без паники и без восторга.\n\n"
+    "Ответь только JSON без пояснений:\n"
+    '{"trees": {"rate": {"title": "Ставка и ваши деньги", "start": "a", '
+    '"nodes": {"a": {"text": "мысль", "options": '
+    '[{"label": "Короткий ответ", "next": "b"}]}}}}}\n\n'
+    "У конечного узла options пустой, а text содержит объяснение. "
+    f"Деревьев от двух до {MAX_TREES}, узлов в каждом не больше "
+    f"{MAX_NODES}."
+)
+
+
 # ---------------------------------------------------------------------
 # ХРАНЕНИЕ
 # ---------------------------------------------------------------------
 
-async def tree(key: str = TREE_KEY) -> dict:
+async def tree(key: str = TREE_KEY, kind: str = None) -> dict:
+    if kind:
+        key = keys(kind)[1] if key == "draft" else keys(kind)[0]
     raw = await database.get_setting(key)
     if not raw:
         return {}
@@ -96,7 +149,9 @@ async def tree(key: str = TREE_KEY) -> dict:
         return {}
 
 
-async def save_tree(data: dict, key: str = TREE_KEY):
+async def save_tree(data: dict, key: str = TREE_KEY, kind: str = None):
+    if kind:
+        key = keys(kind)[1] if key == "draft" else keys(kind)[0]
     await database.set_setting(key, json.dumps(data, ensure_ascii=False))
 
 
@@ -308,11 +363,53 @@ async def source_text(limit: int = 12000):
     return "\n\n---\n\n".join(parts), took, left
 
 
-async def build() -> tuple:
+async def economy_source() -> str:
+    """Сегодняшние заголовки и движение индексов — одним куском.
+
+    Цифры идут вместе с новостями не для красоты: разбор строится на
+    связи «событие → движение», и без чисел модель объяснит одно, а
+    рынок в этот день делал другое.
+    """
+    parts = []
+    try:
+        import digest
+        headlines = await digest._news_text(await digest._news_country())
+        if headlines:
+            parts.append("СЕГОДНЯШНИЕ ЗАГОЛОВКИ:\n" + headlines)
+    except Exception as e:
+        logging.warning(f"Экономика: заголовки не прочитались: {e}")
+
+    try:
+        import indices
+        series = await indices.fetch_series()
+        rows = []
+        for symbol, meta in indices.INDICES.items():
+            closes = series.get(symbol)
+            if not closes:
+                continue
+            day, month = indices.moves(closes)
+            rows.append(f"{meta['ru']}: {closes[-1]:.0f}, "
+                        f"{day:+.2f}% за сутки, {month:+.1f}% за месяц")
+        if rows:
+            parts.append("ИНДЕКСЫ:\n" + "\n".join(rows))
+    except Exception as e:
+        logging.warning(f"Экономика: индексы не прочитались: {e}")
+
+    return "\n\n".join(parts)
+
+
+async def build(kind: str = "g") -> tuple:
     """(дерево, что пошло не так). Ничего не сохраняет."""
-    source, took, cut = await source_text()
+    if KINDS[kind]["articles"]:
+        source, took, cut = await source_text()
+        prompt = PROMPT
+        empty = "в разделе нет статей — собирать не из чего"
+    else:
+        source, took, cut = await economy_source(), [], []
+        prompt = ECONOMY_PROMPT
+        empty = "нет ни заголовков, ни индексов — собирать не из чего"
     if not source.strip():
-        return {}, "в разделе нет статей — собирать не из чего"
+        return {}, empty
 
     try:
         import block4_claude
@@ -324,7 +421,7 @@ async def build() -> tuple:
 
     try:
         answer = await client.messages.create(
-            model=MODEL, max_tokens=3000, system=PROMPT,
+            model=MODEL, max_tokens=3000, system=prompt,
             messages=[{"role": "user", "content": source}])
         raw = (answer.content[0].text or "").strip()
     except Exception as e:
@@ -387,8 +484,9 @@ async def coverage(data: dict) -> dict:
 # РАЗГОВОР
 # ---------------------------------------------------------------------
 
-def _node_kb(tree_id: str, node: dict, draft: bool) -> InlineKeyboardMarkup:
-    prefix = "trd_" if draft else "tre_"
+def _node_kb(kind: str, tree_id: str, node: dict,
+             draft: bool) -> InlineKeyboardMarkup:
+    prefix = ("trd_" if draft else "tre_") + kind + "_"
     rows = []
     for option in node.get("options") or []:
         if option.get("go"):
@@ -403,13 +501,14 @@ def _node_kb(tree_id: str, node: dict, draft: bool) -> InlineKeyboardMarkup:
         # в пустоту. Человек дочитал и должен видеть, куда идти дальше.
         rows.append([InlineKeyboardButton(text="📚 Другие темы",
                                           callback_data=prefix + "list")])
-        rows.append([InlineKeyboardButton(text="🧬 Генетика в боте",
-                                          callback_data="intellect_genetics")])
+        home = ("intellect_genetics" if kind == "g" else "go_home")
+        rows.append([InlineKeyboardButton(
+            text=KINDS[kind]["title"] + " в боте", callback_data=home)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def _list_kb(data: dict, draft: bool) -> InlineKeyboardMarkup:
-    prefix = "trd_" if draft else "tre_"
+def _list_kb(kind: str, data: dict, draft: bool) -> InlineKeyboardMarkup:
+    prefix = ("trd_" if draft else "tre_") + kind + "_"
     rows = [[InlineKeyboardButton(text=body.get("title", tree_id)[:60],
                                   callback_data=f"{prefix}{tree_id}_start")]
             for tree_id, body in (data.get("trees") or {}).items()]
@@ -417,30 +516,33 @@ def _list_kb(data: dict, draft: bool) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-LIST_TEXT = ("🌳 <b>Разбор вопросами</b>\n\n"
+LIST_TEXT = ("🌳 <b>{title}: разбор вопросами</b>\n\n"
              "С чего начать? Темы связаны между собой — из любой можно "
              "перейти в соседнюю, когда до неё дойдёт разговор.")
 
 
-async def show_list(message: Message, draft: bool = False, replace: bool = False):
-    data = await tree(DRAFT_KEY if draft else TREE_KEY)
+async def show_list(message: Message, kind: str = "g", draft: bool = False,
+                    replace: bool = False):
+    data = await tree("draft" if draft else "live", kind)
     if not data:
         await message.answer("Разбор пока не собран.")
         return
+    text = LIST_TEXT.format(title=KINDS[kind]["title"])
+    markup = _list_kb(kind, data, draft)
     if replace:
         try:
-            await message.edit_text(LIST_TEXT, reply_markup=_list_kb(data, draft))
+            await message.edit_text(text, reply_markup=markup)
             return
         except Exception:
             try:
                 await message.delete()
             except Exception:
                 pass
-    await message.answer(LIST_TEXT, reply_markup=_list_kb(data, draft))
+    await message.answer(text, reply_markup=markup)
 
 
-async def show(message: Message, where: str, draft: bool = False,
-               replace: bool = False):
+async def show(message: Message, where: str, kind: str = "g",
+               draft: bool = False, replace: bool = False):
     """Показать узел. where — «дерево_узел».
 
     Шаг разговора заменяет предыдущий, а не добавляет новый: иначе
@@ -452,10 +554,10 @@ async def show(message: Message, where: str, draft: bool = False,
     старое убирается.
     """
     if where == "list":
-        await show_list(message, draft, replace)
+        await show_list(message, kind, draft, replace)
         return
 
-    data = await tree(DRAFT_KEY if draft else TREE_KEY)
+    data = await tree("draft" if draft else "live", kind)
     tree_id, _, node_id = where.partition("_")
     body = (data.get("trees") or {}).get(tree_id)
     if not body:
@@ -469,7 +571,7 @@ async def show(message: Message, where: str, draft: bool = False,
         return
 
     text = html.escape(str(node.get("text", "")))
-    markup = _node_kb(tree_id, node, draft)
+    markup = _node_kb(kind, tree_id, node, draft)
     photo = await _photo_of(node)
 
     if replace:
@@ -512,19 +614,22 @@ async def _photo_of(node: dict):
 
 @router.message(F.text.regexp(r"^/(разбор|explain)\b"))
 async def start_command(message: Message):
-    await show_list(message)
+    await show_list(message, "g")
 
 
-@router.callback_query(F.data == "tree_open")
+@router.callback_query(F.data.in_({"tree_open", "eco_open"}))
 async def open_tree(call: CallbackQuery):
     await call.answer()
-    await show_list(call.message)
+    await show_list(call.message, "g" if call.data == "tree_open" else "e")
 
 
 @router.callback_query(F.data.startswith("tre_"))
 async def step(call: CallbackQuery):
+    kind, _, where = call.data[len("tre_"):].partition("_")
     await call.answer()
-    await show(call.message, call.data[len("tre_"):], replace=True)
+    if kind not in KINDS:
+        return
+    await show(call.message, where, kind, replace=True)
 
 
 @router.callback_query(F.data.startswith("trd_"))
@@ -532,8 +637,11 @@ async def step_draft(call: CallbackQuery):
     if not config.is_admin(call.from_user.id):
         await call.answer()
         return
+    kind, _, where = call.data[len("trd_"):].partition("_")
     await call.answer()
-    await show(call.message, call.data[len("trd_"):], draft=True, replace=True)
+    if kind not in KINDS:
+        return
+    await show(call.message, where, kind, draft=True, replace=True)
 
 
 # ---------------------------------------------------------------------
@@ -568,39 +676,46 @@ async def coverage_text(data: dict) -> str:
     return "\n".join(lines)
 
 
-@router.message(F.text.regexp(r"^/дерево"))
+@router.message(F.text.regexp(r"^/(дерево|эконом)"))
 async def tree_command(message: Message):
     if not config.is_admin(message.from_user.id):
         return
 
+    kind = "e" if (message.text or "").startswith("/эконом") else "g"
     parts = (message.text or "").split(maxsplit=1)
     action = parts[1].strip().lower() if len(parts) > 1 else ""
+    name = KINDS[kind]["title"]
 
     if action in ("собрать", "build"):
-        await message.answer("Собираю из статей раздела…")
-        data, problem = await build()
+        await message.answer("Собираю…")
+        data, problem = await build(kind)
         if problem:
             await message.answer(f"⚠️ Не вышло: {html.escape(problem)}")
             return
-        await save_tree(data, DRAFT_KEY)
+        await save_tree(data, "draft", kind)
+        trees = data.get("trees") or {}
+        links = crossings(data)
         lost = unreachable(data)
         note = (f"\nНедостижимых узлов: {len(lost)} — {', '.join(lost)}"
                 if lost else "")
-        trees = data.get("trees") or {}
-        links = crossings(data)
         note += (f"\nПереходов между темами: {len(links)}" if links else
                  "\nПереходов между темами нет — темы не связаны.")
         total = sum(len(b.get("nodes") or {}) for b in trees.values())
+        extra = ("\n\n" + await coverage_text(data)
+                 if KINDS[kind]["articles"] else "")
         await message.answer(
-            f"✅ Собрала: тем {len(trees)}, узлов {total}.{note}\n\n"
-            + await coverage_text(data) +
-            f"\n\nПосмотрите черновик — <code>/дерево черновик</code>. "
+            f"✅ {name}: тем {len(trees)}, узлов {total}.{note}{extra}\n\n"
+            f"Посмотреть черновик — <code>{_cmd(kind)} черновик</code>. "
             f"Людям он пока не виден.\n"
-            f"Опубликовать: <code>/дерево опубликовать</code>")
+            f"Опубликовать: <code>{_cmd(kind)} опубликовать</code>")
         return
 
     if action in ("охват", "coverage"):
-        data = await tree(DRAFT_KEY) or await tree(TREE_KEY)
+        if not KINDS[kind]["articles"]:
+            await message.answer("Экономика собирается из новостей дня — "
+                                 "охват статей тут ни при чём.")
+            return
+        data = await tree("draft", kind) or await tree("live", kind)
         if not data:
             await message.answer("Дерева пока нет.")
             return
@@ -608,39 +723,45 @@ async def tree_command(message: Message):
         return
 
     if action in ("черновик", "draft"):
-        draft = await tree(DRAFT_KEY)
-        if not draft:
-            await message.answer("Черновика нет. Собрать: "
-                                 "<code>/дерево собрать</code>")
+        if not await tree("draft", kind):
+            await message.answer(f"Черновика нет. Собрать: "
+                                 f"<code>{_cmd(kind)} собрать</code>")
             return
-        await show_list(message, draft=True)
+        await show_list(message, kind, draft=True)
         return
 
     if action in ("опубликовать", "publish"):
-        draft = await tree(DRAFT_KEY)
+        draft = await tree("draft", kind)
         problem = check(draft)
         if problem:
             await message.answer(f"⚠️ Публиковать нельзя: {html.escape(problem)}")
             return
-        await save_tree(draft, TREE_KEY)
-        await message.answer("✅ Опубликовано. Читателям — <code>/разбор</code>.")
+        await save_tree(draft, "live", kind)
+        await message.answer(f"✅ {name} опубликована.")
         return
 
     if action in ("убрать", "off"):
-        await database.set_setting(TREE_KEY, "")
+        await database.set_setting(keys(kind)[0], "")
         await message.answer("Убрала. Людям разбор больше не показывается.")
         return
 
-    live = await tree()
-    draft = await tree(DRAFT_KEY)
+    live = await tree("live", kind)
+    draft = await tree("draft", kind)
+    source = ("ваших статей раздела" if KINDS[kind]["articles"]
+              else "сегодняшних новостей и движения индексов")
     await message.answer(
-        "🌳 <b>Разбор вопросами</b>\n\n"
+        f"🌳 <b>{name}: разбор вопросами</b>\n\n"
         f"Показывается людям: {len(live.get('trees') or {})} тем\n"
         f"Черновик: {len(draft.get('trees') or {})} тем\n\n"
-        "Собирается из ваших статей раздела «генетика». Модель не "
-        "сочиняет содержание — она перекладывает написанное в вопросы.\n\n"
-        "<code>/дерево собрать</code> — заново из статей\n"
-        "<code>/дерево охват</code> — что вошло, а что нет\n"
-        "<code>/дерево черновик</code> — пройти самой\n"
-        "<code>/дерево опубликовать</code> — показать людям\n"
-        "<code>/дерево убрать</code> — скрыть")
+        f"Собирается из {source}. Модель не сочиняет содержание — она "
+        f"перекладывает написанное в вопросы.\n\n"
+        f"<code>{_cmd(kind)} собрать</code> — заново\n"
+        + (f"<code>{_cmd(kind)} охват</code> — что вошло, а что нет\n"
+           if KINDS[kind]["articles"] else "")
+        + f"<code>{_cmd(kind)} черновик</code> — пройти самой\n"
+          f"<code>{_cmd(kind)} опубликовать</code> — показать людям\n"
+          f"<code>{_cmd(kind)} убрать</code> — скрыть")
+
+
+def _cmd(kind: str) -> str:
+    return "/дерево" if kind == "g" else "/эконом"

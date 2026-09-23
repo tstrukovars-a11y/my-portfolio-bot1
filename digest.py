@@ -1179,6 +1179,22 @@ async def _genetics_text() -> str:
     return "\n".join(lines[:GEN_HEADLINES * 3])
 
 
+async def _eco_row():
+    """«Как это касается меня» — под утренними новостями.
+
+    Вопрос у человека уже есть: он прочитал про ставку и не понял, что
+    ему с этим делать. Кнопка ловит его ровно в этот момент.
+    """
+    try:
+        import tree
+        if not await tree.tree("live", "e"):
+            return None
+    except Exception:
+        return None
+    return [InlineKeyboardButton(text="📊 Как это касается меня",
+                                 callback_data="eco_open")]
+
+
 async def _explain_row():
     """Кнопка «что это значит» — там, где вопрос уже возник.
 
@@ -1496,6 +1512,20 @@ async def publish_slot(bot: Bot, force: str = None) -> str:
                 parts.append(board)
         except Exception as e:
             logging.warning(f"Дайджест: индексы не подоспели: {e}")
+
+        # Экономический разбор пересобирается каждое утро: он про
+        # сегодняшние события, и вчерашний в нём бесполезен так же, как
+        # вчерашняя газета. Публикуем сразу — вычитывать ежедневное
+        # владелице некогда, а запреты в промпте те же.
+        try:
+            import tree
+            fresh, problem = await tree.build("e")
+            if problem:
+                logging.info(f"Разбор экономики не собрался: {problem}")
+            else:
+                await tree.save_tree(fresh, "live", "e")
+        except Exception as e:
+            logging.warning(f"Разбор экономики не собрался: {e}")
         text = "\n\n".join(parts)
         # Тем, кто подписался лично: утренний блок и генетика отдельно —
         # человек выбирал их по отдельности, и слать одно вместо другого
@@ -1508,7 +1538,7 @@ async def publish_slot(bot: Bot, force: str = None) -> str:
         except Exception as e:
             logging.warning(f"Личная рассылка утра не прошла: {e}")
 
-        rows = [row for row in (await _weather_row(),
+        rows = [row for row in (await _weather_row(), await _eco_row(),
                                 await _club_row("morning", bot)) if row]
         try:
             sent = await bot.send_message(

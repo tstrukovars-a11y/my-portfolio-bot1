@@ -278,3 +278,60 @@ def test_draft_walking_is_owner_only(settings, monkeypatch):
     stranger = Call(999)
     run(tree.step_draft(stranger))
     assert not stranger.message.said, "чужой человек листает черновик"
+
+
+# --- два вида разбора --------------------------------------------------
+#
+# Механика одна, а источник и срок жизни разные. Генетика собирается из
+# статей и живёт месяцами; экономика — из событий дня и устаревает
+# вместе с ними.
+
+def test_two_kinds_live_in_different_places():
+    """Один ключ на оба — и экономика затрёт генетику в первое же утро."""
+    assert tree.keys("g") != tree.keys("e")
+    assert len(set(tree.keys("g") + tree.keys("e"))) == 4
+
+
+def test_unknown_kind_falls_back_to_genetics():
+    assert tree.keys("чушь") == tree.keys("g")
+
+
+def test_economy_is_not_built_from_articles():
+    assert tree.KINDS["e"]["articles"] is False
+    assert tree.KINDS["g"]["articles"] is True
+
+
+def test_economy_prompt_starts_from_the_reader():
+    """«Как это касается меня» — вопрос, который у человека уже есть."""
+    low = tree.ECONOMY_PROMPT.lower()
+    assert "касается лично его" in low
+    assert "наёмный работник" in low
+
+
+def test_economy_prompt_forbids_investment_advice():
+    """Совет вложиться требует лицензии, которой нет."""
+    low = tree.ECONOMY_PROMPT.lower()
+    for word in ("покупать", "продавать", "вкладывать", "менять валюту"):
+        assert word in low, word
+    assert "ни прямо, ни намёком" in low
+    assert "не предсказывай" in low
+
+
+def test_economy_prompt_forbids_naming_winners():
+    assert "отдельные компании" in tree.ECONOMY_PROMPT.lower()
+
+
+def test_kind_travels_in_the_button(settings):
+    """Без вида в callback_data кнопка из экономики уведёт в генетику."""
+    data = tree.compact(GOOD)
+    node = data["trees"]["t1"]["nodes"]["n1"]
+    marks = [b.callback_data
+             for row in tree._node_kb("e", "t1", node, False).inline_keyboard
+             for b in row]
+    assert all(m.startswith("tre_e_") for m in marks)
+
+
+def test_saving_by_kind_does_not_mix(settings):
+    run(tree.save_tree(GOOD, "live", "e"))
+    assert run(tree.tree("live", "e"))["trees"]
+    assert run(tree.tree("live", "g")) == {}
