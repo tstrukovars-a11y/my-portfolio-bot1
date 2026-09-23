@@ -1486,6 +1486,16 @@ async def publish_slot(bot: Bot, force: str = None) -> str:
                 parts.append(rates)
         except Exception as e:
             logging.warning(f"Дайджест: курсы к утру не подоспели: {e}")
+
+        # Индексы после курсов: валюта касается каждого, а биржа —
+        # тех, кто дочитал.
+        try:
+            import indices
+            board = indices.morning_block(await indices.fetch_series())
+            if board:
+                parts.append(board)
+        except Exception as e:
+            logging.warning(f"Дайджест: индексы не подоспели: {e}")
         text = "\n\n".join(parts)
         # Тем, кто подписался лично: утренний блок и генетика отдельно —
         # человек выбирал их по отдельности, и слать одно вместо другого

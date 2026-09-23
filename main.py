@@ -42,6 +42,7 @@ import xo
 import rally
 import access
 import courses
+import indices
 import tree
 import subs
 import esim
@@ -636,6 +637,7 @@ async def main():
     dp.include_router(tree.router)
     dp.include_router(courses.router)
     dp.include_router(exchange.router)
+    dp.include_router(indices.router)
     dp.include_router(esim.router)
     dp.include_router(hotels.router)
     dp.include_router(privacy.router)
