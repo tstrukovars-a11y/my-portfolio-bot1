@@ -569,37 +569,50 @@ async def start_with_match(message: Message, bot: Bot):
     обязательно передаём ход дальше — иначе новый человек не увидит ни
     приветствия, ни выбора языка, а он тут первый раз.
     """
-    await _handle_match_start(message, bot)
+    done = await _handle_match_start(message, bot)
+    if done:
+        # Дальше общий /start не зовём: человек пришёл за напоминанием,
+        # а не за выбором языка и обзором разделов.
+        import personal
+        await personal.quiet(message, message.from_user)
+        return
     raise SkipHandler
 
 
-async def _handle_match_start(message: Message, bot: Bot):
+async def _handle_match_start(message: Message, bot: Bot) -> bool:
+    """Оформить подписку на матч. True — человеку уже всё сказано.
+
+    Возвращаемое значение решает, показывать ли ему дальше общий вход с
+    выбором языка и меню. Пришедшему за напоминанием он не нужен: своё
+    он получил, а меню из восьми разделов на этом месте только отпугнёт.
+    """
     payload = message.text.split(maxsplit=1)[1].strip()
     try:
         _, tour, match_id = payload.split("-", 2)
     except ValueError:
-        return
+        return False
     if tour not in tennis_live.TOURS:
-        return
+        return False
 
     if not await _allowed(message.from_user.id):
         await message.answer(NO_SUB)
-        return
+        return True
 
     matches = await _today(tour)
     match = next((m for m in matches if m["id"] == match_id), None)
     if not match:
         await message.answer("Этот матч уже начался или завершился.")
-        return
+        return True
 
     ok = await database.ensure_alert(
         message.from_user.id, match_id, tour, _full_title(match), _starts(match))
     if ok is None:
         await message.answer("Не получилось сохранить напоминание. "
                              "Попробуйте ещё раз через минуту.")
-        return
+        return True
     await _confirm(bot, message.from_user.id, tour, match_id,
                    _full_title(match), _starts(match))
+    return True
 
 
 @router.message(F.text.startswith("/tennis_alerts"))

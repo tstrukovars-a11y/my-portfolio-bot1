@@ -872,6 +872,12 @@ async def publish_next(bot: Bot, only: str = None, lead: str = None,
         if club:
             rows.append(club)
 
+        # Помощь со звонком идёт после клуба: обсуждение — про этот
+        # пост, а звонок — про то, что человек делает завтра.
+        call = await _call_row(section)
+        if call:
+            rows.append(call)
+
         offer = await _offer_row(section)
         if offer:
             rows.append(offer)
@@ -1177,6 +1183,30 @@ async def _genetics_text() -> str:
         content = (got[0] if isinstance(got, (tuple, list)) else got) or ""
         lines += [x for x in content.split("\n") if x.strip()]
     return "\n".join(lines[:GEN_HEADLINES * 3])
+
+
+# Под какими разделами показывать помощь со звонком. Человек читает про
+# поездку — и ровно там у него возникает «а как я позвоню». Под книгами
+# и головоломками эта кнопка была бы шумом.
+CALL_SECTIONS = ("travel", "morning", "genetics")
+CALL_KEY = "digest_call_sections"
+
+
+async def _call_row(section: str):
+    """«Помощь со звонком» под публикацией — там, где вопрос возникает"""
+    raw = await database.get_setting(CALL_KEY)
+    allowed = [x.strip() for x in raw.split(",") if x.strip()] \
+        if raw else list(CALL_SECTIONS)
+    if section not in allowed:
+        return None
+    try:
+        import lang
+        url = lang.call_url()
+    except Exception:
+        return None
+    if not url:
+        return None
+    return [InlineKeyboardButton(text="📞 Помощь со звонком", url=url)]
 
 
 async def _eco_row():

@@ -1236,6 +1236,19 @@ async def pick_counts(match_id: str):
         return 0, 0
 
 
+async def my_alerts(user_id: int) -> int:
+    """Сколько матчей человек ждёт. Для личного экрана — одна цифра."""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            return await conn.fetchval(
+                f"SELECT COUNT(*) FROM {SCHEMA}.match_alerts "
+                "WHERE user_id = $1 AND NOT sent", user_id) or 0
+    except Exception as e:
+        logging.error(f"Счёт напоминаний недоступен: {e}")
+        return 0
+
+
 async def alert_subscribers(match_id: str):
     """[(user_id, title, tour)] тех, кому ещё предстоит напомнить о матче"""
     try:

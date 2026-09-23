@@ -278,7 +278,10 @@ async def start_weather(message: Message):
     """
     if not await _send(message, message.from_user.id):
         await _ask_where(message)
-    raise SkipHandler
+        raise SkipHandler
+    # Погоду человек получил — меню ему не предлагаем.
+    import personal
+    await personal.ensure_language(message.from_user)
 
 
 @router.message(F.text.regexp(r"^/(погода|weather)\b"))

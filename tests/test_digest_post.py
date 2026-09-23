@@ -386,3 +386,29 @@ def test_watch_list_can_be_emptied_without_breaking_shape_rule(settings):
 def test_broken_watch_list_falls_back(settings):
     settings[digest.GEN_WATCH_KEY] = "не json"
     assert "BRCA" in run(digest.gen_watch())
+
+
+# --- помощь со звонком под публикацией ---------------------------------
+#
+# Человек читает про поездку — и ровно там у него возникает «а как я
+# позвоню». По разделам никто не ходит; кнопка должна стоять там, где
+# вопрос рождается, а не там, где её удобно положить.
+
+def test_call_row_only_where_it_makes_sense(settings, monkeypatch):
+    monkeypatch.setenv("RENDER_EXTERNAL_URL", "https://bot.example.com")
+    assert run(digest._call_row("travel")) is not None
+    assert run(digest._call_row("books")) is None
+    assert run(digest._call_row("puzzle")) is None
+
+
+def test_call_row_needs_a_public_address(settings, monkeypatch):
+    """Микрофон браузер даёт только на https: локально кнопки нет."""
+    monkeypatch.delenv("RENDER_EXTERNAL_URL", raising=False)
+    assert run(digest._call_row("travel")) is None
+
+
+def test_call_sections_can_be_changed(settings, monkeypatch):
+    monkeypatch.setenv("RENDER_EXTERNAL_URL", "https://bot.example.com")
+    settings[digest.CALL_KEY] = "books"
+    assert run(digest._call_row("books")) is not None
+    assert run(digest._call_row("travel")) is None
