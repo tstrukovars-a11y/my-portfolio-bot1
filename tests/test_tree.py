@@ -130,8 +130,9 @@ def test_source_text_numbers_the_articles(settings, monkeypatch):
         return [(7, "Что такое ген", "Длинное объяснение"), (9, "Мутации", "Текст")]
 
     monkeypatch.setattr(database, "get_articles_raw", rows)
-    text = run(tree.source_text())
+    text, took, cut = run(tree.source_text())
     assert "[[7]]" in text and "[[9]]" in text
+    assert took == [7, 9] and cut == []
 
 
 def test_step_replaces_the_previous_question(settings):
@@ -227,3 +228,61 @@ def test_prompt_says_it_is_not_an_exam():
     assert "не тест" in low and "не проверка знаний" in low
     assert "нет верных и неверных" in low
     assert "два-четыре слова" in low
+
+
+# --- охват -------------------------------------------------------------
+#
+# Дерево держится на четырнадцати узлах, а статей может быть втрое
+# больше. Молчать об этом нельзя: автор решит, что тема раскрыта, а
+# половины её в разговоре нет.
+
+def test_used_articles_are_counted():
+    data = {"nodes": {"a": {"source": 7}, "b": {"source": "9"},
+                      "c": {"text": "без источника"}}}
+    assert tree.used_articles(data) == {7, 9}
+
+
+def test_broken_source_is_ignored():
+    assert tree.used_articles({"nodes": {"a": {"source": "чушь"}}}) == set()
+
+
+def test_coverage_separates_unused_from_uncut(settings, monkeypatch):
+    """«Не вошло» и «не дошло до модели» — разные беды: первую лечит
+    другой промпт, вторую — второе дерево."""
+    import database
+
+    async def rows(section):
+        return [(1, "Ген", "текст"), (2, "Мутация", "текст"),
+                (3, "Риск", "текст"), (4, "Скрининг", "текст")]
+
+    monkeypatch.setattr(database, "get_articles_raw", rows)
+    data = {"nodes": {"a": {"source": 1}}, "given": [1, 2, 3], "cut": [4]}
+    got = run(tree.coverage(data))
+    assert got["all"] == 4
+    assert got["used"] == [1]
+    assert got["unused"] == [2, 3]
+    assert got["cut"] == [4]
+
+
+def test_coverage_text_names_what_is_missing(settings, monkeypatch):
+    import database
+
+    async def rows(section):
+        return [(1, "Ген", "текст"), (2, "Мутация", "текст")]
+
+    monkeypatch.setattr(database, "get_articles_raw", rows)
+    text = run(tree.coverage_text({"nodes": {"a": {"source": 1}}, "cut": []}))
+    assert "1 статей из 2" in text
+    assert "Мутация" in text
+    assert "второе дерево" in text
+
+
+def test_full_coverage_says_so(settings, monkeypatch):
+    import database
+
+    async def rows(section):
+        return [(1, "Ген", "текст")]
+
+    monkeypatch.setattr(database, "get_articles_raw", rows)
+    text = run(tree.coverage_text({"nodes": {"a": {"source": 1}}, "cut": []}))
+    assert "Вошло всё" in text

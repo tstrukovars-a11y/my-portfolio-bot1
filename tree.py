@@ -187,30 +187,32 @@ def unreachable(data: dict) -> list:
 # СБОРКА
 # ---------------------------------------------------------------------
 
-async def source_text(limit: int = 12000) -> str:
-    """Статьи раздела с номерами — то, из чего собирается разговор.
+async def source_text(limit: int = 12000):
+    """(текст для модели, номера вошедших статей, номера отрезанных).
 
-    Номер нужен, чтобы узел помнил своё происхождение: у статьи есть
-    картинка, и объяснение без неё теряет половину. «Что такое ген»
-    словами — это абзац, а картинкой — секунда.
+    Отрезанные считаем отдельно: статья, не попавшая даже в исходник,
+    не могла оказаться в дереве, и знать об этом надо до того, как
+    удивляться, почему темы нет.
     """
     rows = await database.get_articles_raw(SECTION)
-    parts = []
+    parts, took, left = [], [], []
     size = 0
     for article_id, title, text in rows:
         piece = f"{title or ''}\n{text or ''}".strip()
         if not piece:
             continue
-        parts.append(f"[[{article_id}]] {piece}")
-        size += len(piece)
         if size >= limit:
-            break
-    return "\n\n---\n\n".join(parts)
+            left.append(article_id)
+            continue
+        parts.append(f"[[{article_id}]] {piece}")
+        took.append(article_id)
+        size += len(piece)
+    return "\n\n---\n\n".join(parts), took, left
 
 
 async def build() -> tuple:
     """(дерево, что пошло не так). Ничего не сохраняет."""
-    source = await source_text()
+    source, took, cut = await source_text()
     if not source.strip():
         return {}, "в разделе нет статей — собирать не из чего"
 
@@ -242,7 +244,44 @@ async def build() -> tuple:
 
     data = tidy(data)
     problem = check(data)
-    return (data, "") if not problem else ({}, problem)
+    if problem:
+        return {}, problem
+    # Запоминаем, что вообще показывали модели: без этого «не вошло»
+    # неотличимо от «не поместилось в исходник».
+    data["given"] = took
+    data["cut"] = cut
+    return data, ""
+
+
+def used_articles(data: dict) -> set:
+    """Номера статей, на которые опирается хоть один узел"""
+    out = set()
+    for node in (data.get("nodes") or {}).values():
+        source = node.get("source")
+        if source is None:
+            continue
+        try:
+            out.add(int(source))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+async def coverage(data: dict) -> dict:
+    """Что из статей вошло в дерево, а что осталось за бортом.
+
+    Дерево ограничено четырнадцатью узлами, а статей может быть втрое
+    больше. Молчать об этом нельзя: автор считает, что тема раскрыта, а
+    половины её в разговоре нет.
+    """
+    rows = await database.get_articles_raw(SECTION)
+    titles = {article_id: (title or f"№{article_id}")
+              for article_id, title, _ in rows}
+    used = used_articles(data) & set(titles)
+    cut = [x for x in (data.get("cut") or []) if x in titles]
+    unused = [x for x in titles if x not in used and x not in cut]
+    return {"all": len(titles), "used": sorted(used), "cut": cut,
+            "unused": unused, "titles": titles}
 
 
 # ---------------------------------------------------------------------
@@ -362,6 +401,34 @@ async def step_draft(call: CallbackQuery):
 # СЛУЖЕБНОЕ
 # ---------------------------------------------------------------------
 
+async def coverage_text(data: dict) -> str:
+    """Охват словами: сколько тем вошло и какие остались"""
+    got = await coverage(data)
+    if not got["all"]:
+        return "Статей в разделе нет."
+
+    lines = [f"📚 <b>Охват</b>: {len(got['used'])} статей из {got['all']}"]
+
+    def names(ids):
+        shown = [html.escape(got["titles"][x][:36]) for x in ids[:8]]
+        more = f" и ещё {len(ids) - 8}" if len(ids) > 8 else ""
+        return "\n".join(f"• {name}" for name in shown) + more
+
+    if got["unused"]:
+        lines += ["", f"<b>Не вошли ({len(got['unused'])})</b> — модель их "
+                  f"видела, но места не хватило:", names(got["unused"])]
+    if got["cut"]:
+        lines += ["", f"<b>Не дошли до модели ({len(got['cut'])})</b> — "
+                  f"исходник ограничен размером:", names(got["cut"])]
+    if not got["unused"] and not got["cut"]:
+        lines.append("\nВошло всё.")
+    else:
+        lines.append("\n<i>Дерево держится на четырнадцати узлах: длинное "
+                     "никто не проходит. Чтобы охватить остальное, стоит "
+                     "собрать второе дерево по другим статьям.</i>")
+    return "\n".join(lines)
+
+
 @router.message(F.text.regexp(r"^/дерево"))
 async def tree_command(message: Message):
     if not config.is_admin(message.from_user.id):
@@ -378,13 +445,22 @@ async def tree_command(message: Message):
             return
         await save_tree(data, DRAFT_KEY)
         lost = unreachable(data)
-        note = (f"\n\nНедостижимых узлов: {len(lost)} — {', '.join(lost)}"
+        note = (f"\nНедостижимых узлов: {len(lost)} — {', '.join(lost)}"
                 if lost else "")
         await message.answer(
             f"✅ Собрала: узлов {len(data['nodes'])}.{note}\n\n"
-            f"Посмотрите черновик целиком — <code>/дерево черновик</code>. "
+            + await coverage_text(data) +
+            f"\n\nПосмотрите черновик — <code>/дерево черновик</code>. "
             f"Людям он пока не виден.\n"
             f"Опубликовать: <code>/дерево опубликовать</code>")
+        return
+
+    if action in ("охват", "coverage"):
+        data = await tree(DRAFT_KEY) or await tree(TREE_KEY)
+        if not data:
+            await message.answer("Дерева пока нет.")
+            return
+        await message.answer(await coverage_text(data))
         return
 
     if action in ("черновик", "draft"):
@@ -420,6 +496,7 @@ async def tree_command(message: Message):
         "Собирается из ваших статей раздела «генетика». Модель не "
         "сочиняет содержание — она перекладывает написанное в вопросы.\n\n"
         "<code>/дерево собрать</code> — заново из статей\n"
+        "<code>/дерево охват</code> — что вошло, а что нет\n"
         "<code>/дерево черновик</code> — пройти самой\n"
         "<code>/дерево опубликовать</code> — показать людям\n"
         "<code>/дерево убрать</code> — скрыть")
