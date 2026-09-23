@@ -189,12 +189,15 @@ def test_ordinary_match_keeps_the_plain_question():
 # начинается, и замолчали. Итог — то, ради чего он подписывался.
 
 def test_result_line_names_the_winner_first():
+    """Проигравший первым — это уже другая новость."""
     match = {"sides": [
-        {"athlete": {"displayName": "John Doe"}, "winner": False},
+        {"athlete": {"displayName": "Daniil Medvedev"}, "winner": False},
         {"athlete": {"displayName": "Andrey Rublev"}, "winner": True},
     ]}
     line = ta._result_line(match)
-    assert line.index("Рублёв") < line.index("Doe") or "Рублёв" in line.split("—")[0]
+    assert line.startswith("<b>")
+    assert "Рублёв" in line.split("—")[0]
+    assert "Медведев" in line.split("—")[1]
 
 
 def test_result_line_needs_two_players():
@@ -202,7 +205,12 @@ def test_result_line_needs_two_players():
 
 
 def test_finished_match_is_told_apart_from_cancelled():
-    """Отменённый матч — не результат: победителя в нём нет."""
-    cancelled = {"status": "postponed", "completed": False, "sides": []}
-    assert ta._cancelled(cancelled)
-    assert not ta._cancelled({"status": "final", "completed": True, "sides": []})
+    """Отменённый матч — не результат: победителя в нём нет.
+
+    Состояние лежит в поле state, а не status: перепутать их — значит
+    молча считать все матчи состоявшимися.
+    """
+    assert ta._cancelled({"state": "postponed", "completed": False})
+    assert ta._cancelled({"state": "walkover"})
+    assert not ta._cancelled({"state": "final", "completed": True})
+    assert not ta._cancelled({"state": ""})
