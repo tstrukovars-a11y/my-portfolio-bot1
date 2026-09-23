@@ -394,11 +394,12 @@ def test_broken_watch_list_falls_back(settings):
 # позвоню». По разделам никто не ходит; кнопка должна стоять там, где
 # вопрос рождается, а не там, где её удобно положить.
 
-def test_call_row_only_where_it_makes_sense(settings, monkeypatch):
+@pytest.mark.parametrize("section", ["morning", "genetics", "books", "puzzle"])
+def test_call_row_is_only_for_travel(section, settings, monkeypatch):
+    """Кнопка, пришитая ко всему подряд, перестаёт замечаться целиком."""
     monkeypatch.setenv("RENDER_EXTERNAL_URL", "https://bot.example.com")
     assert run(digest._call_row("travel")) is not None
-    assert run(digest._call_row("books")) is None
-    assert run(digest._call_row("puzzle")) is None
+    assert run(digest._call_row(section)) is None
 
 
 def test_call_row_needs_a_public_address(settings, monkeypatch):
