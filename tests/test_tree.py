@@ -165,3 +165,65 @@ def test_draft_walking_is_owner_only(settings, monkeypatch):
     stranger = Call(999)
     run(tree.step_draft(stranger))
     assert not stranger.message.said, "чужой человек листает черновик"
+
+
+# --- подписи кнопок ----------------------------------------------------
+#
+# Вводные слова модель приписывает даже там, где промпт их запрещает.
+# Смысла в них нет, а кнопку они удлиняют так, что название вещи не
+# помещается и Телеграм режет его на середине слова.
+
+@pytest.mark.parametrize("said,expected", [
+    ("дальше хочу узнать про носительство", "Про носительство"),
+    ("Хочу узнать, как считают риск", "Как считают риск"),
+    ("расскажите подробнее о мутациях", "О мутациях"),
+    ("дальше о рисках", "О рисках"),
+])
+def test_filler_is_cut_from_labels(said, expected):
+    assert tree.tidy_label(said) == expected
+
+
+def test_preposition_stays():
+    """«Носительство» после «расскажите про» осталось бы в неверном
+    падеже — склонять обратно нечем."""
+    assert tree.tidy_label("расскажите про носительство") == "Про носительство"
+
+
+@pytest.mark.parametrize("said", ["У родственника", "Как считают риск",
+                                  "Носительство"])
+def test_normal_labels_are_untouched(said):
+    assert tree.tidy_label(said) == said
+
+
+def test_label_made_only_of_filler_survives():
+    """Пустая кнопка хуже лишнего слова."""
+    assert tree.tidy_label("подробнее") == "Подробнее"
+    assert tree.tidy_label("") == ""
+
+
+def test_tidy_walks_the_whole_tree():
+    data = {"start": "a", "nodes": {
+        "a": {"text": "Вопрос", "options": [
+            {"label": "дальше хочу узнать про гены", "next": "b"}]},
+        "b": {"text": "Конец", "options": []}}}
+    assert tree.tidy(data)["nodes"]["a"]["options"][0]["label"] == "Про гены"
+
+
+def test_long_label_is_refused():
+    """Телеграм обрежет её на середине слова, и человек будет выбирать
+    между двумя огрызками."""
+    broken = {"start": "a", "nodes": {
+        "a": {"text": "Вопрос", "options": [
+            {"label": "очень длинная подпись, которая точно не поместится "
+                      "на кнопке", "next": "b"}]},
+        "b": {"text": "Конец", "options": []}}}
+    assert "длинная" in tree.check(broken)
+
+
+def test_prompt_says_it_is_not_an_exam():
+    """Проверка знаний отпугивает: человек пришёл разобраться, а не
+    сдавать."""
+    low = tree.PROMPT.lower()
+    assert "не тест" in low and "не проверка знаний" in low
+    assert "нет верных и неверных" in low
+    assert "два-четыре слова" in low
