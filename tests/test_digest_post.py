@@ -329,3 +329,60 @@ def test_channel_block_names_its_sources(monkeypatch, settings):
     monkeypatch.setattr(digest, "_summary", summary)
     post = run(digest._genetics_post())
     assert "Источники" in post and "http://a" in post
+
+
+# --- метки в генетике --------------------------------------------------
+#
+# Врач-генетик просила не пропускать наследственные опухоли. Пропущенная
+# новость здесь — не досадная мелочь: ради неё и читают ленту.
+
+@pytest.mark.parametrize("line,expected", [
+    ("BRCA1 carriers study", "BRCA"),
+    ("Novel 5382insC findings", "5382insC"),
+    ("A 185delAG variant described", "185delAG"),
+    ("6174delT in a new cohort", "6174delT"),
+    ("Olaparib trial results", "olaparib"),
+])
+def test_watched_words_are_found(line, expected):
+    hits = digest.gen_hits(line, digest.GEN_WATCH_DEFAULT)
+    assert any(expected.lower() == h.lower() for h in hits), hits
+
+
+def test_similar_mutations_are_caught_by_shape():
+    """«И похожие» — это форма записи, а не список: таких вариантов сотни,
+    и перечислить их заранее нельзя."""
+    assert digest.gen_hits("The 1100delC variant", []) == ["1100delC"]
+    assert digest.gen_hits("c.68_69del reported", [])
+
+
+def test_ordinary_news_is_not_marked():
+    assert digest.gen_hits("Ancient wheat genome sequenced",
+                           digest.GEN_WATCH_DEFAULT) == []
+
+
+def test_one_headline_gives_one_hit():
+    """«BRCA» и «BRCA1» в одной строке — одна находка, а не две."""
+    hits = digest.gen_hits("BRCA1 and BRCA2 compared", ["BRCA", "BRCA1", "BRCA2"])
+    assert len(hits) == 1
+
+
+def test_marked_headlines_rise_to_the_top():
+    lines = ["Wheat genome", "BRCA1 study", "Rice genome"]
+    assert digest.gen_sort(lines, digest.GEN_WATCH_DEFAULT)[0] == "BRCA1 study"
+
+
+def test_sorting_keeps_everything():
+    lines = ["A", "BRCA1", "B"]
+    assert sorted(digest.gen_sort(lines, ["BRCA"])) == sorted(lines)
+
+
+def test_watch_list_can_be_emptied_without_breaking_shape_rule(settings):
+    """Даже с пустым списком мутации ловятся: правило не зависит от слов."""
+    settings[digest.GEN_WATCH_KEY] = "[]"
+    assert run(digest.gen_watch()) == []
+    assert digest.gen_hits("5382insC", [])
+
+
+def test_broken_watch_list_falls_back(settings):
+    settings[digest.GEN_WATCH_KEY] = "не json"
+    assert "BRCA" in run(digest.gen_watch())

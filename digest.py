@@ -1099,6 +1099,56 @@ async def _news_summary(headlines: str) -> str:
 # вправе намекать на обратное.
 
 GEN_SUMMARY_KEY = "digest_genetics_summary"
+GEN_WATCH_KEY = "genetics_watch"         # что отмечать особо
+GEN_SEEN_KEY = "genetics_seen"           # о чём уже сообщали лично
+
+# Слова, ради которых ленту и читают внимательно. Список правится
+# командой: интерес меняется, а деплой ради строки — глупость.
+GEN_WATCH_DEFAULT = [
+    "BRCA", "BRCA1", "BRCA2", "PALB2", "CHEK2",
+    "hereditary breast", "ovarian cancer", "PARP", "olaparib",
+    "founder mutation",
+]
+
+# «И похожие» — это не про перечисление, а про форму записи: 5382insC,
+# 185delAG, 6174delT устроены одинаково, и таких вариантов сотни.
+# Правило ловит их все, включая те, о которых мы ещё не слышали.
+MUTATION = re.compile(
+    r"\b\d{2,5}(?:_\d{2,5})?\s?(?:ins|del|dup)[A-Za-z]{0,4}\b", re.I)
+
+
+async def gen_watch() -> list:
+    raw = await database.get_setting(GEN_WATCH_KEY)
+    if not raw:
+        return list(GEN_WATCH_DEFAULT)
+    try:
+        items = json.loads(raw)
+        return [str(x) for x in items] if isinstance(items, list) \
+            else list(GEN_WATCH_DEFAULT)
+    except (ValueError, TypeError):
+        return list(GEN_WATCH_DEFAULT)
+
+
+def gen_hits(line: str, watch: list) -> list:
+    """Что из отслеживаемого встретилось в строке"""
+    low = line.lower()
+    found = [word for word in watch if word.lower() in low]
+    found += [m.group(0) for m in MUTATION.finditer(line)]
+    # Порядок как в списке, без повторов: «BRCA» и «BRCA1» в одном
+    # заголовке — одна находка для человека, а не две.
+    out = []
+    for word in found:
+        if not any(word.lower() in seen.lower() or seen.lower() in word.lower()
+                   for seen in out):
+            out.append(word)
+    return out
+
+
+def gen_sort(lines: list, watch: list) -> list:
+    """Отмеченное — наверх, остальное в прежнем порядке"""
+    marked = [line for line in lines if gen_hits(line, watch)]
+    rest = [line for line in lines if not gen_hits(line, watch)]
+    return marked + rest
 GEN_HEADLINES = 3                        # больше в пост не влезает
 
 GEN_PROMPT = (
@@ -1129,6 +1179,97 @@ async def _genetics_text() -> str:
     return "\n".join(lines[:GEN_HEADLINES * 3])
 
 
+async def gen_alert(bot) -> int:
+    """Сказать владелице лично о том, что она просила не пропускать.
+
+    В канале отмеченная новость стоит между курсами и погодой, и её
+    легко пролистать. Личное сообщение приходит один раз на заголовок:
+    повторять о том же — быстрый способ научить человека не читать.
+    """
+    watch = await gen_watch()
+    lines = [x for x in (await _genetics_text()).split("\n") if x.strip()]
+    if not lines or not config.ADMIN_ID:
+        return 0
+
+    seen = set((await database.get_setting(GEN_SEEN_KEY) or "").split("|"))
+    fresh = []
+    for line in lines:
+        hits = gen_hits(line, watch)
+        if not hits:
+            continue
+        mark = hashlib.sha1(line.encode("utf-8")).hexdigest()[:10]
+        if mark in seen:
+            continue
+        fresh.append((line, hits, mark))
+
+    if not fresh:
+        return 0
+
+    import news_fetcher
+    body = ["🧬 <b>По вашим меткам</b>", ""]
+    for line, hits, _ in fresh[:5]:
+        body.append(f"⭐ {line}")
+        body.append(f"    <i>{', '.join(hits)}</i>")
+    body += ["", "<i>Это не разбор и не рекомендация — только то, что "
+             "попало под метки. Список: /следить</i>"]
+
+    try:
+        await bot.send_message(config.ADMIN_ID, "\n".join(body),
+                               disable_web_page_preview=True)
+    except Exception as e:
+        logging.warning(f"Метки генетики не отправились: {e}")
+        return 0
+
+    seen.update(mark for _, _, mark in fresh)
+    # Держим последние двести: список растёт каждый день, а помнить
+    # прошлогодние заголовки незачем.
+    await database.set_setting(GEN_SEEN_KEY,
+                               "|".join(list(seen)[-200:]))
+    return len(fresh)
+
+
+@router.message(F.text.regexp(r"^/следить"))
+async def watch_command(message: Message):
+    """Что отмечать в ленте генетики"""
+    if not config.is_admin(message.from_user.id):
+        return
+
+    parts = (message.text or "").split(maxsplit=1)
+    items = await gen_watch()
+
+    if len(parts) < 2:
+        lines = ["🧬 <b>Метки в новостях генетики</b>", ""]
+        lines += [f"• {html.escape(word)}" for word in items]
+        lines += ["", "Плюс любые мутации вида <code>5382insC</code>, "
+                  "<code>185delAG</code> — они ловятся по форме записи, "
+                  "перечислять их не нужно.", "",
+                  "Добавить: <code>/следить + TP53</code>\n"
+                  "Убрать: <code>/следить - PARP</code>"]
+        await message.answer("\n".join(lines))
+        return
+
+    body = parts[1].strip()
+    if body.startswith("+"):
+        word = body[1:].strip()[:40]
+        if word and word.lower() not in [x.lower() for x in items]:
+            items.append(word)
+            await database.set_setting(GEN_WATCH_KEY,
+                                       json.dumps(items, ensure_ascii=False))
+        await message.answer(f"✅ Слежу за: {html.escape(word)}")
+        return
+
+    if body.startswith("-"):
+        word = body[1:].strip()
+        items = [x for x in items if x.lower() != word.lower()]
+        await database.set_setting(GEN_WATCH_KEY,
+                                   json.dumps(items, ensure_ascii=False))
+        await message.answer(f"Убрала: {html.escape(word)}")
+        return
+
+    await message.answer("Нужно <code>/следить + слово</code> или "
+                         "<code>/следить - слово</code>")
+
+
 async def _genetics_post() -> str:
     """Блок «Генетика» для утреннего выпуска. Пусто — блока не будет.
 
@@ -1140,12 +1281,30 @@ async def _genetics_post() -> str:
     if not headlines:
         return ""
 
-    summary = await _summary(headlines, GEN_PROMPT, GEN_SUMMARY_KEY, "генетика")
+    watch = await gen_watch()
+    lines = gen_sort([x for x in headlines.split("\n") if x.strip()], watch)
+
+    prompt = GEN_PROMPT
+    if any(gen_hits(line, watch) for line in lines[:GEN_HEADLINES]):
+        # Модель сама не знает, что для этого канала важнее: наследственные
+        # опухоли ведёт врач-генетик, и с них начинается разговор.
+        prompt += ("\n\nЕсли среди заголовков есть наследственные опухоли, "
+                   "гены BRCA и подобные или конкретные мутации — начни "
+                   "именно с них.")
+
+    summary = await _summary("\n".join(lines), prompt, GEN_SUMMARY_KEY,
+                             "генетика")
     if not summary:
         return ""
 
     import news_fetcher
-    head = "\n".join(headlines.split("\n")[:GEN_HEADLINES])
+    # Отмеченное помечаем и для читателя: в ленте из трёх строк это
+    # единственный способ показать, какая из них не проходная.
+    shown = []
+    for line in lines[:GEN_HEADLINES]:
+        hits = gen_hits(line, watch)
+        shown.append(("⭐ " + line) if hits else line)
+    head = "\n".join(shown)
     return (f"🧬 *Генетика*\n\n{news_fetcher._escape_markdown(summary)}\n\n"
             f"*Источники:*\n{head}")
 
@@ -1299,6 +1458,9 @@ async def publish_slot(bot: Bot, force: str = None) -> str:
             genetics = await _genetics_post()
             if genetics:
                 parts.append(genetics)
+            # Отмеченное владелица получает отдельно и лично: в канале
+            # такая новость стоит между курсами и погодой.
+            await gen_alert(bot)
         except Exception as e:
             logging.warning(f"Дайджест: обзор генетики не собрался: {e}")
 
