@@ -1472,6 +1472,17 @@ async def publish_slot(bot: Bot, force: str = None) -> str:
         except Exception as e:
             logging.warning(f"Дайджест: курсы к утру не подоспели: {e}")
         text = "\n\n".join(parts)
+        # Тем, кто подписался лично: утренний блок и генетика отдельно —
+        # человек выбирал их по отдельности, и слать одно вместо другого
+        # значит не услышать его выбор.
+        try:
+            import subs
+            await subs.deliver(bot, "morning", text)
+            if genetics:
+                await subs.deliver(bot, "genetics", genetics)
+        except Exception as e:
+            logging.warning(f"Личная рассылка утра не прошла: {e}")
+
         rows = [row for row in (await _weather_row(),
                                 await _club_row("morning", bot)) if row]
         try:
@@ -1502,6 +1513,13 @@ async def publish_slot(bot: Bot, force: str = None) -> str:
     if slot == "tennis":
         import tennis_alerts
         result = await tennis_alerts.publish_schedule(bot, chat, thread)
+        try:
+            import subs
+            if "нет" not in result.lower():
+                await subs.deliver(bot, "tennis",
+                                   "🎾 Расписание на сегодня — в канале.")
+        except Exception as e:
+            logging.warning(f"Личная рассылка тенниса не прошла: {e}")
         if "нет" not in result:
             await _mark_slot(slot)
         return result

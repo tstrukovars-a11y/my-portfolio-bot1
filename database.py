@@ -2825,6 +2825,30 @@ async def lang_stats(user_id: int) -> dict:
         return {"cards": 0, "strong": 0, "answers": 0}
 
 
+async def subscribers_of(prefix: str, slot: str) -> list:
+    """Кто выбрал этот блок. Ищем прямо в настройках, без своей таблицы:
+    подписка — это строка на человека, и заводить ради неё схему дорого."""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"""SELECT key, value FROM {SCHEMA}.settings
+                    WHERE key LIKE $1 AND value <> ''""", prefix + "%")
+    except Exception as e:
+        logging.error(f"Подписчики недоступны: {e}")
+        return []
+
+    out = []
+    for row in rows:
+        if slot not in (row["value"] or "").split(","):
+            continue
+        try:
+            out.append(int(row["key"][len(prefix):]))
+        except ValueError:
+            continue
+    return out
+
+
 # --- ДОСТУП К НАВЫКАМ ---
 #
 # Даты храним наивным UTC: в этих колонках TIMESTAMP без зоны, и осознанное

@@ -95,6 +95,11 @@ def get_main_menu(lang, is_admin=False, subscribed=False):
     # Профили идут последними: это визитная карточка для тех, кто уже
     # заинтересовался, а не то, с чего начинают знакомство с ботом.
     rows.append([InlineKeyboardButton(text=m[4], callback_data="menu_profiles")])
+    # Подписка на отдельные блоки: человеку из девяти выпусков в день
+    # интересны один-два, и выбирать он должен сам.
+    rows.append([InlineKeyboardButton(
+        text=("🔔 Что присылать лично" if lang == "ru"
+              else "🔔 Personal updates"), callback_data="subs_open")])
 
     # Служебная кнопка рисуется только владельцу бота
     if is_admin:

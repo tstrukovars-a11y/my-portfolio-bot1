@@ -475,3 +475,69 @@ def test_planned_programs_are_named():
     import checklist
 
     assert any("Travelpayouts" in name for name in checklist.PLANNED)
+
+
+# --- подписки на блоки ------------------------------------------------
+#
+# Канал выпускает девять разных вещей в день, а человеку интересны
+# одна-две. Ошибка здесь — прислать не то, что выбрали: это не мелочь,
+# это повод отписаться совсем.
+
+def test_blocks_match_digest_slots():
+    """Подписка цепляется к существующему расписанию, а не заводит своё."""
+    import digest
+    import subs
+
+    slots = {slot for _, slot, _ in digest.SCHEDULE}
+    assert set(subs.BLOCKS) <= slots
+
+
+def test_choice_is_remembered(settings):
+    import subs
+
+    run(subs.save(42, {"genetics", "tennis"}))
+    assert run(subs.chosen(42)) == {"genetics", "tennis"}
+
+
+def test_unknown_block_is_ignored(settings):
+    """Мусор в настройке не должен превращаться в рассылку."""
+    import subs
+
+    settings[subs.KEY + "42"] = "genetics,чушь"
+    assert run(subs.chosen(42)) == {"genetics"}
+
+
+def test_nothing_chosen_means_nothing_sent(settings, monkeypatch):
+    import database
+    import subs
+
+    async def nobody(prefix, slot):
+        return []
+
+    monkeypatch.setattr(database, "subscribers_of", nobody)
+    assert run(subs.deliver(Bot_(), "genetics", "текст")) == 0
+
+
+def test_empty_text_is_not_delivered(settings, monkeypatch):
+    """Пустой блок лучше не слать вовсе, чем слать пустоту."""
+    import database
+    import subs
+
+    async def somebody(prefix, slot):
+        return [42]
+
+    monkeypatch.setattr(database, "subscribers_of", somebody)
+    assert run(subs.deliver(Bot_(), "genetics", "   ")) == 0
+
+
+def test_delivery_reaches_the_chosen(settings, monkeypatch):
+    import database
+    import subs
+
+    async def somebody(prefix, slot):
+        return [42, 43]
+
+    bot = Bot_()
+    monkeypatch.setattr(database, "subscribers_of", somebody)
+    assert run(subs.deliver(bot, "genetics", "🧬 текст")) == 2
+    assert {chat for chat, _, _ in bot.sent} == {42, 43}
