@@ -181,3 +181,28 @@ def test_final_is_called_a_final():
 def test_ordinary_match_keeps_the_plain_question():
     text = ta._pick_question(_match("2nd Round"))
     assert "кто победит" in text.lower()
+
+
+# --- третье уведомление ------------------------------------------------
+#
+# Без него подписка обрывается на полуслове: человеку сказали, что матч
+# начинается, и замолчали. Итог — то, ради чего он подписывался.
+
+def test_result_line_names_the_winner_first():
+    match = {"sides": [
+        {"athlete": {"displayName": "John Doe"}, "winner": False},
+        {"athlete": {"displayName": "Andrey Rublev"}, "winner": True},
+    ]}
+    line = ta._result_line(match)
+    assert line.index("Рублёв") < line.index("Doe") or "Рублёв" in line.split("—")[0]
+
+
+def test_result_line_needs_two_players():
+    assert ta._result_line({"sides": []}) == ""
+
+
+def test_finished_match_is_told_apart_from_cancelled():
+    """Отменённый матч — не результат: победителя в нём нет."""
+    cancelled = {"status": "postponed", "completed": False, "sides": []}
+    assert ta._cancelled(cancelled)
+    assert not ta._cancelled({"status": "final", "completed": True, "sides": []})

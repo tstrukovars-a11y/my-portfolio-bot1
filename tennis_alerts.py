@@ -1106,6 +1106,67 @@ async def refresh_times(bot: Bot = None) -> int:
     return moved
 
 
+async def _find_match(tour: str, match_id: str):
+    """Матч по номеру в свежей табличке. None — если его там уже нет."""
+    data = await tennis_live.fetch_scoreboard(tour)
+    for match in tennis_live._singles(data, tour, big_only=False):
+        if str(match.get("id")) == str(match_id):
+            return match
+    return None
+
+
+async def send_results(bot: Bot) -> int:
+    """Третье уведомление: матч закончился, вот кто выиграл и с каким счётом.
+
+    Без него подписка обрывается на полуслове: человеку сказали, что
+    матч начинается, и замолчали. Итог — то, ради чего он и подписывался.
+
+    Шлём только тем, кто получил напоминание о начале: кто не ждал матча,
+    тому и результат не новость.
+    """
+    sent = 0
+    waiting = await database.awaiting_result()
+    if not waiting:
+        return 0
+
+    # Табличку тянем по одному разу на турнир, а не на каждого человека:
+    # на одном матче подписчиков бывает десяток.
+    cache = {}
+    for user_id, match_id, tour, title in waiting:
+        key = (tour, match_id)
+        if key not in cache:
+            cache[key] = await _find_match(tour, match_id)
+        match = cache[key]
+        if not match:
+            continue
+
+        if _cancelled(match):
+            await database.mark_result_sent(user_id, match_id)
+            continue
+        if not match.get("completed"):
+            continue
+
+        line = _result_line(match)
+        if not line:
+            await database.mark_result_sent(user_id, match_id)
+            continue
+
+        try:
+            await bot.send_message(
+                user_id,
+                f"🏁 <b>Матч завершён</b>\n\n{line}",
+                disable_web_page_preview=True)
+            sent += 1
+        except TelegramForbiddenError:
+            logging.info(f"Итог: {user_id} заблокировал бота")
+        except Exception as e:
+            logging.warning(f"Итог {user_id} не ушёл: {e}")
+            continue
+        await database.mark_result_sent(user_id, match_id)
+        await asyncio.sleep(0.1)
+    return sent
+
+
 async def alerts_scheduler(bot: Bot):
     """Раз в две минуты смотрит, кому пора слать ссылку.
 
@@ -1120,6 +1181,10 @@ async def alerts_scheduler(bot: Bot):
             # не успеть заметить перенос.
             if ticks % 10 == 0:
                 await refresh_times(bot)
+            # Итоги реже, чем напоминания: матч не заканчивается в ту же
+            # минуту, а лишний запрос к табличке стоит денег и лимитов.
+            if ticks % 5 == 0:
+                await send_results(bot)
             ticks += 1
 
             lead = await _lead()

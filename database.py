@@ -361,6 +361,13 @@ async def init_db():
             PRIMARY KEY (user_id, match_id)
         )""")
 
+        # Третье уведомление — итог матча. Колонка отдельная от sent:
+        # напоминание о начале и сообщение о конце — разные события, и
+        # одно не должно гасить другое.
+        await conn.execute(
+            f"ALTER TABLE {SCHEMA}.match_alerts "
+            f"ADD COLUMN IF NOT EXISTS result_sent BOOLEAN NOT NULL DEFAULT FALSE")
+
         # Прогнозы на матч. Кнопка в канале одна на всех, а мнение у
         # каждого своё: храним выбор по человеку, показываем — долю.
         await conn.execute(f"""
@@ -1313,6 +1320,41 @@ async def alerts_overview(limit: int = 12):
         logging.error(f"Обзор напоминаний недоступен: {e}")
         note_error("обзор напоминаний", e)
         return [], None, 0
+
+
+async def awaiting_result(hours: int = 12):
+    """Кому обещали матч, который уже должен был закончиться.
+
+    Берём тех, кому напоминание ушло: человек, не получивший начала, не
+    ждёт и конца. Окно в часы — чтобы не тащить всю историю: матч,
+    начавшийся вчера, свой результат уже не новость.
+    """
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"""SELECT user_id, match_id, tour, title FROM {SCHEMA}.match_alerts
+                    WHERE sent AND NOT result_sent AND starts_at IS NOT NULL
+                      AND starts_at < NOW() - interval '40 minutes'
+                      AND starts_at > NOW() - ($1 || ' hours')::interval""",
+                str(hours))
+        return [tuple(r) for r in rows]
+    except Exception as e:
+        logging.error(f"Ожидающие результата недоступны: {e}")
+        return []
+
+
+async def mark_result_sent(user_id: int, match_id: str) -> bool:
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"UPDATE {SCHEMA}.match_alerts SET result_sent = TRUE "
+                "WHERE user_id = $1 AND match_id = $2", user_id, match_id)
+        return True
+    except Exception as e:
+        logging.error(f"Отметка об итоге не сохранена: {e}")
+        return False
 
 
 async def mark_alert_sent(user_id: int, match_id: str) -> bool:

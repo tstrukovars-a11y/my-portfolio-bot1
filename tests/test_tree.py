@@ -116,8 +116,30 @@ def test_prompt_forbids_inventing_and_advising():
     assert "не ставь диагнозов" in low
 
 
-def test_leaf_carries_the_guard():
-    assert "не рекомендация" in tree.GUARD
+def test_node_remembers_its_article():
+    """Картинка берётся из статьи, из которой узел сделан: «что такое
+    ген» словами — абзац, а картинкой — секунда."""
+    assert '"source"' in tree.PROMPT
+    assert "[[12]]" in tree.PROMPT
+
+
+def test_source_text_numbers_the_articles(settings, monkeypatch):
+    import database
+
+    async def rows(section):
+        return [(7, "Что такое ген", "Длинное объяснение"), (9, "Мутации", "Текст")]
+
+    monkeypatch.setattr(database, "get_articles_raw", rows)
+    text = run(tree.source_text())
+    assert "[[7]]" in text and "[[9]]" in text
+
+
+def test_step_replaces_the_previous_question(settings):
+    """Иначе переписка заполняется вопросами, на которые уже ответили,
+    и человек перестаёт понимать, где он находится."""
+    source = open(tree.__file__, encoding="utf-8").read()
+    assert "replace=True" in source
+    assert "edit_text" in source
 
 
 def test_draft_walking_is_owner_only(settings, monkeypatch):

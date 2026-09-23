@@ -15,10 +15,11 @@
 #
 #   • сборка запускается владелицей, а не сама;
 #   • результат показывается ей до того, как его увидят люди;
-#   • каждый лист заканчивается тем, что это не рекомендация.
+#   • модели запрещено добавлять от себя, советовать и ставить диагнозы.
 #
-# Тема медицинская, и здесь строже, чем в сводке новостей: там модель
-# пересказывает чужие заголовки, а тут говорит от лица врача.
+# Приписки «это не рекомендация» на экране нет намеренно. Объясняет врач
+# своими же словами, и извинение от бота под её текстом выглядит так,
+# будто сказанному нельзя верить.
 import html
 import json
 import logging
@@ -38,9 +39,6 @@ SECTION = "genetics"
 MAX_NODES = 14                     # больше человек не проходит
 MODEL = "claude-haiku-4-5-20251001"
 
-GUARD = ("<i>Это объяснение, а не рекомендация. Что делать в вашем "
-         "случае, решает врач-генетик.</i>")
-
 PROMPT = (
     "Ты помогаешь врачу-генетику разложить её собственные статьи в "
     "короткий разговор с читателем.\n\n"
@@ -56,8 +54,11 @@ PROMPT = (
     "— не ставь диагнозов и не оценивай риск конкретного человека;\n"
     "— пиши простыми словами: читатель не знает, что такое экзом;\n"
     "— спокойный тон, без «учёные доказали» и восклицаний.\n\n"
+    "Каждая статья помечена номером в начале — [[12]]. В каждом узле "
+    "укажи source: номер статьи, из которой он сделан.\n\n"
     "Ответь только JSON без пояснений:\n"
     '{"start": "id", "nodes": {"id": {"text": "вопрос или мысль", '
+    '"source": 12, '
     '"options": [{"label": "короткий ответ", "next": "id другого узла"}]}}}\n\n'
     "У конечного узла options пустой, а text содержит объяснение. "
     f"Узлов не больше {MAX_NODES}."
@@ -134,15 +135,20 @@ def unreachable(data: dict) -> list:
 # ---------------------------------------------------------------------
 
 async def source_text(limit: int = 12000) -> str:
-    """Статьи раздела — то, из чего собирается разговор"""
+    """Статьи раздела с номерами — то, из чего собирается разговор.
+
+    Номер нужен, чтобы узел помнил своё происхождение: у статьи есть
+    картинка, и объяснение без неё теряет половину. «Что такое ген»
+    словами — это абзац, а картинкой — секунда.
+    """
     rows = await database.get_articles_raw(SECTION)
     parts = []
     size = 0
-    for _, title, text in rows:
+    for article_id, title, text in rows:
         piece = f"{title or ''}\n{text or ''}".strip()
         if not piece:
             continue
-        parts.append(piece)
+        parts.append(f"[[{article_id}]] {piece}")
         size += len(piece)
         if size >= limit:
             break
@@ -203,7 +209,18 @@ def _node_kb(node_id: str, node: dict, draft: bool) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-async def show(message: Message, node_id: str, draft: bool = False):
+async def show(message: Message, node_id: str, draft: bool = False,
+               replace: bool = False):
+    """Показать узел.
+
+    Шаг разговора заменяет предыдущий, а не добавляет новый: иначе
+    переписка заполняется вопросами, на которые уже ответили, и человек
+    перестаёт понимать, где он находится.
+
+    Картинка мешает замене — сообщение с фотографией нельзя превратить в
+    текстовое. Поэтому узел с картинкой присылается новым сообщением, а
+    старое убирается.
+    """
     data = await tree(DRAFT_KEY if draft else TREE_KEY)
     nodes = data.get("nodes") or {}
     if node_id == "start":
@@ -214,9 +231,45 @@ async def show(message: Message, node_id: str, draft: bool = False):
         return
 
     text = html.escape(str(node.get("text", "")))
-    if not (node.get("options") or []):
-        text += f"\n\n{GUARD}"
-    await message.answer(text, reply_markup=_node_kb(node_id, node, draft))
+    markup = _node_kb(node_id, node, draft)
+    photo = await _photo_of(node)
+
+    if replace:
+        if not photo and not getattr(message, "photo", None):
+            try:
+                await message.edit_text(text, reply_markup=markup)
+                return
+            except Exception:
+                pass
+        try:
+            await message.delete()
+        except Exception:
+            # Старое сообщение удаляется не всегда: через двое суток
+            # Telegram уже не даёт. Тогда просто снимаем кнопки, чтобы на
+            # него нельзя было нажать второй раз.
+            try:
+                await message.edit_reply_markup(reply_markup=None)
+            except Exception:
+                pass
+
+    if photo:
+        await message.answer_photo(photo, caption=text[:1024],
+                                   reply_markup=markup)
+        return
+    await message.answer(text, reply_markup=markup)
+
+
+async def _photo_of(node: dict):
+    """Картинка статьи, из которой сделан узел"""
+    source = node.get("source")
+    if not source:
+        return None
+    try:
+        row = await database.get_article(int(source))
+    except (TypeError, ValueError):
+        return None
+    # get_article отдаёт (title, text, photo, video, link)
+    return row[2] if row and len(row) > 2 else None
 
 
 @router.message(F.text.regexp(r"^/(разбор|explain)\b"))
@@ -239,7 +292,7 @@ async def open_tree(call: CallbackQuery):
 @router.callback_query(F.data.startswith("tre_"))
 async def step(call: CallbackQuery):
     await call.answer()
-    await show(call.message, call.data[len("tre_"):])
+    await show(call.message, call.data[len("tre_"):], replace=True)
 
 
 @router.callback_query(F.data.startswith("trd_"))
@@ -248,7 +301,7 @@ async def step_draft(call: CallbackQuery):
         await call.answer()
         return
     await call.answer()
-    await show(call.message, call.data[len("trd_"):], draft=True)
+    await show(call.message, call.data[len("trd_"):], draft=True, replace=True)
 
 
 # ---------------------------------------------------------------------
