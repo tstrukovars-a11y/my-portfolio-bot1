@@ -117,7 +117,10 @@ def test_the_rest_is_one_discreet_line(quiet_db):
     assert "всё остальное" in last.text.lower()
 
 
-def test_quiet_puts_the_reason_first(quiet_db, monkeypatch):
+def test_quiet_sends_nothing_extra(quiet_db, monkeypatch):
+    """Человек нажал «напомнить о матче» и получил погоду — значит, его
+    снова не услышали. Подтверждение ему уже пришло от теннисного
+    модуля; всё остальное лишнее."""
     import database
 
     async def saved(user_id):
@@ -133,9 +136,8 @@ def test_quiet_puts_the_reason_first(quiet_db, monkeypatch):
             self.said.append(text)
 
     message = Msg()
-    run(personal.quiet(message, User(), "🔔 Напоминание поставлено."))
-    assert message.said[0].startswith("🔔 Напоминание поставлено.")
-    assert "Ваше" in message.said[0]
+    run(personal.quiet(message, User()))
+    assert message.said == []
 
 
 # --- матч не ведёт в меню ---------------------------------------------
@@ -144,7 +146,7 @@ def test_match_start_stops_the_tour():
     """Подписался — и остался с подпиской, а не с экскурсией по боту."""
     source = open("tennis_alerts.py", encoding="utf-8").read()
     start = source.index("async def start_with_match")
-    block = source[start:start + 700]
+    block = source[start:start + 900]
     assert "personal.quiet" in block
     assert "SkipHandler" in block, "новый человек без подписки всё же должен " \
                                    "попадать на общий вход"

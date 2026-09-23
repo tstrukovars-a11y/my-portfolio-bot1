@@ -84,21 +84,23 @@ async def card(user_id: int) -> tuple:
         [InlineKeyboardButton(text="Посмотреть всё остальное",
                               callback_data="go_home")],
     ]
+
     return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-async def quiet(message: Message, user, note: str = ""):
-    """Короткий ответ пришедшему по ссылке.
+async def quiet(message: Message, user):
+    """Пришедшему по ссылке — ничего сверх того, за чем он пришёл.
 
-    Note — то, ради чего он пришёл: «напоминание поставлено». Экран под
-    ним показывает, что у него есть, и молчит обо всём прочем.
+    Первая версия показывала здесь личный экран: погоду, подписки,
+    счётчик матчей. Это оказалось тем же меню, только короче. Человек
+    нажал «напомнить о матче» и получил погоду — значит, его снова не
+    услышали.
+
+    Поэтому здесь остаётся одно невидимое действие: запомнить язык,
+    чтобы следующее сообщение пришло на нужном. Личный экран никуда не
+    делся — он открывается по /моё, когда человек сам захочет.
     """
     await ensure_language(user)
-    text, markup = await card(user.id)
-    if note:
-        text = f"{note}\n\n{text}"
-    await message.answer(text, reply_markup=markup,
-                         disable_web_page_preview=True)
 
 
 @router.message(F.text.regexp(r"^/(моё|мое|me)\b"))

@@ -573,6 +573,9 @@ async def start_with_match(message: Message, bot: Bot):
     if done:
         # Дальше общий /start не зовём: человек пришёл за напоминанием,
         # а не за выбором языка и обзором разделов.
+        # Подтверждение человек уже получил — больше ему ничего не
+        # присылаем. Язык запоминаем молча, чтобы следующее сообщение
+        # пришло на нужном.
         import personal
         await personal.quiet(message, message.from_user)
         return
