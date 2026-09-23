@@ -473,6 +473,9 @@ def get_genetics_hub_menu(lang):
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=k, callback_data="genetics_channel_base")],
         [InlineKeyboardButton(text=n, callback_data="genetics_news")],
+        [InlineKeyboardButton(
+            text="🌳 Разбор вопросами" if lang == "ru" else "🌳 Guided answers",
+            callback_data="tree_open")],
         [InlineKeyboardButton(text=o, callback_data="genetics_order")],
         [InlineKeyboardButton(text=label(BACK_TEXTS, lang), callback_data="menu_intellect")]
     ])

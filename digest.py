@@ -1179,6 +1179,20 @@ async def _genetics_text() -> str:
     return "\n".join(lines[:GEN_HEADLINES * 3])
 
 
+async def _explain_row():
+    """Кнопка «что это значит» — там, где вопрос уже возник.
+
+    Разбор ведёт от новости к объяснению; предлагать его на пустом месте
+    бессмысленно, а сразу после заголовка про мутацию — ровно вовремя.
+    """
+    import tree
+    if not await tree.tree():
+        return None
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🌳 Что это значит?",
+                             callback_data="tree_open")]])
+
+
 async def gen_alert(bot) -> int:
     """Сказать владелице лично о том, что она просила не пропускать.
 
@@ -1215,7 +1229,8 @@ async def gen_alert(bot) -> int:
 
     try:
         await bot.send_message(config.ADMIN_ID, "\n".join(body),
-                               disable_web_page_preview=True)
+                               disable_web_page_preview=True,
+                               reply_markup=await _explain_row())
     except Exception as e:
         logging.warning(f"Метки генетики не отправились: {e}")
         return 0
