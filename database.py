@@ -4200,6 +4200,20 @@ async def count_puzzles() -> int:
         return 0
 
 
+async def set_puzzle_answer(puzzle_id: int, index: int) -> bool:
+    """Поправить верный вариант задачи — по номеру с нуля"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"UPDATE {SCHEMA}.puzzles SET correct_option_id = $2 "
+                "WHERE id = $1", puzzle_id, index)
+        return True
+    except Exception as e:
+        logging.error(f"Верный ответ не записался: {e}")
+        return False
+
+
 async def save_puzzle_answer(user_id: int, puzzle_id: int, is_correct: bool,
                              choice: int = None):
     """Фиксирует один ответ пользователя"""

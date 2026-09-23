@@ -27,16 +27,39 @@ TAIL = ("Нажмите вариант — скажу, верно ли. Отве
         "а разбор выйдет завтра вместе со следующей задачей.")
 
 LETTERS = "АБВГДЕ"          # варианты подписываем буквами: текст не влезает
-MAX_OPTIONS = 6
+# Десять — предел Telegram для опроса, и столько же кнопок мы рисуем.
+# Шесть было мало: задача с семью вариантами выходила обрезанной, и если
+# верный ответ стоял седьмым, нажать его было физически нельзя — любой
+# ответ считался неверным. Человек знал ответ и получал «мимо».
+MAX_OPTIONS = 10
 
 
 # =====================================================================
 # ПУБЛИКАЦИЯ
 # =====================================================================
 
+def broken(puzzle) -> str:
+    """Почему задачу нельзя выпускать. Пусто — значит можно.
+
+    Проверяем до публикации: задача, где верный ответ не показан или
+    указан за пределами списка, делает неправым каждого, кто ответит.
+    """
+    options = puzzle.get("options") or []
+    if len(options) < 2:
+        return "меньше двух вариантов"
+    index = puzzle.get("correct_option_id")
+    if index is None or not isinstance(index, int):
+        return "не указан верный ответ"
+    if not 0 <= index < len(options):
+        return f"верный ответ №{index} вне списка из {len(options)}"
+    if index >= MAX_OPTIONS:
+        return f"верный ответ №{index + 1} не поместится в {MAX_OPTIONS} кнопок"
+    return ""
+
+
 async def _pick():
     """Задача, которой ещё не было в канале. Кончились — берём давнюю."""
-    bank = await database.get_all_puzzles()
+    bank = [p for p in await database.get_all_puzzles() if not broken(p)]
     if not bank:
         return None
     used = await database.published_puzzle_ids()
@@ -229,4 +252,73 @@ async def stats_command(message: Message):
         people = await database.puzzle_people()
         lines.append(f"<b>Участников:</b> {people['people']}, "
                      f"из них вернулись больше раза: {people['repeat']}")
+    await message.answer("\n".join(lines))
+
+
+@router.message(F.text.regexp(r"^/задача"))
+async def puzzle_command(message: Message):
+    """Посмотреть задачу целиком и поправить верный ответ.
+
+    Ошибку в банке видно только так: в канале она выглядит как «вы не
+    угадали», и человек винит себя, а не задачу.
+    """
+    if not config.is_admin(message.from_user.id):
+        return
+
+    parts = (message.text or "").split()
+    bank = await database.get_all_puzzles()
+
+    if len(parts) < 2:
+        bad = [(p, broken(p)) for p in bank]
+        bad = [(p, why) for p, why in bad if why]
+        lines = [f"🧩 <b>Банк задач</b>: {len(bank)}"]
+        if bad:
+            lines += ["", f"<b>Не выпускаются ({len(bad)}):</b>"]
+            lines += [f"• №{p['id']} — {why}" for p, why in bad[:10]]
+        lines += ["", "Посмотреть: <code>/задача 7</code>",
+                  "Поправить ответ: <code>/задача 7 = 2</code>"]
+        await message.answer("\n".join(lines))
+        return
+
+    try:
+        puzzle_id = int(parts[1])
+    except ValueError:
+        await message.answer("Нужен номер задачи: <code>/задача 7</code>")
+        return
+
+    puzzle = next((p for p in bank if p["id"] == puzzle_id), None)
+    if not puzzle:
+        await message.answer(f"Задачи №{puzzle_id} в банке нет.")
+        return
+
+    if "=" in (message.text or ""):
+        tail = message.text.split("=", 1)[1].strip()
+        if not tail.isdigit():
+            await message.answer("Нужен номер варианта: <code>/задача 7 = 2</code>")
+            return
+        number = int(tail)
+        if not 1 <= number <= len(puzzle["options"]):
+            await message.answer(
+                f"Вариантов всего {len(puzzle['options'])}.")
+            return
+        if await database.set_puzzle_answer(puzzle_id, number - 1):
+            await message.answer(
+                f"✅ Верный ответ задачи №{puzzle_id}: "
+                f"«{html.escape(puzzle['options'][number - 1])}».")
+        else:
+            await message.answer("⚠️ Не записалось. Проверьте базу: /db")
+        return
+
+    lines = [f"🧩 <b>Задача №{puzzle_id}</b>", "",
+             html.escape(puzzle["question"]), ""]
+    for i, option in enumerate(puzzle["options"]):
+        mark = " ✅" if i == puzzle["correct_option_id"] else ""
+        lines.append(f"{i + 1}. {html.escape(option)}{mark}")
+    note = (puzzle.get("explanation") or "").strip()
+    lines += ["", f"<i>{html.escape(note)}</i>" if note else "<i>Разбора нет</i>"]
+    why = broken(puzzle)
+    if why:
+        lines += ["", f"⚠️ Не выпускается: {why}"]
+    lines += ["", "Поправить: <code>/задача "
+              f"{puzzle_id} = номер</code>"]
     await message.answer("\n".join(lines))
