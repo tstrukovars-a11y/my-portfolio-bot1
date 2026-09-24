@@ -43,8 +43,11 @@ TALL = {
     # ответа и вложенную ссылку. Всё, что попадёт в эти полосы, читатель
     # не увидит вовсе. Поэтому содержимое живёт между ними, а не по
     # краям картинки.
-    "story": {"sign": 0.135, "title": 0.185, "watch": 0.42,
-              "size": 0.48, "cta": 0.78, "gap": 0.055},
+    # reserve — пустая полоса внизу под квадратный стикер ссылки на
+    # App Store. Его вставляют поверх картинки, и всё, что окажется под
+    # ним, пропадёт: рисовать там что-либо значит рисовать в мусор.
+    "story": {"sign": 0.125, "title": 0.185, "watch": 0.42,
+              "size": 0.48, "cta": 0.78, "gap": 0.045, "reserve": 0.20},
 }
 SIZE = SHAPES["post"]
 
@@ -203,7 +206,7 @@ def pill(draw, x: int, y: int, text: str, size: int, colour=FRESH):
 def card(title: str, subtitle: str = "", note: str = "",
          name: str = "card.png", face: tuple = None,
          shape: str = "post", lang: str = "ru", author: str = "",
-         style: str = "ad", label: str = "") -> str:
+         style: str = "ad", label: str = "", app: str = "") -> str:
     """Карточка к посту в двух регистрах.
 
     style="ad" — реклама: внизу красная кнопка, которая зовёт нажать.
@@ -239,36 +242,30 @@ def card(title: str, subtitle: str = "", note: str = "",
     # читали раньше, чем описание.
     head_y = size[1] * plan["sign"] if tall else 70
     if author:
-        # Имя — не подпись мелким шрифтом, а марка. Дорогое впечатление
-        # дают три вещи: воздух между буквами, короткая черта над именем
-        # и цвет, который на карточке больше нигде не повторяется.
+        # Оба имени — равные. Одно набрано мельче и тише, и читатель
+        # понимает это буквально: настоящее сверху, второстепенное снизу.
+        # У неё это не так — просто в двух странах её зовут по-разному.
         #
-        # Двойное имя разводим на две строки: «как знают в мире» —
-        # вразрядку акцентом, «как знают здесь» — ниже и тише. В одну
-        # строку с промежутками оно расползается на всю ширину и
-        # перестаёт читаться как имя.
-        first, _, second = author.partition("·")
+        # Дорогое впечатление даёт не размер, а воздух: разрядка, короткая
+        # черта сверху и цвет, который на карточке больше нигде не
+        # повторяется.
         sign = font("Arial Bold.ttf", 30 if tall else 25)
-
         rule = int(size[0] * (0.055 if tall else 0.045))
         draw.rectangle([margin, head_y + 6, margin + rule, head_y + 10],
                        fill=ACCENT)
         head_y += 30 if tall else 24
 
-        draw.text((margin, head_y), " ".join(first.strip().upper()),
-                  font=sign, fill=ACCENT)
-        head_y += sign.size * 1.5
+        for part in [p.strip() for p in author.split("·") if p.strip()]:
+            draw.text((margin, head_y), " ".join(part.upper()),
+                      font=sign, fill=ACCENT)
+            head_y += sign.size * 1.45
 
-        if second.strip():
-            quiet = font("Arial.ttf", 26 if tall else 22)
-            draw.text((margin, head_y), second.strip(), font=quiet, fill=DIM)
-            head_y += quiet.size * 1.2
+    if label:
+        head_y = tag(draw, margin, int(head_y) + 10, label,
+                     26 if tall else 22)
 
     if tall:
         width = size[0] - margin * 2
-        if label:
-            head_y = tag(draw, margin, int(head_y) + 10, label,
-                         26 if tall else 22)
         y = max(size[1] * plan["title"], head_y + (46 if tall else 34))
         for line in wrap(draw, title, big, width):
             draw.text((margin, y), line, font=big, fill=INK)
@@ -280,24 +277,38 @@ def card(title: str, subtitle: str = "", note: str = "",
                 draw.text((margin, y), line, font=mid, fill=DIM)
                 y += mid.size * 1.3
 
+        if app:
+            # Название приложения — отдельной строкой и крупно. Без него
+            # человек запоминает, что «кто-то сделал счётчик», и не может
+            # найти его в магазине.
+            y += 18
+            brand = font("Arial Bold.ttf", 58 if tall else 46)
+            draw.text((margin, y), app, font=brand, fill=INK)
+            y += brand.size * 1.35
+
+        # Нижняя граница содержимого: под ней место для стикера ссылки.
+        limit = size[1] * (1 - plan.get("reserve", 0.06))
+        cta_h = int(46 * 1.2 + 46 * 0.55 * 2)
+        cta_y = int(limit - cta_h)
+
         bottom = None
         if face:
             # Экран ставим ниже текста, а не в заданную точку: заголовок
             # в три строки длиннее, чем в две, и жёсткая координата
             # загоняет часы прямо на буквы.
-            top = max(int(size[1] * plan["watch"]), int(y + size[1] * 0.035))
+            top = max(int(size[1] * plan["watch"]), int(y + size[1] * 0.03))
             screen = int(size[0] * plan["size"])
-            room = int(size[1] * plan["cta"]) - int(size[1] * plan["gap"]) - top
-            screen = max(260, min(screen, room))
+            room = cta_y - int(size[1] * plan["gap"]) - top
+            # Ниже трёхсот точек экран часов перестаёт читаться: на
+            # клавишах не разобрать ни счёта, ни подписей.
+            screen = max(300, min(screen, room))
             watch(draw, (size[0] - screen) // 2, top, screen,
                   face[0], face[1], lang)
             bottom = top + screen
 
         if note:
-            # Кнопку ставим от нижнего края экрана, а не по доле высоты:
-            # иначе при другом размере часов она в него упирается, и это
-            # видно только на готовой картинке.
-            cta_y = int(size[1] * plan["cta"])
+            # Кнопка стоит над зарезервированной полосой и не ближе
+            # заданного просвета к экрану часов.
             if bottom is not None:
                 cta_y = max(cta_y, bottom + int(size[1] * plan["gap"]))
             if news:
@@ -308,9 +319,6 @@ def card(title: str, subtitle: str = "", note: str = "",
     else:
         screen = 420 if face else 0
         width = size[0] - margin * 2 - (screen + 40 if face else 0)
-        if label:
-            head_y = tag(draw, margin, int(head_y) + 8, label,
-                         26 if tall else 22)
         y = max(150, head_y + 34)
         if face:
             watch(draw, size[0] - margin - screen, 160, screen,
@@ -325,6 +333,11 @@ def card(title: str, subtitle: str = "", note: str = "",
             for line in wrap(draw, subtitle, mid, width):
                 draw.text((margin, y), line, font=mid, fill=DIM)
                 y += 52
+
+        if app:
+            y += 14
+            brand = font("Arial Bold.ttf", 44)
+            draw.text((margin, y), app, font=brand, fill=INK)
 
         if note:
             if news:
@@ -355,11 +368,13 @@ def main() -> int:
     parser.add_argument("--style", default="ad", choices=("ad", "news"),
                         help="ad — кнопка внизу, news — метка вверху")
     parser.add_argument("--label", default="", help="текст метки: «НОВОЕ»")
+    parser.add_argument("--app", default="", help="название приложения")
     args = parser.parse_args()
 
     face = (args.score, args.points) if args.score and args.points else None
     print(card(args.title, args.sub, args.cta, args.name, face,
-               args.shape, args.lang, args.author, args.style, args.label))
+               args.shape, args.lang, args.author, args.style, args.label,
+               args.app))
     return 0
 
 
