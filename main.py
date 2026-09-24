@@ -42,6 +42,7 @@ import xo
 import rally
 import access
 import courses
+import urgent
 import personal
 import indices
 import tree
@@ -635,6 +636,7 @@ async def main():
     dp.include_router(lang_review.router)
     dp.include_router(access.router)
     dp.include_router(subs.router)
+    dp.include_router(urgent.router)
     dp.include_router(personal.router)
     dp.include_router(tree.router)
     dp.include_router(courses.router)
