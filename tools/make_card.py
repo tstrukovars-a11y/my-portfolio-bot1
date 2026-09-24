@@ -196,9 +196,14 @@ def card(title: str, subtitle: str = "", note: str = "",
     # приложение»: у него есть человек, и человек хочет, чтобы его имя
     # читали раньше, чем описание.
     if author:
+        # Вразрядку — только короткое имя. Двойная подпись «как знают
+        # там и как знают здесь» с промежутками расползается на всю
+        # ширину и перестаёт читаться как имя.
         sign = font("Arial Bold.ttf", 28 if tall else 24)
-        draw.text((margin, 110 if tall else 70),
-                  " ".join(author.upper()), font=sign, fill=ACCENT)
+        text = author.upper()
+        if len(text) <= 22:
+            text = " ".join(text)
+        draw.text((margin, 110 if tall else 70), text, font=sign, fill=ACCENT)
 
     if tall:
         width = size[0] - margin * 2
