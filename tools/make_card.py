@@ -167,6 +167,25 @@ def watch(draw, x: int, y: int, size: int, top: str, bottom: str,
             colour, label, small, ink)
 
 
+def tag(draw, x: int, y: int, text: str, size: int, colour=FRESH) -> int:
+    """Метка новости: маленькая, вверху, как рубрика в газете.
+
+    Отличие от кнопки принципиальное. Кнопка зовёт нажать — это реклама.
+    Метка сообщает, что перед вами событие, и не просит ничего. Одна и
+    та же вещь с кнопкой продаётся, а с меткой рассказывается.
+    """
+    typeface = font("Arial Bold.ttf", size)
+    spaced = " ".join(text.upper())
+    width = draw.textlength(spaced, font=typeface)
+    pad_x, pad_y = size * 0.7, size * 0.42
+    draw.rounded_rectangle([x, y, x + width + pad_x * 2,
+                            y + size * 1.2 + pad_y * 2],
+                           radius=size * 0.45, fill=colour)
+    draw.text((x + pad_x, y + pad_y), spaced, font=typeface,
+              fill=(255, 255, 255))
+    return int(y + size * 1.2 + pad_y * 2)
+
+
 def pill(draw, x: int, y: int, text: str, size: int, colour=FRESH):
     """Кнопка-призыв на самой карточке: глаз цепляется за цвет раньше,
     чем читает буквы, и понимает, что действие бесплатное."""
@@ -183,12 +202,19 @@ def pill(draw, x: int, y: int, text: str, size: int, colour=FRESH):
 
 def card(title: str, subtitle: str = "", note: str = "",
          name: str = "card.png", face: tuple = None,
-         shape: str = "post", lang: str = "ru", author: str = "") -> str:
-    """Рекламная карточка: заголовок, экран приложения и призыв.
+         shape: str = "post", lang: str = "ru", author: str = "",
+         style: str = "ad", label: str = "") -> str:
+    """Карточка к посту в двух регистрах.
 
-    Note здесь — текст на красной кнопке, а не подпись мелким шрифтом:
-    карточка должна звать, а не сообщать.
+    style="ad" — реклама: внизу красная кнопка, которая зовёт нажать.
+    style="news" — новость: вверху метка вроде «НОВОЕ», внизу адрес
+    обычной строкой. Ничего не просит, просто сообщает.
+
+    Разница не в оформлении, а в том, как человек это прочтёт: кнопка
+    говорит «купи», метка — «случилось». Для собственного канала второе
+    честнее: читатель пришёл за журналом, а не за витриной.
     """
+    news = style == "news"
     size = SHAPES.get(shape, SHAPES["post"])
     tall = shape in TALL
     plan = TALL.get(shape, TALL["story"])
@@ -211,6 +237,11 @@ def card(title: str, subtitle: str = "", note: str = "",
     # Подпись автора — над заголовком и вразрядку. Это не «ещё одно
     # приложение»: у него есть человек, и человек хочет, чтобы его имя
     # читали раньше, чем описание.
+    head_y = size[1] * plan["sign"] if tall else 70
+    if label:
+        head_y = tag(draw, margin, int(head_y), label,
+                     26 if tall else 22) + (18 if tall else 14)
+
     if author:
         # Вразрядку — только короткое имя. Двойная подпись «как знают
         # там и как знают здесь» с промежутками расползается на всю
@@ -219,12 +250,12 @@ def card(title: str, subtitle: str = "", note: str = "",
         text = author.upper()
         if len(text) <= 22:
             text = " ".join(text)
-        draw.text((margin, size[1] * plan["sign"] if tall else 70),
-                  text, font=sign, fill=ACCENT)
+        draw.text((margin, head_y), text, font=sign,
+                  fill=DIM if label else ACCENT)
 
     if tall:
         width = size[0] - margin * 2
-        y = size[1] * plan["title"]
+        y = max(size[1] * plan["title"], head_y + (70 if author else 40))
         for line in wrap(draw, title, big, width):
             draw.text((margin, y), line, font=big, fill=INK)
             y += big.size * 1.16
@@ -237,8 +268,13 @@ def card(title: str, subtitle: str = "", note: str = "",
 
         bottom = None
         if face:
+            # Экран ставим ниже текста, а не в заданную точку: заголовок
+            # в три строки длиннее, чем в две, и жёсткая координата
+            # загоняет часы прямо на буквы.
+            top = max(int(size[1] * plan["watch"]), int(y + size[1] * 0.035))
             screen = int(size[0] * plan["size"])
-            top = int(size[1] * plan["watch"])
+            room = int(size[1] * plan["cta"]) - int(size[1] * plan["gap"]) - top
+            screen = max(260, min(screen, room))
             watch(draw, (size[0] - screen) // 2, top, screen,
                   face[0], face[1], lang)
             bottom = top + screen
@@ -250,11 +286,15 @@ def card(title: str, subtitle: str = "", note: str = "",
             cta_y = int(size[1] * plan["cta"])
             if bottom is not None:
                 cta_y = max(cta_y, bottom + int(size[1] * plan["gap"]))
-            pill(draw, margin, cta_y, note, 46)
+            if news:
+                where = font("Arial.ttf", 40)
+                draw.text((margin, cta_y + 14), note, font=where, fill=ACCENT)
+            else:
+                pill(draw, margin, cta_y, note, 46)
     else:
         screen = 420 if face else 0
         width = size[0] - margin * 2 - (screen + 40 if face else 0)
-        y = 150
+        y = max(150, head_y + (60 if author else 30))
         if face:
             watch(draw, size[0] - margin - screen, 160, screen,
                   face[0], face[1], lang)
@@ -270,7 +310,11 @@ def card(title: str, subtitle: str = "", note: str = "",
                 y += 52
 
         if note:
-            pill(draw, margin, size[1] - 150, note, 42)
+            if news:
+                draw.text((margin, size[1] - 120), note,
+                          font=font("Arial.ttf", 36), fill=ACCENT)
+            else:
+                pill(draw, margin, size[1] - 150, note, 42)
 
     os.makedirs(OUT, exist_ok=True)
     path = os.path.join(OUT, name)
@@ -291,11 +335,14 @@ def main() -> int:
     parser.add_argument("--shape", default="post", choices=list(SHAPES))
     parser.add_argument("--lang", default="ru", choices=list(LABELS))
     parser.add_argument("--author", default="")
+    parser.add_argument("--style", default="ad", choices=("ad", "news"),
+                        help="ad — кнопка внизу, news — метка вверху")
+    parser.add_argument("--label", default="", help="текст метки: «НОВОЕ»")
     args = parser.parse_args()
 
     face = (args.score, args.points) if args.score and args.points else None
     print(card(args.title, args.sub, args.cta, args.name, face,
-               args.shape, args.lang, args.author))
+               args.shape, args.lang, args.author, args.style, args.label))
     return 0
 
 
