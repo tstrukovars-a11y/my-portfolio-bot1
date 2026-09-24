@@ -37,14 +37,14 @@ SHAPES = {
 # отличаются на шестьсот точек, и подписанные вручную координаты
 # развалились бы на одном из них.
 TALL = {
-    "feed": {"sign": 0.055, "title": 0.105, "watch": 0.44,
-             "size": 0.46, "cta": 0.855},
+    "feed": {"sign": 0.055, "title": 0.105, "watch": 0.42,
+             "size": 0.44, "cta": 0.86, "gap": 0.055},
     # История: сверху Telegram рисует аватар, имя и время, снизу — поле
     # ответа и вложенную ссылку. Всё, что попадёт в эти полосы, читатель
     # не увидит вовсе. Поэтому содержимое живёт между ними, а не по
     # краям картинки.
-    "story": {"sign": 0.135, "title": 0.185, "watch": 0.45,
-              "size": 0.50, "cta": 0.735},
+    "story": {"sign": 0.135, "title": 0.185, "watch": 0.42,
+              "size": 0.48, "cta": 0.78, "gap": 0.055},
 }
 SIZE = SHAPES["post"]
 
@@ -235,13 +235,22 @@ def card(title: str, subtitle: str = "", note: str = "",
                 draw.text((margin, y), line, font=mid, fill=DIM)
                 y += mid.size * 1.3
 
+        bottom = None
         if face:
             screen = int(size[0] * plan["size"])
-            watch(draw, (size[0] - screen) // 2, int(size[1] * plan["watch"]),
-                  screen, face[0], face[1], lang)
+            top = int(size[1] * plan["watch"])
+            watch(draw, (size[0] - screen) // 2, top, screen,
+                  face[0], face[1], lang)
+            bottom = top + screen
 
         if note:
-            pill(draw, margin, int(size[1] * plan["cta"]), note, 46)
+            # Кнопку ставим от нижнего края экрана, а не по доле высоты:
+            # иначе при другом размере часов она в него упирается, и это
+            # видно только на готовой картинке.
+            cta_y = int(size[1] * plan["cta"])
+            if bottom is not None:
+                cta_y = max(cta_y, bottom + int(size[1] * plan["gap"]))
+            pill(draw, margin, cta_y, note, 46)
     else:
         screen = 420 if face else 0
         width = size[0] - margin * 2 - (screen + 40 if face else 0)
