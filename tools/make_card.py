@@ -49,6 +49,14 @@ FRESH = (240, 50, 80)        # «Новая игра» — единственн�
 MUTED = (40, 42, 48)         # «Отменить»
 GHOST = (26, 28, 33)         # «Считать без бота», приглушённая
 
+# Подписи на самом экране часов. В английской рекламе русские кнопки
+# выглядят чужими: человек решает, что приложение не для него.
+LABELS = {
+    "ru": ("Отменить", "Новая игра", "Считать без бота"),
+    "en": ("Undo", "New game", "Count without bot"),
+    "fr": ("Annuler", "Nouvelle partie", "Compter sans bot"),
+}
+
 FONTS = "/System/Library/Fonts/Supplemental/"
 
 
@@ -97,7 +105,8 @@ def key(draw, box, colour, text, typeface, ink=(255, 255, 255)):
               text, font=typeface, fill=ink)
 
 
-def watch(draw, x: int, y: int, size: int, top: str, bottom: str):
+def watch(draw, x: int, y: int, size: int, top: str, bottom: str,
+          lang: str = "ru"):
     """Экран часов целиком, со всеми клавишами.
 
     Цвета не украшение, а смысл: зелёная — своё очко, голубая — чужое,
@@ -134,9 +143,9 @@ def watch(draw, x: int, y: int, size: int, top: str, bottom: str):
     bar_h = size * 0.10
     step = bar_h + size * 0.032
     small = font("Arial.ttf", int(size * 0.072))
-    rows = [("Отменить", MUTED, DIM),
-            ("Новая игра", FRESH, (255, 255, 255)),
-            ("Считать без бота", GHOST, (96, 100, 112))]
+    names = LABELS.get(lang, LABELS["ru"])
+    rows = list(zip(names, (MUTED, FRESH, GHOST),
+                    (DIM, (255, 255, 255), (96, 100, 112))))
     for i, (label, colour, ink) in enumerate(rows):
         bar_y = key_y + key_h + size * 0.045 + i * step
         key(draw, [x + pad, bar_y, x + size - pad, bar_y + bar_h],
@@ -159,7 +168,7 @@ def pill(draw, x: int, y: int, text: str, size: int, colour=FRESH):
 
 def card(title: str, subtitle: str = "", note: str = "",
          name: str = "card.png", face: tuple = None,
-         shape: str = "post") -> str:
+         shape: str = "post", lang: str = "ru", author: str = "") -> str:
     """Рекламная карточка: заголовок, экран приложения и призыв.
 
     Note здесь — текст на красной кнопке, а не подпись мелким шрифтом:
@@ -183,9 +192,17 @@ def card(title: str, subtitle: str = "", note: str = "",
     big = font("Arial Bold.ttf", 96 if tall else 80)
     mid = font("Arial.ttf", 46 if tall else 38)
 
+    # Подпись автора — над заголовком и вразрядку. Это не «ещё одно
+    # приложение»: у него есть человек, и человек хочет, чтобы его имя
+    # читали раньше, чем описание.
+    if author:
+        sign = font("Arial Bold.ttf", 28 if tall else 24)
+        draw.text((margin, 110 if tall else 70),
+                  " ".join(author.upper()), font=sign, fill=ACCENT)
+
     if tall:
         width = size[0] - margin * 2
-        y = 190
+        y = 210
         for line in wrap(draw, title, big, width):
             draw.text((margin, y), line, font=big, fill=INK)
             y += 112
@@ -197,17 +214,17 @@ def card(title: str, subtitle: str = "", note: str = "",
                 y += 60
 
         if face:
-            watch(draw, (size[0] - 560) // 2, 760, 560, face[0], face[1])
+            watch(draw, (size[0] - 560) // 2, 760, 560, face[0], face[1], lang)
 
         if note:
             pill(draw, margin, 1620, note, 46)
     else:
         screen = 420 if face else 0
         width = size[0] - margin * 2 - (screen + 40 if face else 0)
-        y = 130
+        y = 150
         if face:
-            watch(draw, size[0] - margin - screen, 150, screen,
-                  face[0], face[1])
+            watch(draw, size[0] - margin - screen, 160, screen,
+                  face[0], face[1], lang)
 
         for line in wrap(draw, title, big, width):
             draw.text((margin, y), line, font=big, fill=INK)
@@ -229,18 +246,23 @@ def card(title: str, subtitle: str = "", note: str = "",
 
 
 def main() -> int:
-    args = sys.argv[1:]
-    if not args:
-        print('Нужен заголовок: python3 tools/make_card.py "Текст" "Подзаголовок"')
-        return 1
-    title = args[0]
-    subtitle = args[1] if len(args) > 1 else ""
-    note = args[2] if len(args) > 2 else ""
-    name = args[3] if len(args) > 3 else "card.png"
-    # Пятым — строка геймов, шестым — два очка через «|»: «30|15».
-    face = (args[4], args[5]) if len(args) > 5 else None
-    shape = args[6] if len(args) > 6 else "post"
-    print(card(title, subtitle, note, name, face, shape))
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Карточка к посту")
+    parser.add_argument("--title", required=True)
+    parser.add_argument("--sub", default="")
+    parser.add_argument("--cta", default="", help="текст на красной кнопке")
+    parser.add_argument("--name", default="card.png")
+    parser.add_argument("--score", default="", help="строка геймов: «4 : 3»")
+    parser.add_argument("--points", default="", help="очки через |: «30|15»")
+    parser.add_argument("--shape", default="post", choices=list(SHAPES))
+    parser.add_argument("--lang", default="ru", choices=list(LABELS))
+    parser.add_argument("--author", default="")
+    args = parser.parse_args()
+
+    face = (args.score, args.points) if args.score and args.points else None
+    print(card(args.title, args.sub, args.cta, args.name, face,
+               args.shape, args.lang, args.author))
     return 0
 
 
