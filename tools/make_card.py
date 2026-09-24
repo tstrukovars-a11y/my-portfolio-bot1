@@ -284,8 +284,11 @@ def card(title: str, subtitle: str = "", note: str = "",
             # человек запоминает, что «кто-то сделал счётчик», и не может
             # найти его в магазине.
             y += 18
+            # Голубой — тот же, что на клавише очка соперника. Название
+            # перестаёт быть строкой текста и становится частью экрана:
+            # человек видит его на карточке и потом узнаёт в магазине.
             brand = font("Arial Bold.ttf", 58 if tall else 46)
-            draw.text((margin, y), app, font=brand, fill=INK)
+            draw.text((margin, y), app, font=brand, fill=THEIRS)
             y += brand.size * 1.35
 
         # Нижняя граница содержимого: под ней место для стикера ссылки.
@@ -339,7 +342,7 @@ def card(title: str, subtitle: str = "", note: str = "",
         if app:
             y += 14
             brand = font("Arial Bold.ttf", 44)
-            draw.text((margin, y), app, font=brand, fill=INK)
+            draw.text((margin, y), app, font=brand, fill=THEIRS)
 
         if note:
             if news:
