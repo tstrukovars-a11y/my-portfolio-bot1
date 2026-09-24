@@ -238,24 +238,38 @@ def card(title: str, subtitle: str = "", note: str = "",
     # приложение»: у него есть человек, и человек хочет, чтобы его имя
     # читали раньше, чем описание.
     head_y = size[1] * plan["sign"] if tall else 70
-    if label:
-        head_y = tag(draw, margin, int(head_y), label,
-                     26 if tall else 22) + (18 if tall else 14)
-
     if author:
-        # Вразрядку — только короткое имя. Двойная подпись «как знают
-        # там и как знают здесь» с промежутками расползается на всю
-        # ширину и перестаёт читаться как имя.
-        sign = font("Arial Bold.ttf", 28 if tall else 24)
-        text = author.upper()
-        if len(text) <= 22:
-            text = " ".join(text)
-        draw.text((margin, head_y), text, font=sign,
-                  fill=DIM if label else ACCENT)
+        # Имя — не подпись мелким шрифтом, а марка. Дорогое впечатление
+        # дают три вещи: воздух между буквами, короткая черта над именем
+        # и цвет, который на карточке больше нигде не повторяется.
+        #
+        # Двойное имя разводим на две строки: «как знают в мире» —
+        # вразрядку акцентом, «как знают здесь» — ниже и тише. В одну
+        # строку с промежутками оно расползается на всю ширину и
+        # перестаёт читаться как имя.
+        first, _, second = author.partition("·")
+        sign = font("Arial Bold.ttf", 30 if tall else 25)
+
+        rule = int(size[0] * (0.055 if tall else 0.045))
+        draw.rectangle([margin, head_y + 6, margin + rule, head_y + 10],
+                       fill=ACCENT)
+        head_y += 30 if tall else 24
+
+        draw.text((margin, head_y), " ".join(first.strip().upper()),
+                  font=sign, fill=ACCENT)
+        head_y += sign.size * 1.5
+
+        if second.strip():
+            quiet = font("Arial.ttf", 26 if tall else 22)
+            draw.text((margin, head_y), second.strip(), font=quiet, fill=DIM)
+            head_y += quiet.size * 1.2
 
     if tall:
         width = size[0] - margin * 2
-        y = max(size[1] * plan["title"], head_y + (70 if author else 40))
+        if label:
+            head_y = tag(draw, margin, int(head_y) + 10, label,
+                         26 if tall else 22)
+        y = max(size[1] * plan["title"], head_y + (46 if tall else 34))
         for line in wrap(draw, title, big, width):
             draw.text((margin, y), line, font=big, fill=INK)
             y += big.size * 1.16
@@ -294,7 +308,10 @@ def card(title: str, subtitle: str = "", note: str = "",
     else:
         screen = 420 if face else 0
         width = size[0] - margin * 2 - (screen + 40 if face else 0)
-        y = max(150, head_y + (60 if author else 30))
+        if label:
+            head_y = tag(draw, margin, int(head_y) + 8, label,
+                         26 if tall else 22)
+        y = max(150, head_y + 34)
         if face:
             watch(draw, size[0] - margin - screen, 160, screen,
                   face[0], face[1], lang)
