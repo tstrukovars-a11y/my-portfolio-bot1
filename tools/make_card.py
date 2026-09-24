@@ -28,8 +28,19 @@ OUT = os.path.join(HERE, "data", "cards")
 # истории превращается в полоску посередине с пустотой сверху и снизу —
 # её пролистывают, не дочитав.
 SHAPES = {
-    "post": (1280, 720),
-    "story": (1080, 1920),
+    "post": (1280, 720),      # горизонтальная, для ссылок и превью
+    "feed": (1080, 1350),     # вертикальная в ленте: занимает втрое больше
+    "story": (1080, 1920),    # история, экран телефона целиком
+}
+
+# Раскладка вертикальных: доли высоты, а не пиксели. 4:5 и 9:16
+# отличаются на шестьсот точек, и подписанные вручную координаты
+# развалились бы на одном из них.
+TALL = {
+    "feed": {"sign": 0.055, "title": 0.105, "watch": 0.44,
+             "size": 0.46, "cta": 0.855},
+    "story": {"sign": 0.058, "title": 0.110, "watch": 0.46,
+              "size": 0.52, "cta": 0.845},
 }
 SIZE = SHAPES["post"]
 
@@ -175,7 +186,8 @@ def card(title: str, subtitle: str = "", note: str = "",
     карточка должна звать, а не сообщать.
     """
     size = SHAPES.get(shape, SHAPES["post"])
-    tall = shape == "story"
+    tall = shape in TALL
+    plan = TALL.get(shape, TALL["story"])
 
     image = Image.new("RGB", size, BACK)
     draw = ImageDraw.Draw(image)
@@ -203,26 +215,29 @@ def card(title: str, subtitle: str = "", note: str = "",
         text = author.upper()
         if len(text) <= 22:
             text = " ".join(text)
-        draw.text((margin, 110 if tall else 70), text, font=sign, fill=ACCENT)
+        draw.text((margin, size[1] * plan["sign"] if tall else 70),
+                  text, font=sign, fill=ACCENT)
 
     if tall:
         width = size[0] - margin * 2
-        y = 210
+        y = size[1] * plan["title"]
         for line in wrap(draw, title, big, width):
             draw.text((margin, y), line, font=big, fill=INK)
-            y += 112
+            y += big.size * 1.16
 
         if subtitle:
             y += 26
             for line in wrap(draw, subtitle, mid, width):
                 draw.text((margin, y), line, font=mid, fill=DIM)
-                y += 60
+                y += mid.size * 1.3
 
         if face:
-            watch(draw, (size[0] - 560) // 2, 760, 560, face[0], face[1], lang)
+            screen = int(size[0] * plan["size"])
+            watch(draw, (size[0] - screen) // 2, int(size[1] * plan["watch"]),
+                  screen, face[0], face[1], lang)
 
         if note:
-            pill(draw, margin, 1620, note, 46)
+            pill(draw, margin, int(size[1] * plan["cta"]), note, 46)
     else:
         screen = 420 if face else 0
         width = size[0] - margin * 2 - (screen + 40 if face else 0)

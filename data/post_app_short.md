@@ -1,6 +1,7 @@
 # Русский — пост в «Акцент»
 
-Картинка: data/cards/tennis_ru.png
+Картинка: data/cards/feed_ru.png — вертикальная 4:5, занимает в
+ленте втрое больше места. Горизонтальная лежит рядом: tennis_ru.png
 
 ⌚️ **Прямо сейчас: счёт в теннисе — на часах**
 
@@ -20,7 +21,7 @@
 
 # English — for international channels
 
-Image: data/cards/tennis_en.png
+Image: data/cards/feed_en.png
 
 ⌚️ **Out now: tennis score on your wrist**
 
@@ -39,7 +40,7 @@ Enjoy the game — I'll keep the score.
 
 # Français — pour les chaînes francophones
 
-Image : data/cards/tennis_fr.png
+Image : data/cards/feed_fr.png
 
 ⌚️ **Disponible dès maintenant : le score de tennis au poignet**
 
@@ -83,4 +84,4 @@ sans abonnement. Je l'ai créée. Profitez du jeu.
 
 Насладись игрой — счёт возьму на себя.
 кнопка: Скачать бесплатно | https://apps.apple.com/app/id6810779514
-фото: data/cards/tennis_ru.png
+фото: data/cards/feed_ru.png
