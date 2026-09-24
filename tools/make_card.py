@@ -40,6 +40,12 @@ INK = (232, 234, 240)
 DIM = (138, 144, 160)
 ACCENT = (214, 232, 58)
 
+# Цвета с настоящего экрана приложения: своё очко — зелёное, чужое —
+# голубое. Карточка должна показывать то, что человек увидит на часах,
+# иначе она обещает одно, а он получает другое.
+MINE = (154, 226, 74)
+THEIRS = (92, 225, 230)
+
 FONTS = "/System/Library/Fonts/Supplemental/"
 
 
@@ -78,25 +84,54 @@ def fitted(draw, text: str, name: str, start: int, limit: float):
 
 
 def watch(draw, x: int, y: int, size: int, top: str, bottom: str):
-    """Циферблат с двумя строками — тем, что показывает приложение.
+    """Экран часов, как он выглядит в игре.
 
-    Пустая середина картинки выглядит недоделанной, а подставлять туда
-    узор незачем: лучше показать сам продукт. Рисуем примитивами, без
-    скриншота: скриншот часов в ленте нечитаем.
+    Сверху строка геймов и сетов, под ней два очка — своё и соперника,
+    каждое на своей клавише. Так устроено настоящее приложение: очко
+    ставится касанием цветного прямоугольника, и именно это надо
+    показать, а не абстрактный счёт посередине.
     """
     draw.rounded_rectangle([x, y, x + size, y + size], radius=size // 4,
-                           fill=(26, 30, 38), outline=ACCENT, width=4)
-    # Размер подбираем под строку, а не наоборот: «40 : 30» и «6 : 4»
-    # разной длины, и фиксированный кегль один из них выпустит за рамку.
-    big = fitted(draw, top, "Arial Bold.ttf", size // 3, size * 0.78)
-    small = fitted(draw, bottom, "Arial.ttf", size // 9, size * 0.8)
+                           fill=(10, 10, 12), outline=(44, 48, 58), width=3)
 
-    width = draw.textlength(top, font=big)
-    draw.text((x + (size - width) / 2, y + size * 0.26), top, font=big,
+    line = fitted(draw, top, "Arial Bold.ttf", size // 8, size * 0.7)
+    width = draw.textlength(top, font=line)
+    draw.text((x + (size - width) / 2, y + size * 0.14), top, font=line,
               fill=INK)
-    width = draw.textlength(bottom, font=small)
-    draw.text((x + (size - width) / 2, y + size * 0.62), bottom, font=small,
-              fill=DIM)
+
+    # Две клавиши в ряд, с полями по краям и просветом посередине.
+    pad = size * 0.09
+    gap = size * 0.06
+    key_w = (size - pad * 2 - gap) / 2
+    key_h = size * 0.30
+    key_y = y + size * 0.36
+
+    points = [p.strip() for p in bottom.split("|")]
+    if len(points) < 2:
+        points = (points + ["0", "0"])[:2]
+
+    for i, (value, colour) in enumerate(zip(points, (MINE, THEIRS))):
+        left = x + pad + i * (key_w + gap)
+        draw.rounded_rectangle([left, key_y, left + key_w, key_y + key_h],
+                               radius=key_h // 2, fill=colour)
+        face = fitted(draw, value, "Arial Bold.ttf", int(key_h * 0.62),
+                      key_w * 0.7)
+        width = draw.textlength(value, font=face)
+        top_pad = (key_h - face.size * 1.15) / 2
+        draw.text((left + (key_w - width) / 2, key_y + top_pad), value,
+                  font=face, fill=(255, 255, 255))
+
+    # Нижняя клавиша — «Отменить»: она есть на экране и объясняет, что
+    # промах не страшен.
+    bar_y = key_y + key_h + size * 0.08
+    draw.rounded_rectangle([x + pad, bar_y, x + size - pad,
+                            bar_y + size * 0.12],
+                           radius=size * 0.06, fill=(40, 42, 48))
+    label = fitted(draw, "Отменить", "Arial.ttf", int(size * 0.075),
+                   size * 0.5)
+    width = draw.textlength("Отменить", font=label)
+    draw.text((x + (size - width) / 2, bar_y + size * 0.021), "Отменить",
+              font=label, fill=DIM)
 
 
 def card(title: str, subtitle: str = "", note: str = "",
@@ -177,7 +212,7 @@ def main() -> int:
     subtitle = args[1] if len(args) > 1 else ""
     note = args[2] if len(args) > 2 else ""
     name = args[3] if len(args) > 3 else "card.png"
-    # Пятым и шестым — две строки циферблата: «40 : 30» и подпись.
+    # Пятым — строка геймов, шестым — два очка через «|»: «30|15».
     face = (args[4], args[5]) if len(args) > 5 else None
     shape = args[6] if len(args) > 6 else "post"
     print(card(title, subtitle, note, name, face, shape))
