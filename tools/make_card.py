@@ -43,8 +43,11 @@ ACCENT = (214, 232, 58)
 # Цвета с настоящего экрана приложения: своё очко — зелёное, чужое —
 # голубое. Карточка должна показывать то, что человек увидит на часах,
 # иначе она обещает одно, а он получает другое.
-MINE = (154, 226, 74)
-THEIRS = (92, 225, 230)
+MINE = (154, 226, 74)        # своё очко
+THEIRS = (92, 225, 230)      # очко соперника
+FRESH = (240, 50, 80)        # «Новая игра» — единственная красная
+MUTED = (40, 42, 48)         # «Отменить»
+GHOST = (26, 28, 33)         # «Считать без бота», приглушённая
 
 FONTS = "/System/Library/Fonts/Supplemental/"
 
@@ -83,119 +86,141 @@ def fitted(draw, text: str, name: str, start: int, limit: float):
     return font(name, 10)
 
 
-def watch(draw, x: int, y: int, size: int, top: str, bottom: str):
-    """Экран часов, как он выглядит в игре.
+def key(draw, box, colour, text, typeface, ink=(255, 255, 255)):
+    """Клавиша с подписью по центру"""
+    left, top, right, bottom = box
+    height = bottom - top
+    draw.rounded_rectangle(box, radius=height / 2, fill=colour)
+    width = draw.textlength(text, font=typeface)
+    draw.text((left + (right - left - width) / 2,
+               top + (height - typeface.size * 1.2) / 2),
+              text, font=typeface, fill=ink)
 
-    Сверху строка геймов и сетов, под ней два очка — своё и соперника,
-    каждое на своей клавише. Так устроено настоящее приложение: очко
-    ставится касанием цветного прямоугольника, и именно это надо
-    показать, а не абстрактный счёт посередине.
+
+def watch(draw, x: int, y: int, size: int, top: str, bottom: str):
+    """Экран часов целиком, со всеми клавишами.
+
+    Цвета не украшение, а смысл: зелёная — своё очко, голубая — чужое,
+    красная — начать заново. Выкинуть красную, как я сделала в первой
+    версии, значит сломать схему: остаются две холодные клавиши и серый
+    низ, и экран выглядит плоским, хотя в жизни он яркий.
     """
     draw.rounded_rectangle([x, y, x + size, y + size], radius=size // 4,
-                           fill=(10, 10, 12), outline=(44, 48, 58), width=3)
+                           fill=(8, 8, 10), outline=(48, 52, 62), width=3)
 
-    line = fitted(draw, top, "Arial Bold.ttf", size // 8, size * 0.7)
+    line = fitted(draw, top, "Arial Bold.ttf", int(size * 0.105), size * 0.66)
     width = draw.textlength(top, font=line)
-    draw.text((x + (size - width) / 2, y + size * 0.14), top, font=line,
+    draw.text((x + (size - width) / 2, y + size * 0.10), top, font=line,
               fill=INK)
 
-    # Две клавиши в ряд, с полями по краям и просветом посередине.
-    pad = size * 0.09
-    gap = size * 0.06
+    pad = size * 0.08
+    gap = size * 0.05
     key_w = (size - pad * 2 - gap) / 2
-    key_h = size * 0.30
-    key_y = y + size * 0.36
+    key_h = size * 0.24
+    key_y = y + size * 0.27
 
     points = [p.strip() for p in bottom.split("|")]
-    if len(points) < 2:
-        points = (points + ["0", "0"])[:2]
-
+    points = (points + ["0", "0"])[:2]
     for i, (value, colour) in enumerate(zip(points, (MINE, THEIRS))):
         left = x + pad + i * (key_w + gap)
-        draw.rounded_rectangle([left, key_y, left + key_w, key_y + key_h],
-                               radius=key_h // 2, fill=colour)
-        face = fitted(draw, value, "Arial Bold.ttf", int(key_h * 0.62),
-                      key_w * 0.7)
-        width = draw.textlength(value, font=face)
-        top_pad = (key_h - face.size * 1.15) / 2
-        draw.text((left + (key_w - width) / 2, key_y + top_pad), value,
-                  font=face, fill=(255, 255, 255))
+        face = fitted(draw, value, "Arial Bold.ttf", int(key_h * 0.66),
+                      key_w * 0.62)
+        key(draw, [left, key_y, left + key_w, key_y + key_h], colour,
+            value, face)
 
-    # Нижняя клавиша — «Отменить»: она есть на экране и объясняет, что
-    # промах не страшен.
-    bar_y = key_y + key_h + size * 0.08
-    draw.rounded_rectangle([x + pad, bar_y, x + size - pad,
-                            bar_y + size * 0.12],
-                           radius=size * 0.06, fill=(40, 42, 48))
-    label = fitted(draw, "Отменить", "Arial.ttf", int(size * 0.075),
-                   size * 0.5)
-    width = draw.textlength("Отменить", font=label)
-    draw.text((x + (size - width) / 2, bar_y + size * 0.021), "Отменить",
-              font=label, fill=DIM)
+    # Три полосы под очками — ровно как на часах.
+    # Три полосы должны уложиться до скругления: нижняя иначе уезжает
+    # в угол и выглядит обрезанной.
+    bar_h = size * 0.10
+    step = bar_h + size * 0.032
+    small = font("Arial.ttf", int(size * 0.072))
+    rows = [("Отменить", MUTED, DIM),
+            ("Новая игра", FRESH, (255, 255, 255)),
+            ("Считать без бота", GHOST, (96, 100, 112))]
+    for i, (label, colour, ink) in enumerate(rows):
+        bar_y = key_y + key_h + size * 0.045 + i * step
+        key(draw, [x + pad, bar_y, x + size - pad, bar_y + bar_h],
+            colour, label, small, ink)
+
+
+def pill(draw, x: int, y: int, text: str, size: int, colour=FRESH):
+    """Кнопка-призыв на самой карточке: глаз цепляется за цвет раньше,
+    чем читает буквы, и понимает, что действие бесплатное."""
+    typeface = font("Arial Bold.ttf", size)
+    width = draw.textlength(text, font=typeface)
+    pad_x, pad_y = size * 0.9, size * 0.55
+    draw.rounded_rectangle(
+        [x, y, x + width + pad_x * 2, y + size * 1.2 + pad_y * 2],
+        radius=(size * 1.2 + pad_y * 2) / 2, fill=colour)
+    draw.text((x + pad_x, y + pad_y), text, font=typeface,
+              fill=(255, 255, 255))
+    return y + size * 1.2 + pad_y * 2
 
 
 def card(title: str, subtitle: str = "", note: str = "",
          name: str = "card.png", face: tuple = None,
          shape: str = "post") -> str:
+    """Рекламная карточка: заголовок, экран приложения и призыв.
+
+    Note здесь — текст на красной кнопке, а не подпись мелким шрифтом:
+    карточка должна звать, а не сообщать.
+    """
     size = SHAPES.get(shape, SHAPES["post"])
     tall = shape == "story"
 
     image = Image.new("RGB", size, BACK)
     draw = ImageDraw.Draw(image)
 
-    # Полоса сверху вместо логотипа: узнаваемо, ничего не весит и не
-    # спорит с текстом.
-    draw.rectangle([0, 0, size[0], 10 if not tall else 14], fill=ACCENT)
+    # Полоса сверху — из цветов приложения, а не одна жёлтая: она задаёт
+    # палитру раньше, чем глаз дойдёт до экрана часов.
+    band = 14 if tall else 10
+    parts = [MINE, THEIRS, FRESH]
+    step = size[0] / len(parts)
+    for i, colour in enumerate(parts):
+        draw.rectangle([i * step, 0, (i + 1) * step, band], fill=colour)
 
-    margin = 90 if not tall else 80
-    big = font("Arial Bold.ttf", 78 if not tall else 96)
-    mid = font("Arial.ttf", 40 if not tall else 46)
-    small = font("Arial.ttf", 30 if not tall else 38)
+    margin = 80 if tall else 90
+    big = font("Arial Bold.ttf", 96 if tall else 80)
+    mid = font("Arial.ttf", 46 if tall else 38)
 
     if tall:
-        # В истории читают сверху вниз и большим пальцем: заголовок
-        # вверху, циферблат в середине, ссылка внизу — там, где палец.
         width = size[0] - margin * 2
-        y = 220
+        y = 190
         for line in wrap(draw, title, big, width):
             draw.text((margin, y), line, font=big, fill=INK)
             y += 112
 
         if subtitle:
-            y += 30
+            y += 26
             for line in wrap(draw, subtitle, mid, width):
                 draw.text((margin, y), line, font=mid, fill=DIM)
                 y += 60
 
         if face:
-            watch(draw, (size[0] - 520) // 2, 860, 520, face[0], face[1])
+            watch(draw, (size[0] - 560) // 2, 760, 560, face[0], face[1])
 
         if note:
-            for i, line in enumerate(wrap(draw, note, small, width)):
-                draw.text((margin, 1720 + i * 48), line, font=small,
-                          fill=ACCENT)
+            pill(draw, margin, 1620, note, 46)
     else:
-        # Под циферблат отводим правую треть: текст в неё не заходит,
-        # иначе строки ломаются об картинку.
-        width = size[0] - margin * 2 - (360 if face else 0)
-        y = 150
+        screen = 420 if face else 0
+        width = size[0] - margin * 2 - (screen + 40 if face else 0)
+        y = 130
         if face:
-            watch(draw, size[0] - margin - 300, 190, 300, face[0], face[1])
+            watch(draw, size[0] - margin - screen, 150, screen,
+                  face[0], face[1])
 
         for line in wrap(draw, title, big, width):
             draw.text((margin, y), line, font=big, fill=INK)
-            y += 92
+            y += 94
 
         if subtitle:
-            y += 24
+            y += 20
             for line in wrap(draw, subtitle, mid, width):
                 draw.text((margin, y), line, font=mid, fill=DIM)
                 y += 52
 
         if note:
-            # Приписка прижата к низу: так она читается как подпись, а не
-            # как продолжение мысли.
-            draw.text((margin, size[1] - 90), note, font=small, fill=ACCENT)
+            pill(draw, margin, size[1] - 150, note, 42)
 
     os.makedirs(OUT, exist_ok=True)
     path = os.path.join(OUT, name)
