@@ -46,8 +46,10 @@ TALL = {
     # reserve — пустая полоса внизу под квадратный стикер ссылки на
     # App Store. Его вставляют поверх картинки, и всё, что окажется под
     # ним, пропадёт: рисовать там что-либо значит рисовать в мусор.
-    "story": {"sign": 0.125, "title": 0.185, "watch": 0.42,
-              "size": 0.48, "cta": 0.78, "gap": 0.045, "reserve": 0.20},
+    # Текст поднят под самую шапку Telegram, чтобы внизу осталось поле
+    # под квадратный стикер ссылки — он размером примерно с экран часов.
+    "story": {"sign": 0.088, "title": 0.145, "watch": 0.40,
+              "size": 0.42, "cta": 0.76, "gap": 0.04, "reserve": 0.30},
 }
 SIZE = SHAPES["post"]
 
@@ -299,9 +301,9 @@ def card(title: str, subtitle: str = "", note: str = "",
             top = max(int(size[1] * plan["watch"]), int(y + size[1] * 0.03))
             screen = int(size[0] * plan["size"])
             room = cta_y - int(size[1] * plan["gap"]) - top
-            # Ниже трёхсот точек экран часов перестаёт читаться: на
-            # клавишах не разобрать ни счёта, ни подписей.
-            screen = max(300, min(screen, room))
+            # Ниже двухсот восьмидесяти экран часов перестаёт читаться:
+            # на клавишах не разобрать ни счёта, ни подписей.
+            screen = max(280, min(screen, room))
             watch(draw, (size[0] - screen) // 2, top, screen,
                   face[0], face[1], lang)
             bottom = top + screen
