@@ -7,7 +7,7 @@
 
 **Уже доступно для скачивания.** Совершенно бесплатно.
 
-Я сделала приложение для Apple Watch. Касание — очко. Геймы, сеты,
+Приложение для Apple Watch, которое я написала сама. Касание — очко. Геймы, сеты,
 тай-брейк и очередь подачи оно считает само. Промахнулись — «Отменить»,
 и счёт на месте.
 
@@ -25,7 +25,7 @@ Image: data/cards/feed_en.png
 
 ⌚️ **Out now: tennis score on your wrist**
 
-I built an Apple Watch app that keeps score while you play. **Free, no
+An Apple Watch app that keeps score while you play — built by me. **Free, no
 subscriptions.**
 
 Tap to score. Games, sets, tie-break and serve — counted for you. Missed
@@ -44,8 +44,8 @@ Image : data/cards/feed_fr.png
 
 ⌚️ **Disponible dès maintenant : le score de tennis au poignet**
 
-J'ai créé une application Apple Watch qui compte les points pendant que
-vous jouez. **Gratuite, sans abonnement.**
+Une application Apple Watch qui compte les points pendant que vous
+jouez — créée par moi. **Gratuite, sans abonnement.**
 
 Touchez pour marquer. Jeux, sets, tie-break et service — comptés pour
 vous. Mauvaise touche ? « Annuler » remet tout en place.
@@ -63,13 +63,13 @@ Profitez du jeu — je m'occupe du score.
 data/cards/story_ru.png · story_en.png · story_fr.png
 
 RU: ⌚️ Уже доступно! Счёт в теннисе прямо на часах — совершенно
-бесплатно. Без интернета и подписок. Я сделала, насладись игрой.
+бесплатно. Без интернета и подписок. Насладись игрой.
 
 EN: ⌚️ Out now. Tennis score on your wrist — free, offline, no
-subscriptions. I built it. Enjoy the game.
+subscriptions. Enjoy the game.
 
 FR: ⌚️ Disponible. Le score de tennis au poignet — gratuit, hors ligne,
-sans abonnement. Je l'ai créée. Profitez du jeu.
+sans abonnement. Profitez du jeu.
 
 
 # Командой в бота (русский пост)
@@ -78,7 +78,7 @@ sans abonnement. Je l'ai créée. Profitez du jeu.
 
 <b>Уже доступно для скачивания.</b> Совершенно бесплатно.
 
-Я сделала приложение для Apple Watch. Касание — очко. Геймы, сеты, тай-брейк и очередь подачи оно считает само. Промахнулись — «Отменить», и счёт на месте.
+Приложение для Apple Watch, которое я написала сама. Касание — очко. Геймы, сеты, тай-брейк и очередь подачи оно считает само. Промахнулись — «Отменить», и счёт на месте.
 
 <b>Без интернета и без подписок.</b> На корте сеть не нужна, реклама не всплывает, платить не за что.
 
