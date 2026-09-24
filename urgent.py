@@ -96,6 +96,32 @@ def markup(draft: dict):
         InlineKeyboardButton(text=label, url=url)]])
 
 
+async def deliver(bot: Bot, chat, kind: str, draft: dict, thread=None) -> str:
+    """Собрать и отправить пост — в канал или себе на предпросмотр.
+
+    Одна функция на оба случая намеренно. Предпросмотр, собранный
+    отдельным кодом, показывает не то, что уйдёт в канал, а то, что
+    написал автор предпросмотра, — и расходится с публикацией ровно
+    тогда, когда проверить уже нечего.
+    """
+    text = render(kind, draft)[:MAX_TEXT]
+    photo = (draft.get("photo") or "").strip()
+    if photo:
+        # Картинка с подписью: подпись короче текста, поэтому длинный
+        # пост уходит отдельным сообщением следом.
+        if len(text) <= 1024:
+            await bot.send_photo(chat, FSInputFile(photo), caption=text,
+                                 message_thread_id=thread,
+                                 reply_markup=markup(draft))
+            return "с картинкой"
+        await bot.send_photo(chat, FSInputFile(photo),
+                             message_thread_id=thread)
+    await bot.send_message(chat, text, message_thread_id=thread,
+                           reply_markup=markup(draft),
+                           disable_web_page_preview=not draft.get("button"))
+    return "текстом"
+
+
 async def publish(bot: Bot, kind: str, draft: dict) -> str:
     """Отправить в канал. Строка — для отчёта владелице."""
     import digest
@@ -104,23 +130,9 @@ async def publish(bot: Bot, kind: str, draft: dict) -> str:
     if not chat:
         return "канал не задан: /digest chat -100…"
 
-    text = render(kind, draft)[:MAX_TEXT]
-    photo = (draft.get("photo") or "").strip()
     try:
-        if photo:
-            # Картинка с подписью: подпись короче текста, поэтому длинный
-            # пост уходит отдельным сообщением следом.
-            if len(text) <= 1024:
-                await bot.send_photo(chat, FSInputFile(photo), caption=text,
-                                     message_thread_id=thread,
-                                     reply_markup=markup(draft))
-                return "опубликовано с картинкой"
-            await bot.send_photo(chat, FSInputFile(photo),
-                                 message_thread_id=thread)
-        await bot.send_message(chat, text, message_thread_id=thread,
-                               reply_markup=markup(draft),
-                               disable_web_page_preview=not draft.get("button"))
-        return "опубликовано"
+        how = await deliver(bot, chat, kind, draft, thread)
+        return f"опубликовано {how}"
     except Exception as e:
         logging.error(f"Срочная публикация не вышла: {e}")
         return f"ошибка: {e}"
@@ -142,7 +154,7 @@ HELP = (
     "другой заголовок.")
 
 
-async def _preview(message: Message, kind: str, body: str):
+async def _preview(message: Message, bot: Bot, kind: str, body: str):
     draft = parse(body)
     if not draft["text"]:
         await message.answer("Нужен текст поста.\n\n" + HELP)
@@ -160,13 +172,18 @@ async def _preview(message: Message, kind: str, body: str):
     await database.set_setting(
         DRAFT_KEY, json.dumps({"kind": kind, **draft}, ensure_ascii=False))
 
+    # Предпросмотр приходит тем же путём, что и публикация: с картинкой,
+    # с кнопкой, в том же порядке сообщений. Иначе проверять нечего —
+    # главное в посте как раз картинка.
+    try:
+        await deliver(bot, message.chat.id, kind, draft)
+    except Exception as e:
+        logging.error(f"Предпросмотр не собрался: {e}")
+        await message.answer(f"Показать не вышло: {html.escape(str(e))}")
+        return
+
     await message.answer(
-        render(kind, draft), reply_markup=markup(draft),
-        disable_web_page_preview=not draft["button"])
-    await message.answer(
-        "👆 Так это увидят в канале."
-        + (f"\n📷 С картинкой: <code>{html.escape(draft['photo'])}</code>"
-           if draft["photo"] else ""),
+        "👆 Так это увидят в канале.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📣 Опубликовать",
                                   callback_data="urg_go")],
@@ -174,18 +191,18 @@ async def _preview(message: Message, kind: str, body: str):
 
 
 @router.message(F.text.regexp(URGENT))
-async def urgent_command(message: Message):
+async def urgent_command(message: Message, bot: Bot):
     if not config.is_admin(message.from_user.id):
         return
     body = body_of(URGENT, message.text)
     if not body:
         await message.answer(HELP)
         return
-    await _preview(message, "news", body)
+    await _preview(message, bot, "news", body)
 
 
 @router.message(F.text.regexp(CHANGES))
-async def changes_command(message: Message):
+async def changes_command(message: Message, bot: Bot):
     if not config.is_admin(message.from_user.id):
         return
     body = body_of(CHANGES, message.text)
@@ -198,7 +215,7 @@ async def changes_command(message: Message):
             "«теперь можно выбрать, что присылать» вместо «добавлен "
             "модуль подписок».")
         return
-    await _preview(message, "changes", body)
+    await _preview(message, bot, "changes", body)
 
 
 @router.callback_query(F.data == "urg_go")

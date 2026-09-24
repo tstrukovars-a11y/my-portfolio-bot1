@@ -11,11 +11,29 @@ import config
 import urgent
 
 
+class Bot:
+    """Что бот отправил — по одному вызову на сообщение"""
+
+    def __init__(self):
+        self.photos = []
+        self.texts = []
+
+    async def send_photo(self, chat, photo, caption="", **kw):
+        self.photos.append({"chat": chat, "photo": photo,
+                            "caption": caption,
+                            "markup": kw.get("reply_markup")})
+
+    async def send_message(self, chat, text, **kw):
+        self.texts.append({"chat": chat, "text": text,
+                           "markup": kw.get("reply_markup")})
+
+
 class Msg:
     def __init__(self, text, user_id=1):
         self.text = text
         self.said = []
         self.from_user = type("U", (), {"id": user_id})()
+        self.chat = type("C", (), {"id": user_id})()
 
     async def answer(self, text, **kw):
         self.said.append(text)
@@ -76,7 +94,7 @@ def test_unknown_kind_falls_back_to_news():
 def test_empty_command_only_explains(settings, monkeypatch):
     monkeypatch.setattr(config, "ADMIN_ID", 1)
     message = Msg("/срочно")
-    run(urgent.urgent_command(message))
+    run(urgent.urgent_command(message, Bot()))
     assert "Срочная публикация" in message.said[0]
     assert not settings.get(urgent.DRAFT_KEY)
 
@@ -86,14 +104,14 @@ def test_missing_photo_stops_the_preview(settings, monkeypatch):
     моменту считается отправленным."""
     monkeypatch.setattr(config, "ADMIN_ID", 1)
     message = Msg("/срочно Текст\nфото: нет/такого/файла.png")
-    run(urgent.urgent_command(message))
+    run(urgent.urgent_command(message, Bot()))
     assert "Файла нет" in message.said[0]
     assert not settings.get(urgent.DRAFT_KEY)
 
 
 def test_preview_saves_the_draft(settings, monkeypatch):
     monkeypatch.setattr(config, "ADMIN_ID", 1)
-    run(urgent.urgent_command(Msg("/срочно Вышло приложение")))
+    run(urgent.urgent_command(Msg("/срочно Вышло приложение"), Bot()))
     assert "Вышло приложение" in settings[urgent.DRAFT_KEY]
 
 
@@ -107,14 +125,14 @@ def test_every_form_of_the_name_works(settings, monkeypatch, command):
     Заставлять его вспоминать точную форму — ставить препятствие ровно
     там, где он спешит."""
     monkeypatch.setattr(config, "ADMIN_ID", 1)
-    run(urgent.urgent_command(Msg(f"{command} Вышло приложение")))
+    run(urgent.urgent_command(Msg(f"{command} Вышло приложение"), Bot()))
     assert "Вышло приложение" in settings[urgent.DRAFT_KEY]
 
 
 def test_the_command_does_not_leak_into_the_post(settings, monkeypatch):
     """«новость» — часть команды, а не первое слово заголовка."""
     monkeypatch.setattr(config, "ADMIN_ID", 1)
-    run(urgent.urgent_command(Msg("/срочная новость Вышло приложение")))
+    run(urgent.urgent_command(Msg("/срочная новость Вышло приложение"), Bot()))
     draft = settings[urgent.DRAFT_KEY]
     assert "новость Вышло" not in draft
     assert "срочн" not in draft.lower()
@@ -123,17 +141,81 @@ def test_the_command_does_not_leak_into_the_post(settings, monkeypatch):
 def test_a_post_may_start_with_the_word_news(settings, monkeypatch):
     """«/срочно Новость о…» — «Новость» здесь заголовок, не команда."""
     monkeypatch.setattr(config, "ADMIN_ID", 1)
-    run(urgent.urgent_command(Msg("/срочно Новость о приложении")))
+    run(urgent.urgent_command(Msg("/срочно Новость о приложении"), Bot()))
     assert "Новость о приложении" in settings[urgent.DRAFT_KEY]
 
 
 @pytest.mark.parametrize("command", ["/новое", "/что нового"])
 def test_changes_answers_to_both_names(settings, monkeypatch, command):
     monkeypatch.setattr(config, "ADMIN_ID", 1)
-    run(urgent.changes_command(Msg(f"{command} Появилась подписка")))
+    run(urgent.changes_command(Msg(f"{command} Появилась подписка"), Bot()))
     draft = settings[urgent.DRAFT_KEY]
     assert "Появилась подписка" in draft
     assert '"kind": "changes"' in draft
+
+
+# --- предпросмотр показывает то, что уйдёт ----------------------------
+
+POST = ("/срочно Вышло приложение\n"
+        "кнопка: Скачать | https://apps.apple.com/app/id1\n"
+        "фото: data/cards/feed_ru.png")
+
+
+def test_preview_shows_the_picture(settings, monkeypatch):
+    """Главное в посте — карточка. Предпросмотр, который показывает
+    только текст, проверяет не то, чем пост станет."""
+    monkeypatch.setattr(config, "ADMIN_ID", 1)
+    bot = Bot()
+    run(urgent.urgent_command(Msg(POST), bot))
+    assert bot.photos, "картинку не показали"
+    assert bot.photos[0]["caption"], "картинка пришла без текста"
+
+
+def test_preview_shows_the_button(settings, monkeypatch):
+    """Кнопка — часть поста: без неё непонятно, куда он ведёт."""
+    monkeypatch.setattr(config, "ADMIN_ID", 1)
+    bot = Bot()
+    run(urgent.urgent_command(Msg(POST), bot))
+    sent = (bot.photos + bot.texts)[0]
+    button = sent["markup"].inline_keyboard[0][0]
+    assert button.url == "https://apps.apple.com/app/id1"
+
+
+def test_preview_goes_only_to_the_author(settings, monkeypatch):
+    """Предпросмотр в канал — это и есть публикация без подтверждения."""
+    monkeypatch.setattr(config, "ADMIN_ID", 1)
+    bot = Bot()
+    run(urgent.urgent_command(Msg(POST, user_id=7), bot))
+    assert all(s["chat"] == 7 for s in bot.photos + bot.texts)
+
+
+def test_preview_and_publication_are_one_code_path(settings, monkeypatch):
+    """Не «похожи», а буквально одна функция: предпросмотр, собранный
+    отдельно, расходится с публикацией ровно тогда, когда проверять
+    уже нечего."""
+    monkeypatch.setattr(config, "ADMIN_ID", 1)
+    draft = urgent.parse(urgent.body_of(urgent.URGENT, POST))
+
+    shown, published = Bot(), Bot()
+    run(urgent.urgent_command(Msg(POST), shown))
+    run(urgent.deliver(published, -100, "news", draft))
+
+    assert [p["caption"] for p in shown.photos] == \
+           [p["caption"] for p in published.photos]
+    assert [t["text"] for t in shown.texts] == \
+           [t["text"] for t in published.texts]
+
+
+def test_a_long_post_splits_the_same_way_in_both(settings, monkeypatch):
+    """Подпись к картинке — 1024 знака. Длинный пост уходит двумя
+    сообщениями, и предпросмотр обязан развалиться так же."""
+    monkeypatch.setattr(config, "ADMIN_ID", 1)
+    long = "/срочно " + ("Строка поста. " * 120) + \
+           "\nфото: data/cards/feed_ru.png"
+    bot = Bot()
+    run(urgent.urgent_command(Msg(long), bot))
+    assert len(bot.photos) == 1 and not bot.photos[0]["caption"]
+    assert len(bot.texts) == 1
 
 
 def test_routers_match_the_same_names():
@@ -147,7 +229,7 @@ def test_routers_match_the_same_names():
 def test_strangers_cannot_publish(settings, monkeypatch):
     monkeypatch.setattr(config, "ADMIN_ID", 1)
     message = Msg("/срочно Чужой текст", user_id=999)
-    run(urgent.urgent_command(message))
+    run(urgent.urgent_command(message, Bot()))
     assert not message.said
     assert not settings.get(urgent.DRAFT_KEY)
 
