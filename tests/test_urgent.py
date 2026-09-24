@@ -97,6 +97,53 @@ def test_preview_saves_the_draft(settings, monkeypatch):
     assert "Вышло приложение" in settings[urgent.DRAFT_KEY]
 
 
+# --- команду зовут как придётся ---------------------------------------
+
+@pytest.mark.parametrize("command", [
+    "/срочно", "/срочная новость", "/срочная", "/Срочная Новость",
+])
+def test_every_form_of_the_name_works(settings, monkeypatch, command):
+    """Человек торопится и пишет то имя, которое всплыло в голове.
+    Заставлять его вспоминать точную форму — ставить препятствие ровно
+    там, где он спешит."""
+    monkeypatch.setattr(config, "ADMIN_ID", 1)
+    run(urgent.urgent_command(Msg(f"{command} Вышло приложение")))
+    assert "Вышло приложение" in settings[urgent.DRAFT_KEY]
+
+
+def test_the_command_does_not_leak_into_the_post(settings, monkeypatch):
+    """«новость» — часть команды, а не первое слово заголовка."""
+    monkeypatch.setattr(config, "ADMIN_ID", 1)
+    run(urgent.urgent_command(Msg("/срочная новость Вышло приложение")))
+    draft = settings[urgent.DRAFT_KEY]
+    assert "новость Вышло" not in draft
+    assert "срочн" not in draft.lower()
+
+
+def test_a_post_may_start_with_the_word_news(settings, monkeypatch):
+    """«/срочно Новость о…» — «Новость» здесь заголовок, не команда."""
+    monkeypatch.setattr(config, "ADMIN_ID", 1)
+    run(urgent.urgent_command(Msg("/срочно Новость о приложении")))
+    assert "Новость о приложении" in settings[urgent.DRAFT_KEY]
+
+
+@pytest.mark.parametrize("command", ["/новое", "/что нового"])
+def test_changes_answers_to_both_names(settings, monkeypatch, command):
+    monkeypatch.setattr(config, "ADMIN_ID", 1)
+    run(urgent.changes_command(Msg(f"{command} Появилась подписка")))
+    draft = settings[urgent.DRAFT_KEY]
+    assert "Появилась подписка" in draft
+    assert '"kind": "changes"' in draft
+
+
+def test_routers_match_the_same_names():
+    """Разбор и фильтр роутера берут один и тот же образец: иначе бот
+    молча не отвечает на команду, которую сам же умеет разбирать."""
+    source = open("urgent.py", encoding="utf-8").read()
+    assert "F.text.regexp(URGENT)" in source
+    assert "F.text.regexp(CHANGES)" in source
+
+
 def test_strangers_cannot_publish(settings, monkeypatch):
     monkeypatch.setattr(config, "ADMIN_ID", 1)
     message = Msg("/срочно Чужой текст", user_id=999)

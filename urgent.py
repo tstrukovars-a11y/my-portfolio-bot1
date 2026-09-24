@@ -21,6 +21,7 @@
 import html
 import json
 import logging
+import re
 
 from aiogram import Router, F, Bot
 from aiogram.types import (Message, CallbackQuery, InlineKeyboardMarkup,
@@ -38,6 +39,21 @@ HEADS = {
     "news": "⚡️ <b>Срочно</b>",
     "changes": "🆕 <b>Что нового в канале</b>",
 }
+
+# Команду зовут так, как она называется в голове, а не в коде:
+# «/срочно», «/срочная новость», просто «/срочная». Разницы для
+# человека нет, и заставлять его вспоминать точную форму — значит
+# ставить препятствие ровно там, где он торопится.
+#
+# Форму вырезаем целиком, вместе со словом «новость»: иначе оно уедет
+# в первую строку поста и выйдет в канал как часть заголовка.
+URGENT = re.compile(r"^/(?:срочно|срочная(?:\s+новость)?)\b\s*", re.I)
+CHANGES = re.compile(r"^/(?:новое|что\s+нового)\b\s*", re.I)
+
+
+def body_of(pattern, text: str) -> str:
+    """Текст поста без команды"""
+    return pattern.sub("", text or "", count=1).strip()
 
 
 def parse(body: str) -> dict:
@@ -121,6 +137,7 @@ HELP = (
     "фото: data/cards/tennis_app.png</code>\n\n"
     "Кнопка и фото не обязательны. Бот покажет, как это будет "
     "выглядеть, и спросит подтверждение.\n\n"
+    "Можно звать и полным именем: <code>/срочная новость …</code>\n\n"
     "Про изменения в самом канале — <code>/новое</code>: тот же формат, "
     "другой заголовок.")
 
@@ -156,23 +173,23 @@ async def _preview(message: Message, kind: str, body: str):
             [InlineKeyboardButton(text="⛔ Отмена", callback_data="urg_no")]]))
 
 
-@router.message(F.text.regexp(r"^/срочно"))
+@router.message(F.text.regexp(URGENT))
 async def urgent_command(message: Message):
     if not config.is_admin(message.from_user.id):
         return
-    parts = (message.text or "").split(maxsplit=1)
-    if len(parts) < 2:
+    body = body_of(URGENT, message.text)
+    if not body:
         await message.answer(HELP)
         return
-    await _preview(message, "news", parts[1])
+    await _preview(message, "news", body)
 
 
-@router.message(F.text.regexp(r"^/новое"))
+@router.message(F.text.regexp(CHANGES))
 async def changes_command(message: Message):
     if not config.is_admin(message.from_user.id):
         return
-    parts = (message.text or "").split(maxsplit=1)
-    if len(parts) < 2:
+    body = body_of(CHANGES, message.text)
+    if not body:
         await message.answer(
             "🆕 <b>Что нового в канале</b>\n\n"
             "<code>/новое Появилась подписка на отдельные блоки.\n"
@@ -181,7 +198,7 @@ async def changes_command(message: Message):
             "«теперь можно выбрать, что присылать» вместо «добавлен "
             "модуль подписок».")
         return
-    await _preview(message, "changes", parts[1])
+    await _preview(message, "changes", body)
 
 
 @router.callback_query(F.data == "urg_go")
