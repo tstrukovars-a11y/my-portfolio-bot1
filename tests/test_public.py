@@ -45,15 +45,39 @@ class Bot:
 
 
 class Post:
-    """Сообщение, под которым стоит кнопка"""
+    """Сообщение, под которым стоит кнопка.
+
+    Повторяет то, чем обработчики пользуются на живом посте: если
+    оставить здесь один answer, проверка запретов окажется проверкой
+    того, что метода нет, а не того, что он закрыт.
+    """
 
     def __init__(self, chat_type="channel", markup=None, chat_id=-100123):
         self.chat = type("C", (), {"type": chat_type, "id": chat_id})()
         self.reply_markup = markup
         self.said = []
+        self.redrawn = 0
 
-    async def answer(self, text, **kw):
+    async def answer(self, text="", **kw):
         self.said.append(text)
+
+    reply = answer_photo = answer_document = answer
+    edit_text = answer
+
+    async def delete(self):
+        self.said.append("<удалено>")
+
+    async def forward(self, *a, **kw):
+        self.said.append("<переслано>")
+
+    async def copy_to(self, *a, **kw):
+        self.said.append("<скопировано>")
+
+    async def pin(self, *a, **kw):
+        self.said.append("<закреплено>")
+
+    async def edit_reply_markup(self, **kw):
+        self.redrawn += 1
 
 
 class Call:
@@ -168,8 +192,9 @@ def test_the_label_falls_back_when_the_button_is_gone():
 class Msg:
     def __init__(self, text, chat_type="supergroup", user_id=777):
         self.text = text
-        self.chat = type("C", (), {"type": chat_type})()
+        self.chat = type("C", (), {"type": chat_type, "id": -100999})()
         self.from_user = type("U", (), {"id": user_id})()
+        self.bot = Bot()
 
 
 def run_commands(message):
@@ -188,10 +213,23 @@ def test_a_stranger_cannot_open_the_menu_in_the_group(monkeypatch):
     assert not run_commands(Msg("/меню"))
 
 
-def test_the_owner_still_works_from_the_group(monkeypatch):
-    """Ей случается подключать канал прямо оттуда, где она стоит."""
+def test_service_does_not_show_even_for_the_owner(monkeypatch):
+    """Право набрать команду и право показать ответ при всех — разные
+    вещи. Ответ печатается в том же чате, где стоят читатели."""
     monkeypatch.setattr(config, "ADMIN_ID", 1)
-    assert run_commands(Msg("/digest chat -100123", user_id=1))
+    assert not run_commands(Msg("/продажи", user_id=1))
+    assert not run_commands(Msg("/срочно Текст", user_id=1))
+    assert not run_commands(Msg("/digest chat -100123", user_id=1))
+
+
+def test_the_owner_gets_the_chat_number_in_private(monkeypatch):
+    """Чат ей нужен не для команды, а для номера: без него не подключить."""
+    monkeypatch.setattr(config, "ADMIN_ID", 1)
+    message = Msg("/digest chat", user_id=1)
+    run_commands(message)
+    sent = message.bot.sent[0]
+    assert sent["chat"] == 1, "номер ушёл не ей"
+    assert "-100999" in sent["text"], "номера чата в подсказке нет"
 
 
 def test_ordinary_talk_in_the_group_is_untouched(monkeypatch):
@@ -202,6 +240,73 @@ def test_ordinary_talk_in_the_group_is_untouched(monkeypatch):
 def test_private_commands_are_untouched(monkeypatch):
     monkeypatch.setattr(config, "ADMIN_ID", 1)
     assert run_commands(Msg("/меню", chat_type="private"))
+
+
+# --- правило не обойти по забывчивости --------------------------------
+#
+# Список разрешённых кнопок — договорённость: тот, кто завтра добавит в
+# задачу дня строчку message.answer(...), напишет в канал, и список ему
+# не помешает. Договорённость держится на памяти, а память и подвела.
+
+def guarded_call(data="pz_7_2"):
+    """Разрешённая кнопка — ровно в том виде, в каком её получит код"""
+    call = Call(data)
+    return call, public.narrowed(call)
+
+
+@pytest.mark.parametrize("method", [
+    "answer", "reply", "edit_text", "delete", "answer_photo",
+    "forward", "copy_to", "pin",
+])
+def test_an_allowed_button_still_cannot_write_to_the_channel(method):
+    """Не «не должен писать», а «не может написать». Разница видна ровно
+    тогда, когда кто-то забудет правило — то есть однажды обязательно."""
+    call, narrowed = guarded_call()
+    with pytest.raises(public.PublicWrite):
+        run(getattr(narrowed.message, method)("текст"))
+    assert not call.message.said, "запрет сработал уже после записи"
+
+
+def test_the_counter_on_the_button_keeps_working():
+    """На ней держатся отклик под новостью и счётчик ответов — это
+    часть самого поста, а не ответ в чужой чат."""
+    call, narrowed = guarded_call()
+    run(narrowed.message.edit_reply_markup(reply_markup=None))
+    assert call.message.redrawn == 1
+
+
+def test_the_popup_is_not_a_message_to_the_chat():
+    """call.answer — окошко у того, кто нажал: его никто другой не
+    видит, и закрывать его незачем."""
+    call, narrowed = guarded_call()
+    run(narrowed.answer("Верно!"))
+    assert call.popups == ["Верно!"]
+
+
+def test_the_handler_cannot_reach_the_channel_through_the_bot():
+    """Обойти урезанный пост можно было бы через bot.send_message
+    с номером канала."""
+    _, narrowed = guarded_call()
+    with pytest.raises(public.PublicWrite):
+        run(narrowed.bot.send_message(-100123, "текст в канал"))
+
+
+def test_writing_to_the_person_is_untouched():
+    """Разбор задачи уходит в личку — ради этого всё и делается."""
+    call, narrowed = guarded_call()
+    run(narrowed.bot.send_message(777, "Разбор задачи"))
+    assert call.bot.sent[0]["chat"] == 777
+
+
+def test_an_attempt_to_write_does_not_break_the_channel():
+    """Обработчик упал на запрете — читатель видит окошко, канал чист."""
+    async def careless(event, data):
+        await event.message.answer("Меню для всех")
+
+    call = Call("pz_7_2")
+    run(public.keep_private(careless, call, {}))
+    assert not call.message.said, "в канал всё-таки написали"
+    assert call.popups, "человек не понял, что произошло"
 
 
 # --- граница включена --------------------------------------------------
