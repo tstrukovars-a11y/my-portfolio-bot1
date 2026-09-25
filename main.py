@@ -18,6 +18,7 @@ import common, block1_sport, block2_creative, block3_intellect, block4_claude, p
 import finance
 import digest
 import growth
+import public
 import race
 import cartoon
 import characters
@@ -569,6 +570,12 @@ async def main():
             asyncio.create_task(_log(event.from_user, _section_of(event.data)))
         return await handler(event, data)
 
+    # Граница канала стоит сразу после аналитики и раньше всего
+    # остального: обработчик, запущенный под постом, успевает написать
+    # в канал прежде, чем кто-либо поймёт, что он это сделал. Нажатие
+    # при этом уже посчитано — интерес есть интерес, где бы ни нажали.
+    dp.callback_query.outer_middleware(public.keep_private)
+
     # Шлюз стоит после аналитики: заход в закрытый раздел — тоже интерес,
     # и учитывать его надо независимо от того, пустили пользователя или нет.
     dp.callback_query.outer_middleware(growth.gate_middleware)
@@ -578,6 +585,10 @@ async def main():
         if event.text and event.text.startswith("/") and event.from_user:
             asyncio.create_task(_log(event.from_user, event.text.split()[0][:50]))
         return await handler(event, data)
+
+    # Команда, набранная в группе-дубле, разворачивает разделы бота на
+    # глазах у всех, кто туда зашёл. Чужие команды там не выполняем.
+    dp.message.outer_middleware(public.commands_stay_private)
 
     seen_channels = set()
 
