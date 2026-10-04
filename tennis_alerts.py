@@ -85,6 +85,35 @@ def _starts(match):
         return None
 
 
+# Заглушки, которыми источник подписывает ещё не определённого игрока.
+# В сетке они законны: «победитель квалификации», «освобождён от круга».
+# В анонсе — нет: читателю нечего смотреть, а подписаться не на кого.
+PLACEHOLDERS = {"tbd", "tba", "bye", "qualifier", "lucky loser",
+                "winner", "loser", "q", "ll", "wc"}
+
+
+def _ready(match) -> bool:
+    """Оба игрока известны.
+
+    Расписание строится за сутки, а нижняя половина сетки к этому часу
+    ещё доигрывается. Источник всё равно отдаёт такие матчи — с пустым
+    именем или со словом «Qualifier» вместо фамилии.
+
+    В посте это выглядело как строка «18:00 · матч»: времени нет, имён
+    нет, нажимать не на что. Хуже того, подписка на такой матч ложилась
+    в базу без времени начала — и не срабатывала уже никогда, потому
+    что срабатывать было не по чему.
+    """
+    sides = (match.get("sides") or [])[:2]
+    if len(sides) < 2:
+        return False
+    for side in sides:
+        raw = ((side.get("athlete") or {}).get("displayName") or "").strip()
+        if not raw or raw.lower() in PLACEHOLDERS:
+            return False
+    return True
+
+
 def _notable(match) -> bool:
     """Есть ли в матче тот, ради кого его стоит анонсировать"""
     for side in (match.get("sides") or [])[:2]:
@@ -211,6 +240,10 @@ async def _today(tour: str):
     out = []
     for match in tennis_live._singles(data, tour, big_only=True):
         if match.get("completed") or not match.get("id"):
+            continue
+        # Матч без второго игрока анонсировать нечем: ни строки, ни
+        # кнопки, ни напоминания — подписка на него мертва с рождения.
+        if not _ready(match):
             continue
         when = _starts(match)
         if not when:
@@ -683,6 +716,15 @@ async def alerts_status(message: Message):
                          "напоминания уходят не вовремя или не уходят вовсе.")
     lines.append(f"Шлю за {lead} {_minutes_word(lead)} до начала.")
     lines.append(f"Ждут отправки: <b>{waiting}</b>")
+
+    # Главная причина «подписка есть, а ссылки нет»: запись без времени
+    # начала. Планировщик выбирает по времени и такую запись не видит.
+    stuck = await database.timeless_alerts()
+    if stuck:
+        lines.append(f"⚠️ <b>Без времени начала: {stuck}</b> — эти не уйдут "
+                     f"никогда. Время проставится само, как только матч "
+                     f"появится в табличке с датой; безнадёжные снимаются "
+                     f"через двое суток.")
     lines.append("")
 
     if not rows:
@@ -900,8 +942,31 @@ async def toggle_match(call: CallbackQuery):
 
     matches = await _today(tour)
     match = next((m for m in matches if m["id"] == match_id), None)
-    title = _title(match) if match else "матч"
+    if match is None:
+        # Пост мог пролежать до завтра, матч — переехать в другой день
+        # или выпасть из крупных турниров. Ищем шире, прежде чем сдаться:
+        # подписка без времени начала не сработает никогда.
+        match = await _find_match(tour, match_id)
+
     starts = _starts(match) if match else None
+    # Подписка без времени начала не сработает никогда: due_alerts
+    # выбирает по времени, а его нет. Раньше такая запись молча ложилась
+    # в базу — человек видел «напоминание включено» и не получал ничего.
+    #
+    # Снять старую подписку при этом можно всегда: кнопка, которая
+    # перестала отжиматься, хуже кнопки, которая не нажимается.
+    if starts is None and not await database.alert_exists(call.from_user.id,
+                                                          match_id):
+        logging.warning(
+            f"Теннис: подписка без времени начала — {tour}/{match_id}, "
+            f"матч {'не найден' if match is None else 'без даты'}")
+        await call.answer(
+            "Время этого матча ещё не назначено — напомнить не получится.\n\n"
+            "Загляните в сетку: как только корт и час известны, матч "
+            "появится в расписании дня.", show_alert=True)
+        return
+
+    title = _title(match) if match else "матч"
 
     # В базу — с турниром (это уйдёт в личку), на кнопку — короткое имя.
     full = _full_title(match) if match else title
@@ -1096,7 +1161,11 @@ async def refresh_times(bot: Bot = None) -> int:
     for tour in {t for _, t in waiting}:
         try:
             data = await tennis_live.fetch_scoreboard(tour)
-            for match in tennis_live._singles(data, tour, big_only=True):
+            # Без big_only: отбор по величине турнира нужен ленте канала,
+            # а здесь он терял матчи, на которые уже подписались. Время у
+            # них не обновлялось, отмена не замечалась — напоминание
+            # молчало, хотя запись в базе была.
+            for match in tennis_live._singles(data, tour, big_only=False):
                 if not match.get("id"):
                     continue
                 if _cancelled(match):
@@ -1119,6 +1188,17 @@ async def refresh_times(bot: Bot = None) -> int:
             moved += 1
     if moved:
         logging.info(f"Теннис: перенесено матчей {moved}")
+
+    # Подписка без времени — это молчание на стороне читателя. Пока матч
+    # в табличке, сверка выше проставит ему время. Если он не появился
+    # вторые сутки, сетка ушла вперёд: запись не сработает уже никогда и
+    # только прячет настоящие проблемы за своим числом.
+    stuck = await database.timeless_alerts()
+    if stuck:
+        logging.warning(f"Теннис: подписок без времени начала — {stuck}")
+        gone = await database.drop_timeless_alerts()
+        if gone:
+            logging.info(f"Теннис: убрано безнадёжных подписок {gone}")
     return moved
 
 

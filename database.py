@@ -1140,6 +1140,63 @@ async def toggle_alert(user_id: int, match_id: str, tour: str,
         return None, 0
 
 
+async def timeless_alerts() -> int:
+    """Сколько подписок висит без времени начала.
+
+    Планировщик их не возьмёт никогда: выборка идёт по времени, а его
+    нет. Для читателя это выглядит как «подписался и ничего не пришло»,
+    и по одной записи в списке последних это не видно — нужен счёт.
+    """
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            return int(await conn.fetchval(
+                f"SELECT COUNT(*) FROM {SCHEMA}.match_alerts "
+                "WHERE NOT sent AND starts_at IS NULL") or 0)
+    except Exception as e:
+        logging.error(f"Подписки без времени не сосчитались: {e}")
+        return 0
+
+
+async def drop_timeless_alerts(older_than_hours: int = 48) -> int:
+    """Убрать безнадёжные подписки без времени начала.
+
+    Матч, которого нет в табличке вторые сутки, уже не появится: сетка
+    ушла вперёд. Такая запись не сработает, но будет вечно считаться
+    ожидающей — и прятать настоящие проблемы за своим числом.
+    """
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            done = await conn.execute(
+                f"DELETE FROM {SCHEMA}.match_alerts "
+                "WHERE NOT sent AND starts_at IS NULL "
+                f"AND created_at < NOW() - ($1 || ' hours')::interval",
+                str(older_than_hours))
+        return int(done.rsplit(" ", 1)[-1]) if done else 0
+    except Exception as e:
+        logging.error(f"Безнадёжные подписки не убрались: {e}")
+        return 0
+
+
+async def alert_exists(user_id: int, match_id: str) -> bool:
+    """Стоит ли уже напоминание на этот матч.
+
+    Нужна там, где нажатие нельзя выполнить вслепую: на матч без
+    известного времени подписаться нельзя, а вот снять с него старую
+    подписку — можно и нужно, иначе кнопка перестаёт отжиматься.
+    """
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            return bool(await conn.fetchval(
+                f"SELECT 1 FROM {SCHEMA}.match_alerts "
+                "WHERE user_id = $1 AND match_id = $2", user_id, match_id))
+    except Exception as e:
+        logging.error(f"Напоминание не проверилось: {e}")
+        return False
+
+
 async def ensure_alert(user_id: int, match_id: str, tour: str,
                        title: str, starts_at):
     """Включить напоминание, не выключая уже включённое.

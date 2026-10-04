@@ -105,12 +105,16 @@ def test_early_morning_tomorrow_is_still_ours(monkeypatch):
     def at(hours):
         return (now + timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%MZ")
 
+    # Игроки у всех настоящие: проверяется отбор по дате, и матч без
+    # имён отсеялся бы раньше — по другой причине.
+    pair = [{"athlete": {"displayName": "Andrey Rublev"}},
+            {"athlete": {"displayName": "Carlos Alcaraz"}}]
     matches = [
-        {"id": "brosh", "date": at(-5), "completed": False},   # начался давно
-        {"id": "today", "date": at(2), "completed": False},    # сегодня 22:00
-        {"id": "early", "date": at(10), "completed": False},   # завтра 06:00
-        {"id": "late", "date": at(20), "completed": False},    # завтра 16:00
-        {"id": "done", "date": at(1), "completed": True},
+        {"id": "brosh", "date": at(-5), "completed": False, "sides": pair},
+        {"id": "today", "date": at(2), "completed": False, "sides": pair},
+        {"id": "early", "date": at(10), "completed": False, "sides": pair},
+        {"id": "late", "date": at(20), "completed": False, "sides": pair},
+        {"id": "done", "date": at(1), "completed": True, "sides": pair},
     ]
     monkeypatch.setattr(tennis_live, "_singles",
                         lambda data, tour, big_only=False: matches)
@@ -214,3 +218,170 @@ def test_finished_match_is_told_apart_from_cancelled():
     assert ta._cancelled({"state": "walkover"})
     assert not ta._cancelled({"state": "final", "completed": True})
     assert not ta._cancelled({"state": ""})
+
+
+# --- игроки ещё не определены -----------------------------------------
+#
+# Расписание строится за сутки, а нижняя половина сетки к этому часу ещё
+# доигрывается. Источник всё равно отдаёт такие матчи: с пустым именем
+# или со словом «Qualifier» вместо фамилии.
+#
+# В канал это вышло строкой «18:00 · матч» — ни имён, ни смысла. Хуже
+# другое: подписка на такой матч ложилась в базу без времени начала и не
+# срабатывала уже никогда. Снаружи это выглядит как «подписка есть,
+# ссылки нет».
+
+def _side(name):
+    return {"athlete": {"displayName": name}}
+
+
+def test_a_match_with_two_players_is_ready():
+    assert ta._ready({"sides": [_side("Andrey Rublev"), _side("Carlos Alcaraz")]})
+
+
+def test_an_empty_name_means_the_draw_is_not_done():
+    assert not ta._ready({"sides": [_side("Andrey Rublev"), _side("")]})
+
+
+def test_one_side_only_is_not_a_match():
+    assert not ta._ready({"sides": [_side("Andrey Rublev")]})
+    assert not ta._ready({"sides": []})
+
+
+def test_no_sides_at_all():
+    assert not ta._ready({})
+
+
+def test_placeholders_are_not_players():
+    """В сетке они законны, в анонсе — нет: смотреть нечего, подписаться
+    не на кого."""
+    for stub in ("TBD", "tba", "Qualifier", "Bye", "Lucky Loser", "WC"):
+        assert not ta._ready({"sides": [_side("Andrey Rublev"), _side(stub)]}), \
+            stub
+
+
+def test_a_real_surname_is_not_mistaken_for_a_placeholder():
+    """Отсев идёт по целому имени, а не по вхождению: иначе живой игрок
+    однажды выпадет из расписания из-за своей фамилии."""
+    assert ta._ready({"sides": [_side("Jack Qualifierson"),
+                                _side("Byeong Lee")]})
+
+
+def test_the_schedule_drops_undetermined_matches(monkeypatch):
+    """То, с чего всё началось: пост с матчами без игроков."""
+    import asyncio
+    from datetime import datetime, timedelta, timezone
+    import tennis_live
+
+    now = datetime(2026, 10, 4, 10, 0, tzinfo=timezone.utc)
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now
+
+    monkeypatch.setattr(ta, "datetime", Clock)
+    monkeypatch.setattr(ta, "_shift",
+                        lambda: asyncio.sleep(0, result=timedelta(hours=3)))
+
+    soon = (now + timedelta(hours=2)).strftime("%Y-%m-%dT%H:%MZ")
+    feed = [
+        {"id": "real", "date": soon, "completed": False,
+         "sides": [_side("Andrey Rublev"), _side("Carlos Alcaraz")]},
+        {"id": "tbd", "date": soon, "completed": False,
+         "sides": [_side("Qualifier"), _side("TBD")]},
+        {"id": "empty", "date": soon, "completed": False,
+         "sides": [_side("Andrey Rublev"), _side("")]},
+    ]
+    monkeypatch.setattr(tennis_live, "_singles",
+                        lambda data, tour, big_only=False: feed)
+    monkeypatch.setattr(tennis_live, "fetch_scoreboard",
+                        lambda tour, force=False: asyncio.sleep(0, result={}))
+
+    got = asyncio.run(ta._today("atp"))
+    assert [m["id"] for m in got] == ["real"], \
+        "матч без определённых игроков попал в расписание"
+
+
+def test_the_time_check_looks_at_every_tournament():
+    """Вторая причина молчания: сверка времени смотрела только крупные
+    турниры. Матч поменьше, на который уже подписались, времени не
+    получал и отмены не замечал — напоминание молчало при живой записи
+    в базе."""
+    source = open("tennis_alerts.py", encoding="utf-8").read()
+    start = source.index("async def refresh_times")
+    block = source[start:start + 1400]
+    assert "big_only=False" in block, \
+        "сверка времени снова отбирает матчи по величине турнира"
+
+
+
+# --- подписка есть, ссылки нет ----------------------------------------
+#
+# Главный симптом: человек нажал «напомнить», увидел подтверждение и не
+# получил ничего. Причина — запись без времени начала: планировщик
+# выбирает по времени, а его нет, и такую запись он не видит никогда.
+
+class _Call:
+    def __init__(self, data, user_id=5):
+        self.data = data
+        self.from_user = type("U", (), {"id": user_id})()
+        self.message = type("M", (), {"reply_markup": None})()
+        self.bot = None
+        self.popups = []
+
+    async def answer(self, text="", **kw):
+        self.popups.append(text)
+
+
+def _no_time(monkeypatch, exists=False, saved=None):
+    """Матча нет ни в расписании дня, ни в свежей табличке"""
+    import asyncio
+    import database
+
+    monkeypatch.setattr(ta, "_allowed", lambda uid: asyncio.sleep(0, result=True))
+    monkeypatch.setattr(ta, "_today", lambda tour: asyncio.sleep(0, result=[]))
+    monkeypatch.setattr(ta, "_find_match",
+                        lambda tour, mid: asyncio.sleep(0, result=None))
+    monkeypatch.setattr(database, "alert_exists",
+                        lambda uid, mid: asyncio.sleep(0, result=exists))
+
+    async def toggle(*a, **kw):
+        if saved is not None:
+            saved.append(a)
+        # Запись была — значит, нажатие её снимает, как в настоящем
+        # toggle_alert: сначала удаление, вставка только если удалять
+        # было нечего.
+        return (False, 0) if exists else (True, 1)
+
+    monkeypatch.setattr(database, "toggle_alert", toggle)
+
+
+def test_a_match_without_a_time_is_not_saved_as_a_dead_alert(monkeypatch):
+    """Раньше запись молча ложилась в базу и висела вечно: человек видел
+    «напоминание включено» и не получал ссылку никогда."""
+    import asyncio
+
+    saved = []
+    _no_time(monkeypatch, exists=False, saved=saved)
+
+    call = _Call("tmatch_atp_999")
+    asyncio.run(ta.toggle_match(call))
+
+    assert not saved, "мёртвая подписка всё-таки записалась"
+    assert call.popups and "не назначено" in call.popups[0], \
+        "человеку не сказали, почему не вышло"
+
+
+def test_an_old_alert_can_still_be_switched_off(monkeypatch):
+    """Кнопка, которая перестала отжиматься, хуже кнопки, которая не
+    нажимается: подписка осталась бы навсегда."""
+    import asyncio
+
+    saved = []
+    _no_time(monkeypatch, exists=True, saved=saved)
+
+    call = _Call("tmatch_atp_999")
+    asyncio.run(ta.toggle_match(call))
+    assert saved, "снять старую подписку не дали"
+    assert call.popups and "снято" in call.popups[0].lower()
