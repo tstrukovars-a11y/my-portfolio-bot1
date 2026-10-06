@@ -128,11 +128,23 @@ def test_everything_personal_stays_out_of_the_channel(data):
     assert not run_guard(Call(data))
 
 
-@pytest.mark.parametrize("data", ["vote_morning_12", "pz_7_2", "xo_5_4"])
+@pytest.mark.parametrize("data", [
+    "vote_morning_12", "pz_7_2", "xo_5_4",
+    "tmatch_atp_401", "tmute_atp_401", "tpick_401_1",
+])
 def test_buttons_meant_for_the_post_keep_working(data):
-    """Отклик и задача дня отвечают окошком и правят свою же разметку —
-    в чужой чат они не пишут, и ломать их нельзя."""
+    """Отклик, задача дня и теннис отвечают окошком и правят свою же
+    разметку — в чужой чат они не пишут, и ломать их нельзя."""
     assert run_guard(Call(data)), f"{data} перестала работать под постом"
+
+
+def test_the_tennis_bell_rings_where_it_was_pressed():
+    """Главное, что я сломал закрытием: нажатие отмечалось числом на
+    кнопке, подтверждение приходило в личку. Вместо этого человек
+    получал окошко и вторую кнопку — а кто не нажимал её, не
+    подписывался вовсе и не получал ни ссылки, ни итога матча."""
+    assert run_guard(Call("tmatch_atp_401")), \
+        "«напомнить о матче» снова не работает из канала"
 
 
 def test_the_inline_game_is_not_touched():

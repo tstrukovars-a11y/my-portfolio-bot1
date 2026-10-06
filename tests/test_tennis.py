@@ -385,3 +385,88 @@ def test_an_old_alert_can_still_be_switched_off(monkeypatch):
     asyncio.run(ta.toggle_match(call))
     assert saved, "снять старую подписку не дали"
     assert call.popups and "снято" in call.popups[0].lower()
+
+
+# --- громкие события на корте -----------------------------------------
+#
+# Расписание говорит, что будет; итоги — что было вчера. Между ними
+# пропадало главное: Медведева сняли, Соболенко проиграла той, о ком
+# никто не слышал. Наутро это строка в таблице среди сорока других.
+
+def _played(a, b, winner=None, state="", completed=True, mid="1"):
+    sides = [_side(a), _side(b)]
+    for s, name in zip(sides, (a, b)):
+        s["winner"] = (winner == name)
+    return {"id": mid, "sides": sides, "state": state,
+            "completed": completed, "tournament": "Shanghai Masters"}
+
+
+def test_a_famous_player_retiring_is_an_event():
+    """«Сняли Медведева» — то, ради чего читатель и открывает канал."""
+    m = _played("Daniil Medvedev", "Totally Unknown Player",
+               winner="Totally Unknown Player", state="Retired")
+    assert ta._event_kind(m) == "retired"
+
+
+def test_losing_to_an_unknown_is_an_event():
+    """Соболенко проиграла той, о ком никто не слышал."""
+    m = _played("Aryna Sabalenka", "Totally Unknown Player",
+               winner="Totally Unknown Player")
+    assert ta._event_kind(m) == "upset"
+
+
+def test_a_famous_player_winning_is_not_an_event():
+    """Иначе канал завалит сообщениями о каждом рядовом матче."""
+    m = _played("Aryna Sabalenka", "Totally Unknown Player",
+               winner="Aryna Sabalenka")
+    assert ta._event_kind(m) == ""
+
+
+def test_two_famous_players_are_not_a_surprise():
+    """Победа одного известного над другим неожиданностью не является,
+    как бы ни удивлял счёт."""
+    m = _played("Andrey Rublev", "Carlos Alcaraz", winner="Andrey Rublev")
+    assert ta._event_kind(m) == ""
+
+
+def test_two_unknowns_are_never_an_event():
+    m = _played("Totally Unknown Player", "Another Unknown One",
+               winner="Another Unknown One")
+    assert ta._event_kind(m) == ""
+
+
+def test_an_unfinished_match_is_not_a_result_yet():
+    m = _played("Aryna Sabalenka", "Totally Unknown Player",
+               winner=None, completed=False)
+    assert ta._event_kind(m) == ""
+
+
+def test_a_retirement_counts_even_before_the_match_is_closed():
+    """Снятие — новость в ту же минуту, а не когда табличка досчитает."""
+    m = _played("Daniil Medvedev", "Totally Unknown Player",
+               winner=None, state="Retired", completed=False)
+    assert ta._event_kind(m) == "retired"
+
+
+def test_the_retirement_message_names_who_left():
+    m = _played("Daniil Medvedev", "Totally Unknown Player",
+               winner="Totally Unknown Player", state="Retired")
+    text = ta._event_text("retired", m, "atp")
+    assert "Снятие" in text
+    assert "Медведев" in text and "снялся" in text
+
+
+def test_a_womans_retirement_is_said_in_her_own_form():
+    m = _played("Aryna Sabalenka", "Totally Unknown Player",
+               winner="Totally Unknown Player", state="Retired")
+    assert "снялась" in ta._event_text("retired", m, "wta")
+
+
+def test_the_message_does_not_judge_the_played():
+    """«Сенсация» и «разгром» читатель поставит сам, а ошибётся в них
+    бот, а не он."""
+    m = _played("Aryna Sabalenka", "Totally Unknown Player",
+               winner="Totally Unknown Player")
+    text = ta._event_text("upset", m, "wta").lower()
+    for word in ("сенсац", "разгром", "позор", "провал", "шок"):
+        assert word not in text, word

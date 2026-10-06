@@ -500,6 +500,178 @@ async def _pick_verdict(match) -> str:
             f"{share}% из {total}. {verdict}</i>")
 
 
+# =====================================================================
+# ГРОМКИЕ СОБЫТИЯ ДНЯ
+# =====================================================================
+#
+# Расписание говорит, что будет. Итоги — что было вчера. Между ними
+# пропадало главное: Медведева сняли, Соболенко проиграла той, о ком
+# никто не слышал. Это новость в ту минуту, когда случилась, а наутро —
+# строка в таблице среди сорока других.
+#
+# Берём два события, и оба распознаются без рейтингов, которых у нас
+# нет: снятие по состоянию матча, неожиданность — когда известный
+# проиграл неизвестному.
+
+EVENTS_KEY = "tennis_events_seen"   # что уже объявляли, чтобы не дважды
+EVENTS_MEMORY = 60                  # сколько номеров матчей помним
+
+RETIRED = ("retired", "withdrew", "withdrawn", "default", "walkover")
+
+EVENT_HEADS = {
+    "retired": "🚑 <b>Снятие</b>",
+    "upset": "⚡️ <b>Неожиданность</b>",
+}
+
+
+def _side_name(side) -> str:
+    return ((side.get("athlete") or {}).get("displayName") or "").strip()
+
+
+def _event_kind(match) -> str:
+    """Чем этот матч примечателен: «retired», «upset» или ничем.
+
+    Известность считаем по тому же списку, что и для расписания: свои и
+    верхушка рейтинга. Матч двух неизвестных громким событием не станет,
+    как бы он ни кончился.
+    """
+    sides = (match.get("sides") or [])[:2]
+    if len(sides) < 2:
+        return ""
+    if not any(players_ru.notable(_side_name(s)) for s in sides):
+        return ""
+
+    state = (match.get("state") or "").lower()
+    if any(word in state for word in RETIRED):
+        return "retired"
+
+    if not match.get("completed"):
+        return ""
+
+    win = next((s for s in sides if s.get("winner")), None)
+    lose = next((s for s in sides if not s.get("winner")), None)
+    if not win or not lose:
+        return ""
+    # Неожиданность — это поражение известного от неизвестного. Победа
+    # одного известного над другим неожиданностью не является, как бы
+    # ни удивлял счёт.
+    if players_ru.notable(_side_name(lose)) \
+            and not players_ru.notable(_side_name(win)):
+        return "upset"
+    return ""
+
+
+def _event_text(kind: str, match, tour: str) -> str:
+    """Сообщение о событии — коротко и без оценок.
+
+    Оценки здесь лишние: «сенсация» и «разгром» читатель поставит сам,
+    а ошибётся в них бот, а не он.
+    """
+    sides = (match.get("sides") or [])[:2]
+    win = next((s for s in sides if s.get("winner")), None)
+    lose = next((s for s in sides if not s.get("winner")), None)
+
+    lines = [EVENT_HEADS.get(kind, EVENT_HEADS["upset"])]
+    event = _event(match)
+    if event:
+        lines.append(f"<i>{html.escape(event)}</i>")
+
+    if kind == "retired":
+        # Снялся тот, кто не победил: у снятия в табличке есть победитель.
+        who = lose or sides[0]
+        gone = "снялась" if tour == "wta" else "снялся"
+        lines.append(f"{html.escape(tennis_live._named(who))} {gone}.")
+        if win:
+            lines.append(f"Дальше проходит "
+                         f"{html.escape(tennis_live._named(win))}.")
+        return "\n".join(lines)
+
+    line = _result_line(match)
+    if line:
+        lines.append(line)
+    if lose:
+        lines.append(f"{html.escape(tennis_live._named(lose))} вылетает.")
+    return "\n".join(lines)
+
+
+async def _seen() -> set:
+    raw = await database.get_setting(EVENTS_KEY) or ""
+    return {x for x in raw.split(",") if x}
+
+
+async def _remember(ids) -> None:
+    """Помним последние номера: без этого событие уходило бы в канал
+    каждые несколько минут, пока матч висит в табличке."""
+    kept = list(await _seen() | set(ids))[-EVENTS_MEMORY:]
+    await database.set_setting(EVENTS_KEY, ",".join(kept))
+
+
+async def find_events(tour: str):
+    """[(вид, матч)] громких событий сегодняшнего дня"""
+    shift = await _shift()
+    today = (datetime.now(timezone.utc) + shift).date()
+    try:
+        data = await tennis_live.fetch_scoreboard(tour)
+    except Exception as e:
+        logging.warning(f"События {tour}: табличка не пришла ({e})")
+        return []
+
+    out = []
+    for match in tennis_live._singles(data, tour, big_only=True):
+        if not match.get("id") or not _ready(match):
+            continue
+        when = _starts(match)
+        if not when or (when + shift).date() != today:
+            continue
+        kind = _event_kind(match)
+        if kind:
+            out.append((kind, match))
+    return out
+
+
+async def publish_events(bot: Bot, chat: int, thread=None) -> str:
+    """Объявить то, что случилось только что. Каждое событие — один раз."""
+    seen = await _seen()
+    posted, fresh = 0, []
+
+    for tour in ("wta", "atp"):
+        for kind, match in await find_events(tour):
+            key = f"{match['id']}:{kind}"
+            if key in seen:
+                continue
+            try:
+                await bot.send_message(
+                    chat, _event_text(kind, match, tour),
+                    message_thread_id=thread,
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                        InlineKeyboardButton(
+                            text=f"🗓 Сетка {tennis_live.TOURS[tour]['title']}",
+                            url=tennis_live.TOURS[tour]["draws"])]]))
+            except Exception as e:
+                logging.error(f"Событие {key} не вышло: {e}")
+                continue
+            fresh.append(key)
+            posted += 1
+            await asyncio.sleep(3.2)
+
+    if fresh:
+        await _remember(fresh)
+    return f"событий в канал: {posted}" if posted else "громких событий нет"
+
+
+@router.message(F.text.startswith("/tennis_events"))
+async def events_command(message: Message, bot: Bot):
+    """Проверить вручную — и увидеть, что бот считает громким"""
+    if not config.is_admin(message.from_user.id):
+        return
+    import digest
+    chat, thread = await digest._target()
+    if not chat:
+        await message.answer("❌ Канал не задан: <code>/digest chat -100…</code>")
+        return
+    await message.answer(f"🎾 {await publish_events(bot, chat, thread)}")
+
+
 async def publish_results(bot: Bot, chat: int, thread=None) -> str:
     """Итоги вчерашнего дня — утром, пока результаты ещё новость"""
     shift = await _shift()
@@ -1263,6 +1435,22 @@ async def send_results(bot: Bot) -> int:
     return sent
 
 
+async def _events_to_channel(bot: Bot) -> None:
+    """Громкие события в канал, если канал задан.
+
+    Отдельной функцией, потому что в расписании планировщика ошибка не
+    должна ронять напоминания: канал может быть не настроен, а ссылки
+    людям уходить обязаны.
+    """
+    try:
+        import digest
+        chat, thread = await digest._target()
+        if chat:
+            await publish_events(bot, chat, thread)
+    except Exception as e:
+        logging.warning(f"События в канал не ушли: {e}")
+
+
 async def alerts_scheduler(bot: Bot):
     """Раз в две минуты смотрит, кому пора слать ссылку.
 
@@ -1281,6 +1469,11 @@ async def alerts_scheduler(bot: Bot):
             # минуту, а лишний запрос к табличке стоит денег и лимитов.
             if ticks % 5 == 0:
                 await send_results(bot)
+            # Громкие события — в канал, пока они ещё события. Снятие,
+            # о котором читатель узнаёт наутро из таблицы, новостью
+            # быть перестало.
+            if ticks % 5 == 2:
+                await _events_to_channel(bot)
             ticks += 1
 
             lead = await _lead()
