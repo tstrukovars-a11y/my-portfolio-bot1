@@ -8,6 +8,7 @@
 # Незнакомое имя остаётся латиницей. Непереведённое видно и чинится
 # добавлением строки; неверно переведённое выглядит как знание и живёт
 # годами.
+import re
 
 _RU = {
     # мужчины
@@ -516,3 +517,21 @@ def short(name: str) -> str:
 def notable(name: str) -> bool:
     """Стоит ли этот матч ставить в расписание"""
     return is_nash(name) or is_top(name)
+
+
+def first_known(text: str) -> str:
+    """Фамилия известного игрока, упомянутого в тексте. Иначе пусто.
+
+    Нужна для новостей: в табло событие опознаётся по матчу, а в ленте
+    есть только заголовок. «Medvedev DQ'd after hitting ball into
+    stands» — про своего, «Alcaraz retains Japan Open title» — тоже, а
+    «WTA passes major milestone» ни про кого.
+
+    Ищем по границе слова: иначе «ban» внутри «Bankova» и «rune» внутри
+    «brunet» делали бы своим кого попало.
+    """
+    low = (text or "").lower()
+    for key in sorted(_NASHI | (_LIVE_TOP or _TOP), key=len, reverse=True):
+        if re.search(rf"\b{re.escape(key)}\b", low):
+            return key
+    return ""

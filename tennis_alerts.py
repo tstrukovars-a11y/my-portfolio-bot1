@@ -12,6 +12,7 @@
 import asyncio
 import html
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 
 from aiogram import Router, F, Bot
@@ -514,7 +515,10 @@ async def _pick_verdict(match) -> str:
 # проиграл неизвестному.
 
 EVENTS_KEY = "tennis_events_seen"   # что уже объявляли, чтобы не дважды
-EVENTS_MEMORY = 60                  # сколько номеров матчей помним
+EVENTS_MEMORY = 120                 # сколько номеров помним
+# Сколько событий за один обход. Лента новостей обновляется пачкой, и
+# без потолка канал однажды получит восемь сообщений подряд.
+MAX_EVENTS = 3
 
 RETIRED = ("retired", "withdrew", "withdrawn", "default", "walkover")
 
@@ -594,6 +598,7 @@ async def _news(tour: str) -> list:
             (article.get("headline") or "").strip(),
             (article.get("description") or "").strip(),
             (((article.get("links") or {}).get("web") or {}).get("href") or ""),
+            str(article.get("id") or ""),
         ))
     cache.update(at=time.time(), items=items)
     return items
@@ -604,39 +609,95 @@ def _surname(name: str) -> str:
     return parts[-1] if parts else ""
 
 
-async def _why_gone(tour: str, name: str):
-    """(объяснение, ссылка) из новостей — либо (пусто, пусто).
+# Полный текст заметки лежит отдельно от ленты: в списке только
+# заголовок и подводка. А подробности — в тексте: там и слова самого
+# игрока, и счёт на момент происшествия, и что было дальше.
+STORY_URL = "https://now.core.api.espn.com/v1/sports/news/{id}"
+_stories = {}
 
-    Ищем по фамилии: источник пишет «injured De Minaur retires», и это
-    всё, что честно можно сказать о причине.
+
+async def _story(article_id: str) -> str:
+    """Текст заметки без разметки. Пусто — значит, не достали."""
+    if not article_id:
+        return ""
+    if article_id in _stories:
+        return _stories[article_id]
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+            answer = await client.get(STORY_URL.format(id=article_id),
+                                      headers=tennis_live.API_HEADERS)
+            answer.raise_for_status()
+            data = answer.json()
+        raw = ((data.get("headlines") or [{}])[0].get("story") or "")
+    except Exception as e:
+        logging.warning(f"Заметка {article_id} не пришла: {e}")
+        return ""
+    text = re.sub(r"<[^>]+>", " ", raw)
+    text = re.sub(r"\s+", " ", text).strip()
+    _stories[article_id] = text
+    if len(_stories) > 80:
+        _stories.pop(next(iter(_stories)))
+    return text
+
+
+async def _why_gone(tour: str, name: str):
+    """(текст для пересказа, ссылка) — либо (пусто, пусто).
+
+    Берём все заметки про этого игрока, а не первую попавшуюся: про
+    громкое пишут дважды — коротко и подробно, — и подробности лежат во
+    второй. К заголовкам добавляем полный текст: там слова самого
+    игрока и то, что было дальше.
     """
     surname = _surname(name).lower()
     if not surname:
         return "", ""
-    for headline, description, link in await _news(tour):
-        haystack = f"{headline} {description}".lower()
-        if surname not in haystack:
+
+    found, link = [], ""
+    for headline, description, article_link, article_id in await _news(tour):
+        if surname not in f"{headline} {description}".lower():
             continue
-        return (description or headline)[:400], link
-    return "", ""
+        link = link or article_link
+        found.append(f"{headline}. {description}")
+        body = await _story(article_id)
+        if body:
+            found.append(body[:3000])
+        if len(found) >= 4:
+            break
+    return "\n\n".join(found)[:6000], link
 
 
 REASON_PROMPT = (
-    "Ты переводишь спортивную заметку на русский для телеграм-канала.\n\n"
-    "Верни ОДНО короткое предложение о том, почему игрок не доиграл "
-    "матч или снялся с турнира. Только то, что сказано в тексте.\n\n"
-    "Строгие запреты:\n"
-    "— не придумывай причину, которой в тексте нет;\n"
-    "— не ставь диагнозов и не уточняй характер травмы сверх сказанного;\n"
-    "— если причина в тексте не названа, верни пустую строку;\n"
-    "— никаких вступлений, кавычек и пояснений — только предложение.\n\n"
-    "Различай: снятие по ходу матча, отказ до начала, дисквалификация, "
-    "пропуск турнира. Это разные вещи, и путать их нельзя."
+    "Ты пересказываешь спортивную заметку по-русски для телеграм-канала "
+    "об одном эпизоде: игрок не доиграл матч, снялся, был "
+    "дисквалифицирован или пропускает турнир.\n\n"
+    "Верни от двух до четырёх коротких строк, каждая с новой строки, "
+    "каждая — законченное предложение. Порядок: что произошло; как это "
+    "сказалось на самом игроке и на других; слова самого игрока, если "
+    "они в тексте есть.\n\n"
+    "Пиши только то, что сказано в тексте. Это главное правило, и оно "
+    "важнее полноты.\n\n"
+    "Запрещено:\n"
+    "— называть причину, которой в тексте нет;\n"
+    "— ставить диагнозы и уточнять характер травмы сверх сказанного;\n"
+    "— дописывать последствия по здравому смыслу. Если про штраф, "
+    "потерянные очки, призовые или отстранение в тексте не сказано — "
+    "молчи о них, даже если так обычно бывает;\n"
+    "— оценки: «сенсация», «скандал», «позор», «шок»;\n"
+    "— вступления, заголовки, кавычки вокруг всего ответа, списки "
+    "с цифрами и маркерами.\n\n"
+    "Различай снятие по ходу матча, отказ до начала, дисквалификацию и "
+    "пропуск турнира: это разные вещи, и путать их нельзя.\n\n"
+    "Если в тексте нет ничего про этот эпизод — верни пустую строку."
 )
+
+# Строки длиннее этого в канал не пускаем: пересказ на абзац перестаёт
+# быть пометкой к событию и начинает соперничать с самой новостью.
+REASON_LIMIT = 600
 
 
 async def _reason_ru(english: str) -> str:
-    """Причина по-русски. Пусто — значит, сказать нечего."""
+    """Пересказ по-русски. Пусто — значит, сказать нечего."""
     if not english.strip():
         return ""
     try:
@@ -648,13 +709,19 @@ async def _reason_ru(english: str) -> str:
         return ""
     try:
         answer = await client.messages.create(
-            model="claude-haiku-4-5-20251001", max_tokens=200,
+            model="claude-haiku-4-5-20251001", max_tokens=400,
             system=REASON_PROMPT,
-            messages=[{"role": "user", "content": english[:1500]}])
-        return (answer.content[0].text or "").strip().strip('"«»')
+            messages=[{"role": "user", "content": english[:6000]}])
+        text = (answer.content[0].text or "").strip().strip('"«»')
     except Exception as e:
-        logging.warning(f"Причина снятия не перевелась: {e}")
+        logging.warning(f"Пересказ не собрался: {e}")
         return ""
+
+    # Маркеры списка модель иногда ставит вопреки запрету: убираем их
+    # здесь, а не ещё одной просьбой в промпте.
+    lines = [re.sub(r"^\s*[-–—•*\d.)]+\s*", "", x).strip()
+             for x in text.splitlines() if x.strip()]
+    return "\n".join(lines)[:REASON_LIMIT]
 
 
 def _event_kind(match) -> str:
@@ -800,6 +867,82 @@ async def find_events(tour: str):
     return out
 
 
+# Не всё громкое видно в табло. Дисквалификация Медведева в Пекине
+# пришла туда обычным поражением: счёт, победитель, ничего особенного.
+# В ленте новостей это заголовок из восьми слов.
+#
+# Поэтому третий вид событий берётся не из табло, а из новостей: игрок,
+# которого читатель знает, плюс слово, означающее происшествие.
+# Снятия по ходу матча сюда не входят: их видно в табло, и там о них
+# известно больше. Здесь то, чего в табло нет совсем.
+LOUD = ("disqualif", "dq'd", "dq’d", "default", "withdraw", "withdrew",
+        "pulls out", "pulled out", "miss rest", "miss the rest", "will miss",
+        "ruled out", "out of the", "out of china", "out of", "suspend",
+        "banned", "fined", "forfeit")
+
+# Заголовок о победе — не происшествие, даже когда в нём есть «injured»:
+# «Alcaraz retains title following injury layoff» рассказывает о
+# возвращении, а не о том, что кто-то снялся.
+WINS = ("wins", "win ", "beats", "beat ", "retains", "reach", "reaches",
+        "advances", "defeats", "overcomes", "rallies", "улучш")
+
+NEWS_HEAD = "📣 <b>Вне корта</b>"
+
+
+def _loud_about(headline: str, description: str) -> str:
+    """Имя известного игрока, если заметка о происшествии. Иначе пусто.
+
+    Игрока ищем в заголовке, а не во всей заметке: в подводке назван и
+    соперник, и получалось «отказался Легечка», когда отказался другой.
+    """
+    head = (headline or "").lower()
+    if not any(word in head for word in LOUD):
+        return ""
+    if any(word in head for word in WINS):
+        return ""
+    return players_ru.first_known(head)
+
+
+async def find_news_events(tour: str):
+    """[(id заметки, имя, заголовок, подводка, ссылка)] громкого вне табло"""
+    out = []
+    for headline, description, link, article_id in await _news(tour):
+        who = _loud_about(headline, description)
+        if who and article_id:
+            out.append((article_id, who, headline, description, link))
+    return out
+
+
+async def _news_event_text(tour: str, who: str, headline: str,
+                           description: str, link: str,
+                           article_id: str) -> str:
+    """Сообщение о событии вне корта — пересказом, а не заголовком.
+
+    Материал собираем по всем заметкам об этом игроке, а не по той
+    одной, что попалась первой: про громкое ESPN ставит и видео, и
+    текст, а видео приходит без текста вовсе. Взяв первую, можно
+    получить восемь слов заголовка там, где рядом лежат три тысячи
+    знаков с его собственными словами.
+    """
+    gathered, _ = await _why_gone(tour, who)
+    source = gathered or f"{headline}. {description}\n\n{await _story(article_id)}"
+    recap = await _reason_ru(source)
+    if not recap:
+        # Без пересказа остаётся английский заголовок — это не публикация
+        # для русского канала, лучше промолчать.
+        return ""
+
+    lines = [NEWS_HEAD, ""]
+    russian = players_ru.ru(who)
+    if russian:
+        lines.append(f"<b>{html.escape(russian)}</b>")
+    lines.append(html.escape(recap).replace("\n", "\n"))
+    if link:
+        lines.append("")
+        lines.append(f'<a href="{html.escape(link)}">Подробнее у источника</a>')
+    return "\n".join(lines)
+
+
 async def publish_events(bot: Bot, chat: int, thread=None) -> str:
     """Объявить то, что случилось только что. Каждое событие — один раз."""
     seen = await _seen()
@@ -823,6 +966,36 @@ async def publish_events(bot: Bot, chat: int, thread=None) -> str:
                 logging.error(f"Событие {key} не вышло: {e}")
                 continue
             fresh.append(key)
+            posted += 1
+            await asyncio.sleep(3.2)
+
+        # Вне корта: дисквалификация, отказ от турнира, травма на
+        # месяц. В табло этого нет — дисквалификация приходит туда
+        # обычным поражением.
+        for article_id, who, headline, description, link in \
+                await find_news_events(tour):
+            key = f"n{article_id}"
+            # О громком пишут дважды — коротко и подробно. Для читателя
+            # это одно событие, поэтому помним ещё и игрока: вторая
+            # заметка про того же человека в канал не пойдёт.
+            same = f"p{tour}:{who}"
+            if key in seen or same in seen or same in fresh \
+                    or len(fresh) >= MAX_EVENTS:
+                continue
+            text = await _news_event_text(tour, who, headline, description,
+                                          link, article_id)
+            if not text:
+                # Пересказ не собрался — заголовок по-английски в русский
+                # канал не ставим. Запомним, чтобы не дёргать снова.
+                fresh.append(key)
+                continue
+            try:
+                await bot.send_message(chat, text, message_thread_id=thread,
+                                       disable_web_page_preview=True)
+            except Exception as e:
+                logging.error(f"Событие {key} не вышло: {e}")
+                continue
+            fresh.extend((key, same))
             posted += 1
             await asyncio.sleep(3.2)
 

@@ -541,3 +541,111 @@ def test_an_unranked_player_is_not_called_the_99th():
     assert ta._seed({"curatedRank": {"current": 99}}) == ""
     assert ta._seed({"curatedRank": {"current": 5}}) == "5"
     assert ta._seed({}) == ""
+
+
+# --- события вне корта ------------------------------------------------
+#
+# Дисквалификация Медведева пришла бы в табло обычным поражением:
+# счёт, победитель, ничего особенного. В ленте новостей это заголовок
+# из восьми слов. Поэтому третий источник — новости.
+
+def test_a_disqualification_is_an_event():
+    """Тот самый случай: «сняли Медведева» — на деле дисквалификация."""
+    assert ta._loud_about(
+        "Daniil Medvedev DQ'd after hitting ball into stands "
+        "that strikes spectator's face", "") == "medvedev"
+
+
+def test_missing_the_rest_of_the_season_is_an_event():
+    assert ta._loud_about(
+        "Jannik Sinner to miss rest of year due to knee inflammation",
+        "") == "sinner"
+
+
+def test_leaving_a_tournament_is_an_event():
+    assert ta._loud_about(
+        "Medvedev out of China Open after smashing ball in fan's face",
+        "") == "medvedev"
+
+
+def test_a_win_is_not_an_event_even_with_the_word_injury():
+    """«Alcaraz retains title following injury layoff» — о возвращении,
+    а не о том, что кто-то снялся."""
+    assert ta._loud_about(
+        "Carlos Alcaraz retains Japan Open title in big step "
+        "following injury layoff", "") == ""
+
+
+def test_an_ordinary_win_is_not_an_event():
+    assert ta._loud_about(
+        "No. 3 Alcaraz overcomes big deficit to reach Japan Open final",
+        "") == ""
+
+
+def test_league_news_is_about_nobody():
+    assert ta._loud_about(
+        "WTA passes 'major milestone' with equal prize money at WTA 1000s",
+        "") == ""
+
+
+def test_the_player_is_taken_from_the_headline_not_the_blurb():
+    """В подводке назван и соперник: получалось «отказался Легечка»,
+    когда отказался другой."""
+    who = ta._loud_about(
+        "Medvedev out of China Open",
+        "Djokovic advances to the final Tuesday vs. Alex de Minaur.")
+    assert who == "medvedev"
+
+
+def test_a_surname_inside_another_word_is_not_a_player():
+    """«ban» внутри «Bankova» и «rune» внутри «brunet» делали бы своим
+    кого попало."""
+    import players_ru
+    assert players_ru.first_known("brunet wins in bankova street") == ""
+
+
+def test_an_event_without_a_recap_is_not_published(monkeypatch):
+    """Английский заголовок в русский канал не ставим: лучше промолчать,
+    чем выдать читателю строку, которую он не прочтёт."""
+    import asyncio
+
+    async def nothing(english):
+        return ""
+
+    async def gathered(tour, name):
+        return "some english text", "https://espn.com/1"
+
+    monkeypatch.setattr(ta, "_reason_ru", nothing)
+    monkeypatch.setattr(ta, "_why_gone", gathered)
+    text = asyncio.run(ta._news_event_text(
+        "atp", "medvedev", "Medvedev DQ'd", "", "https://espn.com/1", "1"))
+    assert text == ""
+
+
+def test_the_recap_reaches_the_channel(monkeypatch):
+    import asyncio
+
+    async def recap(english):
+        return ("Медведев дисквалифицирован в полуфинале.\n"
+                "Мяч попал зрителю в лицо.\n"
+                "Он извинился перед пострадавшим.")
+
+    async def gathered(tour, name):
+        return "english story", "https://espn.com/1"
+
+    monkeypatch.setattr(ta, "_reason_ru", recap)
+    monkeypatch.setattr(ta, "_why_gone", gathered)
+    text = asyncio.run(ta._news_event_text(
+        "atp", "medvedev", "Medvedev DQ'd", "", "https://espn.com/1", "1"))
+    assert "Вне корта" in text
+    assert "дисквалифицирован" in text and "извинился" in text
+    assert "espn.com/1" in text
+
+
+def test_the_recap_prompt_forbids_inventing_consequences():
+    """Про штраф, очки и призовые в заметке о Медведеве не сказано ни
+    слова. Дописать их «по здравому смыслу» — выдумать наказание."""
+    low = ta.REASON_PROMPT.lower()
+    for word in ("очк", "призов", "штраф"):
+        assert word in low, f"запрет про «{word}» потерялся"
+    assert "не сказано" in low or "нет" in low
