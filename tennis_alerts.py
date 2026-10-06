@@ -528,6 +528,135 @@ def _side_name(side) -> str:
     return ((side.get("athlete") or {}).get("displayName") or "").strip()
 
 
+def _seed(side) -> str:
+    """Посев или место в рейтинге — «(5)» в табличке источника"""
+    rank = (side.get("curatedRank") or {}).get("current")
+    try:
+        rank = int(rank)
+    except (TypeError, ValueError):
+        return ""
+    # ESPN ставит 99 тем, у кого места нет: это не 99-я ракетка.
+    return str(rank) if 0 < rank < 99 else ""
+
+
+def _moment(match) -> str:
+    """Счёт на минуту снятия.
+
+    Причины снятия в табличке нет, а вот до какого места доиграли —
+    есть. «Снялся при 4:6, 2:3» говорит больше, чем «снялся»: видно,
+    началось ли это в первом же гейме или человек тянул два сета.
+    """
+    sides = (match.get("sides") or [])[:2]
+    if len(sides) < 2:
+        return ""
+    rows = [[x.get("value") for x in (s.get("linescores") or [])]
+            for s in sides]
+    pairs = []
+    for a, b in zip(rows[0], rows[1]):
+        if a is None or b is None:
+            continue
+        pairs.append(f"{int(a)}:{int(b)}")
+    return ", ".join(pairs)
+
+
+# Новости источника — единственное место, где написано, из-за чего
+# именно снялся игрок: в самом табло этого нет, там только «Retired».
+#
+# Выдумывать причину нельзя, и случай Медведева показывает почему: его
+# не сняли по травме, его дисквалифицировали за мяч, улетевший в лицо
+# зрителю. Фраза «снялся из-за травмы» была бы не домыслом даже, а
+# прямой неправдой о живом человеке.
+NEWS_URL = "https://site.api.espn.com/apis/site/v2/sports/tennis/{tour}/news"
+NEWS_TTL = 900
+_news_cache = {"atp": {"at": 0, "items": []}, "wta": {"at": 0, "items": []}}
+
+
+async def _news(tour: str) -> list:
+    """[(заголовок, описание, ссылка)] свежих новостей тура"""
+    import time
+    cache = _news_cache.setdefault(tour, {"at": 0, "items": []})
+    if time.time() - cache["at"] < NEWS_TTL and cache["items"]:
+        return cache["items"]
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+            answer = await client.get(NEWS_URL.format(tour=tour),
+                                      headers=tennis_live.API_HEADERS)
+            answer.raise_for_status()
+            data = answer.json()
+    except Exception as e:
+        logging.warning(f"Новости {tour} не пришли: {e}")
+        return cache["items"]
+
+    items = []
+    for article in (data.get("articles") or [])[:20]:
+        items.append((
+            (article.get("headline") or "").strip(),
+            (article.get("description") or "").strip(),
+            (((article.get("links") or {}).get("web") or {}).get("href") or ""),
+        ))
+    cache.update(at=time.time(), items=items)
+    return items
+
+
+def _surname(name: str) -> str:
+    parts = [p for p in (name or "").replace("-", " ").split() if len(p) > 2]
+    return parts[-1] if parts else ""
+
+
+async def _why_gone(tour: str, name: str):
+    """(объяснение, ссылка) из новостей — либо (пусто, пусто).
+
+    Ищем по фамилии: источник пишет «injured De Minaur retires», и это
+    всё, что честно можно сказать о причине.
+    """
+    surname = _surname(name).lower()
+    if not surname:
+        return "", ""
+    for headline, description, link in await _news(tour):
+        haystack = f"{headline} {description}".lower()
+        if surname not in haystack:
+            continue
+        return (description or headline)[:400], link
+    return "", ""
+
+
+REASON_PROMPT = (
+    "Ты переводишь спортивную заметку на русский для телеграм-канала.\n\n"
+    "Верни ОДНО короткое предложение о том, почему игрок не доиграл "
+    "матч или снялся с турнира. Только то, что сказано в тексте.\n\n"
+    "Строгие запреты:\n"
+    "— не придумывай причину, которой в тексте нет;\n"
+    "— не ставь диагнозов и не уточняй характер травмы сверх сказанного;\n"
+    "— если причина в тексте не названа, верни пустую строку;\n"
+    "— никаких вступлений, кавычек и пояснений — только предложение.\n\n"
+    "Различай: снятие по ходу матча, отказ до начала, дисквалификация, "
+    "пропуск турнира. Это разные вещи, и путать их нельзя."
+)
+
+
+async def _reason_ru(english: str) -> str:
+    """Причина по-русски. Пусто — значит, сказать нечего."""
+    if not english.strip():
+        return ""
+    try:
+        import block4_claude
+        client = block4_claude.claude_client
+    except Exception:
+        return ""
+    if client is None:
+        return ""
+    try:
+        answer = await client.messages.create(
+            model="claude-haiku-4-5-20251001", max_tokens=200,
+            system=REASON_PROMPT,
+            messages=[{"role": "user", "content": english[:1500]}])
+        return (answer.content[0].text or "").strip().strip('"«»')
+    except Exception as e:
+        logging.warning(f"Причина снятия не перевелась: {e}")
+        return ""
+
+
 def _event_kind(match) -> str:
     """Чем этот матч примечателен: «retired», «upset» или ничем.
 
@@ -561,11 +690,13 @@ def _event_kind(match) -> str:
     return ""
 
 
-def _event_text(kind: str, match, tour: str) -> str:
-    """Сообщение о событии — коротко и без оценок.
+async def _event_text(kind: str, match, tour: str) -> str:
+    """Сообщение о событии — с подробностями, но без оценок.
 
-    Оценки здесь лишние: «сенсация» и «разгром» читатель поставит сам,
-    а ошибётся в них бот, а не он.
+    Оценки лишние: «сенсация» и «разгром» читатель поставит сам, а
+    ошибётся в них бот, а не он. Подробности — наоборот, главное: «снят»
+    без «из-за чего» оставляет читателя с тем же вопросом, с которым он
+    пришёл.
     """
     sides = (match.get("sides") or [])[:2]
     win = next((s for s in sides if s.get("winner")), None)
@@ -573,25 +704,65 @@ def _event_text(kind: str, match, tour: str) -> str:
 
     lines = [EVENT_HEADS.get(kind, EVENT_HEADS["upset"])]
     event = _event(match)
-    if event:
-        lines.append(f"<i>{html.escape(event)}</i>")
+    rnd = players_ru.rnd(match.get("round") or "")
+    where = " · ".join(x for x in (event, rnd) if x)
+    if where:
+        lines.append(f"<i>{html.escape(where)}</i>")
+    lines.append("")
 
     if kind == "retired":
         # Снялся тот, кто не победил: у снятия в табличке есть победитель.
         who = lose or sides[0]
         gone = "снялась" if tour == "wta" else "снялся"
-        lines.append(f"{html.escape(tennis_live._named(who))} {gone}.")
+        lines.append(f"<b>{html.escape(tennis_live._named(who))}</b> {gone}.")
+
+        moment = _moment(match)
+        if moment:
+            lines.append(f"Доиграли до <code>{html.escape(moment)}</code>.")
+
+        reason, link = await _why_gone(tour, _side_name(who))
+        russian = await _reason_ru(reason)
+        if russian:
+            lines.append("")
+            lines.append(html.escape(russian))
+        if link:
+            lines.append(f'<a href="{html.escape(link)}">Подробнее у источника</a>')
+
         if win:
+            seed = _seed(win)
+            mark = f" ({seed})" if seed else ""
+            lines.append("")
             lines.append(f"Дальше проходит "
-                         f"{html.escape(tennis_live._named(win))}.")
+                         f"{html.escape(tennis_live._named(win))}{mark}.")
         return "\n".join(lines)
 
     line = _result_line(match)
     if line:
         lines.append(line)
+
+    # Разрыв в рейтинге и есть то, что делает поражение неожиданным:
+    # «34-я обыграла первую» объясняет само себя.
+    if win and lose:
+        high, low = _seed(lose), _seed(win)
+        if high and low:
+            lines.append(f"{html.escape(_side_name_ru(lose))} — {high}-я ракетка, "
+                         f"{html.escape(_side_name_ru(win))} — {low}-я.")
     if lose:
+        lines.append("")
         lines.append(f"{html.escape(tennis_live._named(lose))} вылетает.")
+
+    reason, link = await _why_gone(tour, _side_name(lose) if lose else "")
+    russian = await _reason_ru(reason) if reason else ""
+    if russian:
+        lines.append("")
+        lines.append(html.escape(russian))
+    if link:
+        lines.append(f'<a href="{html.escape(link)}">Подробнее у источника</a>')
     return "\n".join(lines)
+
+
+def _side_name_ru(side) -> str:
+    return players_ru.short(_side_name(side)) or _side_name(side)
 
 
 async def _seen() -> set:
@@ -641,8 +812,9 @@ async def publish_events(bot: Bot, chat: int, thread=None) -> str:
                 continue
             try:
                 await bot.send_message(
-                    chat, _event_text(kind, match, tour),
+                    chat, await _event_text(kind, match, tour),
                     message_thread_id=thread,
+                    disable_web_page_preview=True,
                     reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
                         InlineKeyboardButton(
                             text=f"🗓 Сетка {tennis_live.TOURS[tour]['title']}",

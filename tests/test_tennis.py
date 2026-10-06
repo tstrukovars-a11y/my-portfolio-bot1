@@ -448,25 +448,96 @@ def test_a_retirement_counts_even_before_the_match_is_closed():
     assert ta._event_kind(m) == "retired"
 
 
-def test_the_retirement_message_names_who_left():
+def _text(kind, match, tour, monkeypatch, reason="", link=""):
+    """Сообщение о событии без похода в сеть за новостями"""
+    import asyncio
+
+    async def why(t, name):
+        return reason, link
+
+    async def ru(english):
+        return "Снялся из-за травмы колена." if english else ""
+
+    monkeypatch.setattr(ta, "_why_gone", why)
+    monkeypatch.setattr(ta, "_reason_ru", ru)
+    return asyncio.run(ta._event_text(kind, match, tour))
+
+
+def test_the_retirement_message_names_who_left(monkeypatch):
     m = _played("Daniil Medvedev", "Totally Unknown Player",
                winner="Totally Unknown Player", state="Retired")
-    text = ta._event_text("retired", m, "atp")
+    text = _text("retired", m, "atp", monkeypatch)
     assert "Снятие" in text
     assert "Медведев" in text and "снялся" in text
 
 
-def test_a_womans_retirement_is_said_in_her_own_form():
+def test_a_womans_retirement_is_said_in_her_own_form(monkeypatch):
     m = _played("Aryna Sabalenka", "Totally Unknown Player",
                winner="Totally Unknown Player", state="Retired")
-    assert "снялась" in ta._event_text("retired", m, "wta")
+    assert "снялась" in _text("retired", m, "wta", monkeypatch)
 
 
-def test_the_message_does_not_judge_the_played():
+def test_the_message_does_not_judge_the_played(monkeypatch):
     """«Сенсация» и «разгром» читатель поставит сам, а ошибётся в них
     бот, а не он."""
     m = _played("Aryna Sabalenka", "Totally Unknown Player",
                winner="Totally Unknown Player")
-    text = ta._event_text("upset", m, "wta").lower()
+    text = _text("upset", m, "wta", monkeypatch).lower()
     for word in ("сенсац", "разгром", "позор", "провал", "шок"):
         assert word not in text, word
+
+
+# --- «снят» без «из-за чего» оставляет тот же вопрос -------------------
+
+def test_the_reason_reaches_the_reader(monkeypatch):
+    m = _played("Daniil Medvedev", "Totally Unknown Player",
+               winner="Totally Unknown Player", state="Retired")
+    text = _text("retired", m, "atp", monkeypatch,
+                 reason="injured Medvedev retires",
+                 link="https://espn.com/story/1")
+    assert "травмы колена" in text
+    assert "espn.com/story/1" in text
+
+
+def test_without_a_source_nothing_is_invented(monkeypatch):
+    """Случай Медведева и показал, зачем это правило: его не сняли по
+    травме, его дисквалифицировали за мяч в лицо зрителю. «Снялся
+    из-за травмы» было бы не домыслом, а неправдой о живом человеке."""
+    m = _played("Daniil Medvedev", "Totally Unknown Player",
+               winner="Totally Unknown Player", state="Retired")
+    text = _text("retired", m, "atp", monkeypatch).lower()
+    for word in ("травм", "из-за", "болел", "повредил"):
+        assert word not in text, word
+
+
+def test_the_score_at_the_moment_is_shown(monkeypatch):
+    """«Снялся при 6:4, 3:2» говорит больше, чем «снялся»: видно,
+    началось ли это сразу или человек тянул два сета."""
+    m = _played("Daniil Medvedev", "Totally Unknown Player",
+               winner="Totally Unknown Player", state="Retired")
+    m["sides"][1]["linescores"] = [{"value": 6.0}, {"value": 3.0}]
+    m["sides"][0]["linescores"] = [{"value": 4.0}, {"value": 2.0}]
+    assert "4:6, 2:3" in _text("retired", m, "atp", monkeypatch)
+
+
+def test_a_match_that_never_started_shows_no_score(monkeypatch):
+    m = _played("Daniil Medvedev", "Totally Unknown Player",
+               winner="Totally Unknown Player", state="Walkover")
+    assert "Доиграли" not in _text("retired", m, "atp", monkeypatch)
+
+
+def test_the_ranking_gap_explains_the_surprise(monkeypatch):
+    """«34-я обыграла первую» объясняет само себя."""
+    m = _played("Aryna Sabalenka", "Totally Unknown Player",
+               winner="Totally Unknown Player")
+    m["sides"][0]["curatedRank"] = {"current": 1}
+    m["sides"][1]["curatedRank"] = {"current": 34}
+    text = _text("upset", m, "wta", monkeypatch)
+    assert "1-я ракетка" in text and "34-я" in text
+
+
+def test_an_unranked_player_is_not_called_the_99th():
+    """ESPN ставит 99 тем, у кого места нет."""
+    assert ta._seed({"curatedRank": {"current": 99}}) == ""
+    assert ta._seed({"curatedRank": {"current": 5}}) == "5"
+    assert ta._seed({}) == ""
