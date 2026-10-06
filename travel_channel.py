@@ -39,11 +39,34 @@ async def _channel():
         return None
 
 
-def _post_text(country: str, place: str, text: str) -> str:
+def _post_text(country: str, place: str, text: str, limit: int = 0) -> str:
     """Один и тот же вид у нового поста и у правки — иначе правка меняет
-    не только текст, но и оформление, и это видно как мигание."""
+    не только текст, но и оформление, и это видно как мигание.
+
+    Место стоит в конце, под текстом, и называет страну и город.
+
+    Сверху оно мешало: в ленте первым читается заголовок, и вместо
+    начала рассказа человек получал адрес — «Ницца · Франция», когда ещё
+    не знает, о чём речь. Внизу та же строка работает как подпись под
+    фотографией: дочитал — и видишь, где это было.
+
+    Страна впереди города: по стране ищут и по стране вспоминают, а
+    город без страны половине читателей ничего не говорит.
+    """
     body = (text or "").strip()
-    return f"📍 {place} · {flags.with_flag(country)}\n\n{body}".strip()
+    where = " · ".join(x for x in (flags.with_flag(country), (place or "").strip())
+                       if x)
+    if not where:
+        return body[:limit] if limit else body
+
+    tail = f"\n\n📍 {where}"
+    if limit and len(body) + len(tail) > limit:
+        # Подпись к фотографии обрезается по тысяче знаков, и обрезается
+        # с конца — то есть ровно там, где теперь стоит место. Режем
+        # рассказ, а не адрес: без последней фразы пост остаётся постом,
+        # без страны и города — это снимок без подписи.
+        body = body[:max(0, limit - len(tail) - 1)].rstrip() + "…"
+    return f"{body}{tail}".strip()
 
 
 @router.message(F.text.startswith("/travel_channel"))
@@ -99,7 +122,10 @@ async def _run(bot: Bot, chat: int, places, note: Message):
 
     while queue:
         place_id, country, place, text, photo, msg_id = queue.pop(0)
-        body = _post_text(country, place, text)
+        # Предел знаем заранее: у поста с фотографией подпись
+        # короче вчетверо, и место обязано уцелеть в обоих.
+        limit = MAX_CAPTION if photo else MAX_MESSAGE
+        body = _post_text(country, place, text, limit)
         try:
             if msg_id:
                 # Пост уже был — правим его, а не публикуем второй раз.
@@ -107,11 +133,11 @@ async def _run(bot: Bot, chat: int, places, note: Message):
                     if photo:
                         await bot.edit_message_caption(
                             chat_id=chat, message_id=msg_id,
-                            caption=body[:MAX_CAPTION], parse_mode=None)
+                            caption=body, parse_mode=None)
                     else:
                         await bot.edit_message_text(
                             chat_id=chat, message_id=msg_id,
-                            text=body[:MAX_MESSAGE], parse_mode=None)
+                            text=body, parse_mode=None)
                     edited += 1
                 except TelegramBadRequest as e:
                     if "not modified" in str(e).lower():
@@ -127,15 +153,15 @@ async def _run(bot: Bot, chat: int, places, note: Message):
                     except Exception as drop:
                         logging.warning(f"Старый пост «{place}» не снялся: {drop}")
                     sent = await bot.send_photo(chat, photo,
-                                                caption=body[:MAX_CAPTION], parse_mode=None)
+                                                caption=body, parse_mode=None)
                     await database.set_travel_msg(place_id, sent.message_id)
                     edited += 1
             else:
                 if photo:
                     sent = await bot.send_photo(chat, photo,
-                                                caption=body[:MAX_CAPTION], parse_mode=None)
+                                                caption=body, parse_mode=None)
                 else:
-                    sent = await bot.send_message(chat, body[:MAX_MESSAGE], parse_mode=None)
+                    sent = await bot.send_message(chat, body, parse_mode=None)
                 await database.set_travel_msg(place_id, sent.message_id)
                 new += 1
         except TelegramRetryAfter as e:
