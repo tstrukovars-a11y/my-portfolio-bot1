@@ -1240,6 +1240,21 @@ async def _explain_row():
                              callback_data="tree_open")]])
 
 
+async def _gen_row():
+    """«Как это касается меня» — под генетикой, своя.
+
+    У экономики такая кнопка есть, и работает она хорошо: человек
+    прочитал про ставку и не понял, что ему с этим делать. У генетики
+    вопрос тот же и даже острее — но кнопки не было, потому что блок
+    жил внутри утреннего выпуска и места под свою клавиатуру не имел.
+    """
+    import tree
+    if not await tree.tree("live", "g"):
+        return None
+    return [InlineKeyboardButton(text="🧬 Как это касается меня",
+                                 callback_data="tree_open")]
+
+
 async def gen_alert(bot) -> int:
     """Сказать владелице лично о том, что она просила не пропускать.
 
@@ -1514,17 +1529,21 @@ async def publish_slot(bot: Bot, force: str = None) -> str:
             parts.append(f"_{_motto(await _local_now())}_")
         parts.append(news)
 
-        # Генетика идёт до курсов: это чтение, а курсы — цифра, к которой
-        # возвращаются. Цифру внизу найти легче, чем текст между блоками.
+        # Генетика больше не внутри выпуска, а отдельным постом следом.
+        #
+        # Внутри она была третьим блоком из шести, между курсами и
+        # погодой: читатель, пришедший за ней, искал её глазами, а
+        # пришедший за новостями — пролистывал. И главное, у блока
+        # внутри поста не может быть своей клавиатуры — поэтому у
+        # экономики кнопка «как это касается меня» была, а у генетики
+        # нет, хотя вопрос там острее.
         try:
             genetics = await _genetics_post()
-            if genetics:
-                parts.append(genetics)
-            # Отмеченное владелица получает отдельно и лично: в канале
-            # такая новость стоит между курсами и погодой.
+            # Отмеченное владелица получает отдельно и лично.
             await gen_alert(bot)
         except Exception as e:
             logging.warning(f"Дайджест: обзор генетики не собрался: {e}")
+            genetics = ""
 
         try:
             import fx_rates
@@ -1587,6 +1606,30 @@ async def publish_slot(bot: Bot, force: str = None) -> str:
         # и до группы они не доходили: дубль звали только из раздельных
         # публикаций, а утренний выпуск идёт своим путём.
         await _mirror(bot, chat, sent.message_id, "morning")
+
+        # Генетика — вторым постом, со своей кнопкой. Пауза не для
+        # красоты: два сообщения подряд Telegram показывает одним
+        # уведомлением, и второе теряется.
+        if genetics:
+            await asyncio.sleep(3.2)
+            # Только разбор. Кнопку помощи со звонком под генетикой не
+            # ставим — она для путешествий, так и было сказано.
+            gen_rows = [row for row in (await _gen_row(),) if row]
+            try:
+                gen_sent = await bot.send_message(
+                    chat, genetics[:MAX_MESSAGE],
+                    message_thread_id=thread,
+                    parse_mode="Markdown",
+                    disable_web_page_preview=True,
+                    reply_markup=(InlineKeyboardMarkup(inline_keyboard=gen_rows)
+                                  if gen_rows else None))
+                await _mirror(bot, chat, gen_sent.message_id, "genetics")
+            except Exception as e:
+                # Утро уже вышло — ронять весь выпуск из-за генетики
+                # нельзя: пост в канале есть, и это важнее.
+                logging.error(f"Дайджест: генетика не вышла: {e}")
+                return "утренние новости (генетика не вышла)"
+            return "утренние новости и генетика"
         return "утренние новости"
 
     if slot == "results":

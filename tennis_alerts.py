@@ -1796,6 +1796,18 @@ async def _events_to_channel(bot: Bot) -> None:
         logging.warning(f"События в канал не ушли: {e}")
 
 
+async def _champion_to_channel(bot: Bot) -> None:
+    """Пост о победителе турнира, если канал задан"""
+    try:
+        import digest
+        import tennis_champion
+        chat, thread = await digest._target()
+        if chat:
+            await tennis_champion.publish(bot, chat, thread)
+    except Exception as e:
+        logging.warning(f"Чемпион в канал не ушёл: {e}")
+
+
 async def alerts_scheduler(bot: Bot):
     """Раз в две минуты смотрит, кому пора слать ссылку.
 
@@ -1819,6 +1831,10 @@ async def alerts_scheduler(bot: Bot):
             # быть перестало.
             if ticks % 5 == 2:
                 await _events_to_channel(bot)
+            # Чемпион — реже всех: финалы идут раз в неделю на турнир,
+            # а пост о них тянет рейтинг и карточку из Википедии.
+            if ticks % 15 == 7:
+                await _champion_to_channel(bot)
             ticks += 1
 
             lead = await _lead()
