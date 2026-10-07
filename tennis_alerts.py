@@ -416,13 +416,19 @@ async def publish_schedule(bot: Bot, chat: int, thread=None) -> str:
             text=f"🗓 Сетка {tennis_live.TOURS[tour]['title']}",
             url=tennis_live.TOURS[tour]["draws"])])
 
+        body = "\n".join(lines)
         try:
-            await bot.send_message(chat, "\n".join(lines),
+            await bot.send_message(chat, body,
                                    message_thread_id=thread,
                                    reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
             posted += 1
         except Exception as e:
             logging.error(f"Расписание {tour} не вышло: {e}")
+        # Подписчикам — сам список, а не «смотрите в канале». Так было
+        # раньше, и это ровно то нажатие, на котором теряется половина.
+        # Кнопок «напомнить» в копии нет: они общие на канал, а в личке
+        # счёт на них всё равно не обновится.
+        await _to_subscribers("tennis", bot, body)
         await asyncio.sleep(3.2)
 
     return f"расписание: постов {posted}" if posted else "матчей на сегодня нет"
@@ -832,6 +838,25 @@ def _side_name_ru(side) -> str:
     return players_ru.short(_side_name(side)) or _side_name(side)
 
 
+async def _to_subscribers(kind: str, bot: Bot, text: str) -> None:
+    """Копию — тем, кто выбрал именно этот вид теннисных постов.
+
+    Копию, а не «смотрите в канале»: человек уже в переписке с ботом, и
+    на лишнем нажатии теряется половина. Так устроены и остальные
+    подписки, и расходиться с ними здесь незачем.
+
+    Ошибка рассылки не должна ронять публикацию: пост в канале уже
+    вышел, и это важнее.
+    """
+    if not (text or "").strip():
+        return
+    try:
+        import subs
+        await subs.deliver(bot, kind, text)
+    except Exception as e:
+        logging.warning(f"Личная рассылка «{kind}» не прошла: {e}")
+
+
 async def _seen() -> set:
     raw = await database.get_setting(EVENTS_KEY) or ""
     return {x for x in raw.split(",") if x}
@@ -967,6 +992,8 @@ async def publish_events(bot: Bot, chat: int, thread=None) -> str:
                 continue
             fresh.append(key)
             posted += 1
+            await _to_subscribers("tennis_loud", bot,
+                                  await _event_text(kind, match, tour))
             await asyncio.sleep(3.2)
 
         # Вне корта: дисквалификация, отказ от турнира, травма на
@@ -997,6 +1024,7 @@ async def publish_events(bot: Bot, chat: int, thread=None) -> str:
                 continue
             fresh.extend((key, same))
             posted += 1
+            await _to_subscribers("tennis_loud", bot, text)
             await asyncio.sleep(3.2)
 
     if fresh:
@@ -1067,6 +1095,8 @@ async def publish_results(bot: Bot, chat: int, thread=None) -> str:
             return f"ошибка: {e}"
         if not last:
             await asyncio.sleep(3.2)
+
+    await _to_subscribers("tennis_results", bot, parts[0])
     return f"итоги вчерашнего дня: матчей {total}, сообщений {len(parts)}"
 
 

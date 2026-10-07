@@ -1641,14 +1641,10 @@ async def publish_slot(bot: Bot, force: str = None) -> str:
 
     if slot == "tennis":
         import tennis_alerts
+        # Рассылку подписчикам делает сам publish_schedule: там есть
+        # текст поста, а здесь была только строка отчёта — и в личку
+        # уходило «смотрите в канале» вместо самого расписания.
         result = await tennis_alerts.publish_schedule(bot, chat, thread)
-        try:
-            import subs
-            if "нет" not in result.lower():
-                await subs.deliver(bot, "tennis",
-                                   "🎾 Расписание на сегодня — в канале.")
-        except Exception as e:
-            logging.warning(f"Личная рассылка тенниса не прошла: {e}")
         if "нет" not in result:
             await _mark_slot(slot)
         return result

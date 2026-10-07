@@ -483,13 +483,38 @@ def test_planned_programs_are_named():
 # одна-две. Ошибка здесь — прислать не то, что выбрали: это не мелочь,
 # это повод отписаться совсем.
 
-def test_blocks_match_digest_slots():
-    """Подписка цепляется к существующему расписанию, а не заводит своё."""
-    import digest
+def test_every_block_is_actually_delivered():
+    """Галочка, которую никто не рассылает, — обещание, которое никто не
+    выполняет: человек отмечает «итоги дня» и не получает ничего.
+
+    Раньше здесь сверялись слоты дайджеста. Проверка держалась, пока всё
+    выходило по дневной сетке; теннисные типы выходят своим
+    планировщиком, и сетка перестала быть ответом на вопрос «кто это
+    пришлёт». Вопрос остался, ответ другой: кто-то обязан звать
+    deliver с этим ключом.
+    """
+    import glob
     import subs
 
-    slots = {slot for _, slot, _ in digest.SCHEDULE}
-    assert set(subs.BLOCKS) <= slots
+    called = set()
+    for path in glob.glob("*.py"):
+        source = open(path, encoding="utf-8").read()
+        for key in subs.BLOCKS:
+            if f'"{key}"' in source and "deliver" in source:
+                called.add(key)
+
+    missing = set(subs.BLOCKS) - called
+    assert not missing, f"эти блоки никто не рассылает: {sorted(missing)}"
+
+
+def test_groups_name_real_blocks():
+    """Группа, ссылающаяся на несуществующий ключ, рисует кнопку, которая
+    ничего не переключает."""
+    import subs
+
+    for group in subs.GROUPS.values():
+        for part in group["parts"]:
+            assert part in subs.BLOCKS, part
 
 
 def test_choice_is_remembered(settings):
@@ -541,3 +566,100 @@ def test_delivery_reaches_the_chosen(settings, monkeypatch):
     monkeypatch.setattr(database, "subscribers_of", somebody)
     assert run(subs.deliver(bot, "genetics", "🧬 текст")) == 2
     assert {chat for chat, _, _ in bot.sent} == {42, 43}
+
+
+# --- тема делится на типы постов --------------------------------------
+#
+# В теннисе выходит пять разных вещей, и нужны они разным людям: одному
+# важно, что сняли Медведева, другому только итоги вечером, третьему
+# расписание, чтобы успеть сесть к экрану. Подписка «теннис» присылала
+# всем всё, и отписывались не от темы, а от количества.
+
+def test_tennis_is_split_into_kinds():
+    import subs
+    parts = subs.GROUPS["tennis"]["parts"]
+    assert len(parts) >= 3, "деление на типы потерялось"
+    assert "tennis" in parts, "расписание должно остаться одним из типов"
+
+
+def test_the_whole_topic_is_still_one_tap(settings):
+    """Выбор из пяти пунктов там, где человек хотел нажать один раз,
+    отпугивает не меньше, чем лишние сообщения."""
+    import subs
+
+    class Call:
+        data = "sub_g_tennis"
+        from_user = type("U", (), {"id": 7})()
+        message = type("M", (), {
+            "edit_reply_markup": staticmethod(
+                lambda **kw: asyncio.sleep(0))})()
+        answers = []
+
+        async def answer(self, text="", **kw):
+            type(self).answers.append(text)
+
+    import asyncio
+    run(subs.toggle_group(Call()))
+    assert run(subs.chosen(7)) == set(subs.GROUPS["tennis"]["parts"])
+
+
+def test_a_half_chosen_topic_is_completed_not_cleared(settings):
+    """Отмечены два типа из четырёх — нажатие на «всё» добирает
+    остальные. Снять можно вторым нажатием, а потерять уже сделанный
+    выбор случайно — нельзя."""
+    import asyncio
+    import subs
+
+    run(subs.save(8, {"tennis", "tennis_loud"}))
+
+    class Call:
+        data = "sub_g_tennis"
+        from_user = type("U", (), {"id": 8})()
+        message = type("M", (), {
+            "edit_reply_markup": staticmethod(
+                lambda **kw: asyncio.sleep(0))})()
+
+        async def answer(self, text="", **kw):
+            pass
+
+    run(subs.toggle_group(Call()))
+    assert run(subs.chosen(8)) == set(subs.GROUPS["tennis"]["parts"])
+
+
+def test_one_kind_can_be_chosen_alone(settings):
+    """Ради этого всё и делилось: «только громкое» без расписания."""
+    import subs
+    run(subs.save(9, {"tennis_loud"}))
+    assert run(subs.chosen(9)) == {"tennis_loud"}
+
+
+def test_the_keyboard_shows_the_group_above_its_kinds(settings):
+    import subs
+    kb = subs._kb({"tennis_loud"})
+    data = [b.callback_data for row in kb.inline_keyboard for b in row]
+    assert data.index("sub_g_tennis") < data.index("sub_t_tennis_loud")
+    marks = [b.text for row in kb.inline_keyboard for b in row]
+    assert any(t.startswith("◍") for t in marks), \
+        "наполовину выбранная тема выглядит как невыбранная"
+
+
+def test_tennis_posts_go_out_as_html(settings, monkeypatch):
+    """Теннис собран на HTML, утро на Markdown. Отправить одно разметкой
+    другого — получить отказ Telegram и молчание вместо рассылки."""
+    import subs
+    import database
+
+    async def one(key, slot):
+        return [5]
+
+    monkeypatch.setattr(database, "subscribers_of", one)
+
+    seen = []
+
+    class Bot:
+        async def send_message(self, chat, text, **kw):
+            seen.append(kw.get("parse_mode"))
+
+    run(subs.deliver(Bot(), "tennis_loud", "<b>Снятие</b>"))
+    run(subs.deliver(Bot(), "morning", "*Утро*"))
+    assert seen == ["HTML", "Markdown"]

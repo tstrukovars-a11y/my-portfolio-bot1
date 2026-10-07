@@ -365,6 +365,13 @@ async def publish(bot: Bot, chat: int, thread=None) -> str:
                 continue
             fresh.append(key)
             posted += 1
+            # Копию — тем, кто выбрал чемпионов: один пост в неделю на
+            # турнир, и ради него человек и отмечал этот вид.
+            try:
+                import subs
+                await subs.deliver(bot, "tennis_champion", text)
+            except Exception as e:
+                logging.warning(f"Рассылка чемпиона не прошла: {e}")
             await asyncio.sleep(3.2)
 
     if fresh:

@@ -32,10 +32,34 @@ PAUSE = 0.05                     # между отправками: Telegram н�
 BLOCKS = {
     "morning": "📰 Новости и курсы",
     "genetics": "🧬 Генетика",
-    "tennis": "🎾 Теннис",
+    "tennis": "расписание на день",
+    "tennis_loud": "громкие события",
+    "tennis_results": "итоги дня",
+    "tennis_champion": "чемпионы турниров",
     "books": "📚 Книги",
     "travel": "🌍 Путешествия",
 }
+
+# Тема — это ещё не то, на что человек хочет подписаться.
+#
+# В теннисе мы выпускаем пять разных вещей, и нужны они разным людям:
+# одному важно, что сняли Медведева, другому — только итоги вечером,
+# третьему расписание, чтобы успеть сесть к экрану. Подписка «теннис»
+# присылала всем всё, и отписывались не от темы, а от количества.
+#
+# Поэтому внутри темы — типы постов. Кнопка «всё о теннисе» остаётся
+# для тех, кому правда нужно всё: выбор из пяти пунктов там, где
+# человек хотел один раз нажать, тоже отпугивает.
+GROUPS = {
+    "tennis": {
+        "title": "🎾 Теннис",
+        "parts": ("tennis", "tennis_loud", "tennis_results",
+                  "tennis_champion"),
+    },
+}
+
+# Ключи, которые показываются сами по себе, — всё, что не внутри группы.
+GROUPED = {key for group in GROUPS.values() for key in group["parts"]}
 
 
 async def chosen(user_id: int) -> set:
@@ -47,10 +71,39 @@ async def save(user_id: int, blocks: set):
     await database.set_setting(KEY + str(user_id), ",".join(sorted(blocks)))
 
 
+def _mark(on: bool) -> str:
+    return "✅ " if on else "○ "
+
+
 def _kb(picked: set) -> InlineKeyboardMarkup:
-    rows = [[InlineKeyboardButton(
-        text=("✅ " if key in picked else "○ ") + name,
-        callback_data=f"sub_t_{key}")] for key, name in BLOCKS.items()]
+    """Кнопки выбора. Группа — заголовком, её типы — под ним.
+
+    Отступ у вложенных не для красоты: без него пять теннисных строк
+    читаются как пять отдельных тем, и человек выбирает одну вместо
+    того, чтобы понять, что это одна тема в разных видах.
+    """
+    rows, done = [], set()
+    for key, name in BLOCKS.items():
+        if key in done:
+            continue
+        group = next((g for g in GROUPS.values() if key in g["parts"]), None)
+        if group:
+            parts = group["parts"]
+            whole = all(p in picked for p in parts)
+            some = any(p in picked for p in parts)
+            head = "✅ " if whole else ("◍ " if some else "○ ")
+            rows.append([InlineKeyboardButton(
+                text=f"{head}{group['title']} — всё",
+                callback_data=f"sub_g_{parts[0]}")])
+            for part in parts:
+                rows.append([InlineKeyboardButton(
+                    text=f"     {_mark(part in picked)}{BLOCKS[part]}",
+                    callback_data=f"sub_t_{part}")])
+            done.update(parts)
+            continue
+        rows.append([InlineKeyboardButton(
+            text=_mark(key in picked) + name, callback_data=f"sub_t_{key}")])
+
     rows.append([InlineKeyboardButton(text="⇦", callback_data="go_home")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -73,6 +126,35 @@ async def subs_command(message: Message):
 async def open_screen(call: CallbackQuery):
     await call.answer()
     await call.message.answer(INTRO, reply_markup=_kb(await chosen(call.from_user.id)))
+
+
+@router.callback_query(F.data.startswith("sub_g_"))
+async def toggle_group(call: CallbackQuery):
+    """«Всё о теме» — одним нажатием.
+
+    Полвыбора считаем «не всё»: если отмечены два типа из четырёх,
+    нажатие добирает остальные, а не снимает выбранное. Снять всё можно
+    вторым нажатием — но потерять уже сделанный выбор случайно нельзя.
+    """
+    first = call.data[len("sub_g_"):]
+    group = next((g for g in GROUPS.values() if first in g["parts"]), None)
+    if not group:
+        await call.answer()
+        return
+
+    parts = set(group["parts"])
+    picked = await chosen(call.from_user.id)
+    if parts <= picked:
+        picked -= parts
+        await call.answer(f"{group['title']} — больше не присылаю")
+    else:
+        picked |= parts
+        await call.answer(f"{group['title']} — буду присылать целиком")
+    await save(call.from_user.id, picked)
+    try:
+        await call.message.edit_reply_markup(reply_markup=_kb(picked))
+    except Exception:
+        pass
 
 
 @router.callback_query(F.data.startswith("sub_t_"))
@@ -111,11 +193,16 @@ async def deliver(bot: Bot, slot: str, text: str) -> int:
     if slot not in BLOCKS or not text.strip():
         return 0
 
+    # Теннисные посты собраны на HTML, утренние — на Markdown. Отправить
+    # одно разметкой другого значит получить отказ Telegram и молчание
+    # вместо рассылки.
+    mode = "HTML" if slot.startswith("tennis") else "Markdown"
+
     sent = 0
     for user_id in await database.subscribers_of(KEY, slot):
         try:
             await bot.send_message(user_id, text[:4000],
-                                   parse_mode="Markdown",
+                                   parse_mode=mode,
                                    disable_web_page_preview=True)
             sent += 1
         except TelegramForbiddenError:
@@ -131,10 +218,16 @@ async def stats() -> str:
     """Сколько людей на каждом блоке — для служебного экрана"""
     lines = ["🔔 <b>Подписки на блоки</b>", ""]
     total = 0
+    # Ради этого экрана теннис и делился: видно, что выбирают — тему
+    # целиком или один её вид. Если узкое берут чаще широкого, значит
+    # догадка про типы постов верна, и это проверяется цифрами, а не
+    # ощущением.
     for key, name in BLOCKS.items():
         people = await database.subscribers_of(KEY, key)
         total += len(people)
-        lines.append(f"{html.escape(name)} — {len(people)}")
+        group = next((g for g in GROUPS.values() if key in g["parts"]), None)
+        label = f"    └ {name}" if group else name
+        lines.append(f"{html.escape(label)} — {len(people)}")
     if not total:
         lines.append("\n<i>Пока никто не подписался. Кнопка — в главном "
                      "меню и по команде /подписки.</i>")
