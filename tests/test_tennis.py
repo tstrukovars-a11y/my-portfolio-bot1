@@ -649,3 +649,79 @@ def test_the_recap_prompt_forbids_inventing_consequences():
     for word in ("очк", "призов", "штраф"):
         assert word in low, f"запрет про «{word}» потерялся"
     assert "не сказано" in low or "нет" in low
+
+
+# --- кто вылетел ------------------------------------------------------
+#
+# Таблица счёта сообщает факт. Но читатель следит за людьми, и строка
+# «Синнер — Музетти 6:4 6:3» означает для него не счёт, а то, что
+# Музетти в турнире больше нет. Это и говорится словами.
+
+
+def _exited(winner, loser, rnd="2nd Round", state="post"):
+    return {
+        "round": rnd,
+        "state": state,
+        "completed": True,
+        "sides": [
+            {"winner": True, "athlete": {"displayName": winner}},
+            {"winner": False, "athlete": {"displayName": loser}},
+        ],
+    }
+
+
+def test_a_followed_player_who_lost_is_mourned():
+    note = ta._exit_note(_exited("Jannik Sinner", "Karolina Muchova"))
+    assert "Каролина Мухова" in note
+    assert "к сожалению" in note and "вылетает" in note
+
+
+def test_the_winner_is_never_the_one_who_leaves():
+    note = ta._exit_note(_exited("Karolina Muchova", "Jannik Sinner"))
+    assert "Мухова" not in note
+
+
+def test_an_unknown_loser_gets_no_note():
+    """Проигравший есть в каждом матче. Приписка под каждой второй
+    строкой перестала бы читаться."""
+    assert ta._exit_note(_exited("Jannik Sinner", "Some Qualifier")) == ""
+
+
+def test_a_finalist_does_not_fly_out():
+    """Он дошёл дальше всех, кроме одного, — «вылетает» звучит обидно
+    и неверно."""
+    note = ta._exit_note(_exited("Jannik Sinner", "Karolina Muchova", "Final"))
+    assert "уступает в финале" in note
+    assert "вылетает" not in note
+
+
+def test_a_semifinal_is_named_as_such():
+    note = ta._exit_note(_exited("Jannik Sinner", "Karolina Muchova",
+                                "Semifinals"))
+    assert "в шаге от финала" in note
+
+
+def test_a_quarterfinal_is_named_as_such():
+    note = ta._exit_note(_exited("Jannik Sinner", "Karolina Muchova",
+                                "Quarterfinals"))
+    assert "в четвертьфинале" in note
+
+
+def test_a_retirement_is_not_called_a_defeat():
+    """Человек не проиграл — он не смог продолжать, и «вылетает» про
+    травму звучит упрёком."""
+    note = ta._exit_note(_exited("Jannik Sinner", "Karolina Muchova",
+                                state="post retired"))
+    assert "снимается" in note
+    assert "к сожалению, вылетает" not in note
+
+
+def test_a_group_stage_loss_is_not_an_exit():
+    """На Итоговом из группы выходят по сумме трёх матчей."""
+    assert ta._exit_note(_exited("Jannik Sinner", "Karolina Muchova",
+                                "Round Robin")) == ""
+
+
+def test_the_note_survives_a_broken_match():
+    assert ta._exit_note({}) == ""
+    assert ta._exit_note({"sides": []}) == ""

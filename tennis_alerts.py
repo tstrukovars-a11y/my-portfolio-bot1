@@ -474,6 +474,57 @@ def _result_line(match) -> str:
     return pair + (f"  <code>{html.escape(score)}</code>" if score else "")
 
 
+def _exit_note(match) -> str:
+    """«Каролина Мухова, к сожалению, вылетает» — под строкой результата.
+
+    Таблица счёта сообщает факт и ничего больше. Но читатель следит за
+    конкретными людьми, и для него строка «Синнер — Музетти 6:4 6:3»
+    означает не счёт, а то, что Музетти в турнире больше нет. Это и
+    стоит сказать словами.
+
+    Пишем только про тех, за кем следят: свои и верхушка рейтинга. Иначе
+    приписка стояла бы под каждой второй строкой и перестала бы
+    читаться — проигравший есть в любом матче.
+
+    Время настоящее («вылетает», а не «вылетел») выбрано не для живости.
+    В прошедшем пришлось бы согласовывать род, а источник отдаёт имена
+    строкой, и «Мухова вылетел» — вопрос времени. Настоящее время в
+    русском по роду не изменяется.
+    """
+    sides = (match.get("sides") or [])[:2]
+    if len(sides) < 2:
+        return ""
+    lose = next((s for s in sides if not s.get("winner")), None)
+    if not lose:
+        return ""
+
+    raw = _side_name(lose)
+    if not players_ru.notable(raw):
+        return ""
+    name = players_ru.ru(raw)
+
+    # Снятие — не поражение. Человек не проиграл, он не смог продолжать,
+    # и «вылетает» про травму звучит упрёком.
+    state = (match.get("state") or "").lower()
+    if any(word in state for word in RETIRED):
+        return f"<i>{html.escape(name)} снимается и выбывает из турнира</i>"
+
+    step = players_ru.stage(match.get("round") or "")
+    if step >= 100:
+        # Финалист никуда не вылетает: он дошёл дальше всех, кроме одного.
+        return f"<i>{html.escape(name)} уступает в финале</i>"
+    if step >= 90:
+        return f"<i>{html.escape(name)} останавливается в шаге от финала</i>"
+    if step >= 80:
+        return (f"<i>{html.escape(name)}, к сожалению, вылетает "
+                f"в четвертьфинале</i>")
+    if step == 65:
+        # Групповой этап Итогового: поражение не означает вылета, из
+        # группы выходят по сумме трёх матчей.
+        return ""
+    return f"<i>{html.escape(name)}, к сожалению, вылетает</i>"
+
+
 async def _pick_verdict(match) -> str:
     """Чем кончилось голосование под вчерашним постом.
 
@@ -1068,6 +1119,9 @@ async def publish_results(bot: Bot, chat: int, thread=None) -> str:
             line = _result_line(m)
             if line:
                 lines.append(line)
+                note = _exit_note(m)
+                if note:
+                    lines.append(note)
                 verdict = await _pick_verdict(m)
                 if verdict:
                     lines.append(verdict)
