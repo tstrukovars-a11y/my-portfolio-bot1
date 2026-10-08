@@ -107,17 +107,26 @@
 <div id="prep">
   <div class="card">
     <label>Что нужно решить — своими словами</label>
-    <textarea id="context" placeholder="Записана на 25 сентября на МРТ груди, не могу прийти, надо перенести. Сегодня седьмой день цикла, следующий с 21 октября."></textarea>
+    <!-- Подсказка нейтральная намеренно. Прежняя была развёрнутым
+         медицинским примером, и форма из-за неё читалась как
+         предназначенная для звонка в клинику: в доставку или в банк с
+         такой подсказкой никто бы не пошёл. -->
+    <textarea id="context" placeholder="Введите текст"></textarea>
   </div>
 
   <div class="card grid">
     <div>
-      <label>Теудат зеут</label>
-      <input id="id" inputmode="numeric" placeholder="000000000">
+      <!-- «Удостоверение личности», а не «теудат зеут»: в клинике
+           спрашивают именно его, но в доставке — номер заказа, и
+           поле должно называться так, чтобы годилось и там. Цифровая
+           клавиатура убрана по той же причине: в номере паспорта
+           бывают буквы. -->
+      <label>Удостоверение личности (необязательно)</label>
+      <input id="id">
     </div>
     <div>
-      <label>Имя, как в клинике</label>
-      <input id="name" placeholder="Татьяна">
+      <label>Имя</label>
+      <input id="name">
     </div>
   </div>
 
@@ -534,8 +543,9 @@ function drawPhrases() {
 }
 
 function drawFacts() {
-  // Свои данные под рукой: теудат зеут диктуют в каждом звонке, а
-  // контекст держать в голове во время разговора на чужом языке нельзя.
+  // Свои данные под рукой: номер документа диктуют почти в каждом
+  // звонке, а контекст держать в голове во время разговора на чужом
+  // языке нельзя.
   const box = document.getElementById("facts");
   const id = document.getElementById("id").value.trim();
   const context = document.getElementById("context").value.trim();
@@ -562,7 +572,7 @@ function drawFacts() {
 
 document.getElementById("start").onclick = () => {
   // Разговор сохраняем в этом браузере: позвонят ещё раз, и не придётся
-  // вспоминать теудат зеут и то, о чём был прошлый звонок.
+  // вспоминать номер документа и то, о чём был прошлый звонок.
   try {
     localStorage.setItem("call", JSON.stringify({
       context: document.getElementById("context").value,
