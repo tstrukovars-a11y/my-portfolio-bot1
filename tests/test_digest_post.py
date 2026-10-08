@@ -472,3 +472,37 @@ def _ready(value):
     async def done():
         return value
     return done()
+
+
+# --- где это находится -------------------------------------------------
+#
+# У путешествий место и страна лежат отдельными полями базы, а в
+# описание попадают не всегда: автор пишет, чем место хорошо, а не где
+# оно. Заголовок в посте общий — «🌍 Путешествия», — и читатель видел
+# рассказ, из которого нельзя узнать ни города, ни страны.
+
+ЖИВЕРНИ = "Живерни · 🇫🇷 Франция"
+
+
+def test_a_fresh_travel_post_says_where_it_is():
+    assert digest._where_line("travel", ЖИВЕРНИ, False) == ЖИВЕРНИ
+
+
+def test_a_repeat_adds_no_line_at_all():
+    """Место уже стоит в заголовке-вопросе, а сам заголовок повтора — в
+    два абзаца: страна следом повисала бы посреди вводной фразы."""
+    assert digest._where_line("travel", ЖИВЕРНИ, True) == ""
+
+
+def test_books_and_recipes_keep_their_own_first_line():
+    """Там заголовок и есть первая строка текста — вынести её наверх
+    значило бы задвоить."""
+    assert digest._where_line("books", "Бен Хоровиц — Легко не будет", False) == ""
+    assert digest._where_line("recipes", "Лазанья", False) == ""
+    assert digest._where_line("genetics", "Что такое ген", False) == ""
+
+
+def test_a_title_without_a_country_breaks_nothing():
+    assert digest._where_line("travel", "Живерни", False) == "Живерни"
+    assert digest._where_line("travel", "", False) == ""
+    assert digest._where_line("travel", None, False) == ""

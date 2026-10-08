@@ -3935,6 +3935,38 @@ async def art_add(title: str, photo_file_id: str = None) -> int:
         return 0
 
 
+async def art_set_channel_msg(artwork_id: int, message_id: int) -> bool:
+    """Запомнить, из какого поста канала пришла работа.
+
+    Без этого правка поста заводила бы вторую карточку, и канал с
+    картинами повторил бы беду альбома — только копиями вместо одного
+    поста.
+    """
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            done = await conn.execute(
+                f"UPDATE {SCHEMA}.artworks SET channel_msg_id = $2 "
+                "WHERE id = $1", artwork_id, message_id)
+        return done.endswith("1")
+    except Exception as e:
+        logging.error(f"Номер поста работы не сохранён: {e}")
+        return False
+
+
+async def art_by_channel_msg(message_id: int) -> int:
+    """Номер работы по номеру поста. Ноль — такой работы нет."""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            return await conn.fetchval(
+                f"SELECT id FROM {SCHEMA}.artworks "
+                "WHERE channel_msg_id = $1", message_id) or 0
+    except Exception as e:
+        logging.error(f"Работа по посту не нашлась: {e}")
+        return 0
+
+
 async def art_set(artwork_id: int, **fields) -> bool:
     """Правка полей работы. Ключи ограничены — чужое сюда не попадёт."""
     allowed = {"title", "year", "technique", "size", "price", "story",
