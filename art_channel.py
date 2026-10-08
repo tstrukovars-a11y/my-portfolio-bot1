@@ -40,7 +40,11 @@ SPLIT = re.compile(r"\s*[·•|]\s*|\s+[-—–]\s+")
 # и типографский — человек ставит тот, что попался под руку.
 SIZE = re.compile(r"(\d{1,3}(?:[.,]\d)?)\s*(?:[x×хХ*]|на)\s*(\d{1,3}(?:[.,]\d)?)")
 YEAR = re.compile(r"\b(19\d{2}|20\d{2})\b")
-PRICE = re.compile(r"(\d[\d\s  ]{2,})\s*(?:₽|руб|р\.|rub)", re.I)
+# Пробелы внутри числа перечислены поимённо, а не через \s: тот ловит и
+# перенос строки, и «60 × 80» на строке выше склеивалось с «45 000» на
+# строке ниже в восемь миллионов.
+PRICE = re.compile(r"(\d[\d    ]{2,})[  ]*(?:₽|руб|р\.|rub)",
+                   re.I)
 
 SOLD = ("продана", "продано", "sold", "в коллекции")
 
@@ -180,6 +184,13 @@ async def take_post(message: Message):
     await database.art_set_channel_msg(work_id, message.message_id)
     logging.info(f"🎨 Канал картин: добавлена «{data['title']}» (#{work_id})")
 
+    # Цена в посте — не ошибка разбора, а решение, принятое наоборот:
+    # прайс держим отдельно. Молчать об этом нельзя — число уже видят
+    # подписчики, и чем позже это заметят, тем дороже правка.
+    if data["price"]:
+        logging.warning(f"Канал картин: в посте «{data['title']}» "
+                        f"напечатана цена — она видна всем")
+
 
 @router.edited_channel_post(_is_art_post)
 async def fix_post(message: Message):
@@ -235,12 +246,73 @@ def _width_kb(work_id: int):
 
 
 def try_row(work_id: int, username: str):
-    """Кнопка под постом в канале"""
+    """Кнопки под постом в канале.
+
+    Цены на посте нет намеренно. Прайс живёт отдельно, у автора: цена,
+    напечатанная в канале, живёт там вечно и для каждого одна, а
+    разговор о цене — это разговор про размер, раму и доставку, и
+    начинается он с человека, а не с числа.
+    """
     if not username:
         return None
-    return [InlineKeyboardButton(
-        text="🖼 Примерить у себя",
-        url=f"https://t.me/{username.lstrip('@')}?start=try-{work_id}")]
+    base = f"https://t.me/{username.lstrip('@')}?start="
+    return [
+        [InlineKeyboardButton(text="🖼 Примерить у себя",
+                              url=f"{base}try-{work_id}")],
+        [InlineKeyboardButton(text="💬 Запросить цену",
+                              url=f"{base}ask-{work_id}")],
+    ]
+
+
+@router.message(F.text.regexp(r"^/start\s+ask-"))
+async def start_ask(message: Message, bot: Bot):
+    """Пришёл из канала спросить цену.
+
+    Цену не называем сами, даже если она записана: прайс отдельный, и
+    решает, кому и какую назвать, автор. Бот доносит вопрос вместе с
+    контактом — дальше человек с человеком, как и во всём остальном
+    разделе.
+    """
+    raw = (message.text or "").split("ask-", 1)[1].strip()
+    if not raw.isdigit():
+        raise SkipHandler
+    work = await database.art_get(int(raw))
+    if not work:
+        await message.answer("Эта работа больше недоступна.")
+        raise SkipHandler
+
+    user = message.from_user
+    username = f"@{user.username}" if user.username else None
+    await database.art_request(work["id"], user.id, username)
+
+    contact = username or (f"<a href='tg://user?id={user.id}'>"
+                           f"{html.escape(user.full_name)}</a>")
+    # Записанную цену показываем владелице, а не спрашивающему: чтобы
+    # ответить одним сообщением, не поднимая прайс.
+    price = (f"{work['price']:,}".replace(",", " ") + " ₽") \
+        if work.get("price") else "цена не записана"
+    try:
+        await bot.send_message(
+            config.ADMIN_ID,
+            f"💬 <b>Спрашивают цену</b>\n\n"
+            f"«{html.escape(work['title'])}»"
+            + (f" · {html.escape(work.get('size') or '')}" if work.get("size") else "")
+            + f"\nВ прайсе: {price}\nОт: {contact}")
+    except Exception as e:
+        logging.error(f"Вопрос о цене не дошёл: {e}")
+
+    await message.answer_photo(
+        work["photo_file_id"],
+        caption=f"<b>{html.escape(work['title'])}</b>"
+                + (f"\n{html.escape(work['size'])}" if work.get("size") else ""))
+    await message.answer(
+        "💬 Передала вопрос — отвечу здесь же.\n\n"
+        "Заодно расскажу про раму, доставку и то, как работа ведёт "
+        "себя при разном свете.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="🖼 Пока примерить у себя",
+                                 callback_data=f"try_open_{work['id']}")]]))
+    raise SkipHandler
 
 
 @router.message(F.text.regexp(r"^/start\s+try-"))
@@ -385,21 +457,73 @@ MARKUP = (
     "🎨 <b>Как писать пост о картине</b>\n\n"
     "Одна работа — один пост, с фотографией:\n\n"
     "<code>Тишина в полдень\n"
-    "2024 · холст, масло · 60 × 80 см\n"
-    "45 000 ₽\n\n"
+    "2024 · холст, масло · 60 × 80 см\n\n"
     "Писала с балкона, когда гроза уже ушла, а свет ещё не вернулся.\n\n"
-    "#живопись #пейзаж</code>\n\n"
+    "#пейзаж #холст_масло #среднее #тихое</code>\n\n"
     "Первая строка — название. Вторая — год, техника и размер через «·», "
-    "в любом порядке. Третья — цена, если ставите.\n\n"
+    "в любом порядке.\n\n"
     "Дальше рассказ: размер говорит, поместится ли вещь, рассказ — "
     "зачем она нужна.\n\n"
+    "<b>Цену в пост не ставим.</b> Под постом кнопка «запросить» — "
+    "вопрос приходит вам вместе с контактом и записанной ценой. "
+    "Прайс держим отдельно: <code>/art_price</code>\n\n"
     "Разметка прощает: пропущенная строка ничего не ломает, "
     "перепутанный порядок тоже. Обязательны только фотография, название "
     "и размер — без размера не работает примерка.\n\n"
     "Проданную помечайте словом <code>продана</code> в тексте: "
     "из канала она не исчезнет, а отметку получит.\n\n"
-    "Канал для работ: <code>/art_channel -100…</code>"
+    "Метки: <code>/art_tags</code> · Канал: <code>/art_channel -100…</code>"
 )
+
+# Метки — не украшение, а навигация. Telegram делает из каждой ссылку на
+# поиск по каналу, и набор работает только пока он один и тот же:
+# «#пейзаж» и «#пейзажи» — две разные полки, на каждой по половине.
+#
+# Поэтому список закрытый, по четырём осям, и в посте берётся не больше
+# одной метки с оси. Пять меток — потолок: дальше они читаются как шум
+# и перестают быть указателем.
+TAGS = {
+    "о чём": ("#пейзаж", "#портрет", "#натюрморт", "#абстракция",
+              "#город", "#море", "#цветы", "#фигура"),
+    "чем и на чём": ("#холст_масло", "#акрил", "#акварель", "#пастель",
+                     "#графика", "#смешанная"),
+    "какого размера": ("#маленькое", "#среднее", "#большое", "#вертикаль",
+                       "#горизонталь", "#квадрат"),
+    "какое по настроению": ("#тихое", "#яркое", "#тёплое", "#холодное",
+                            "#светлое", "#тёмное"),
+}
+
+TAG_SIZES = (
+    ("#маленькое", "до 40 см по большей стороне"),
+    ("#среднее", "40–80 см"),
+    ("#большое", "от 80 см"),
+)
+
+TAG_HELP = (
+    "🏷 <b>Метки</b>\n\n"
+    "Telegram делает из каждой метки ссылку на поиск по каналу. Это не "
+    "украшение, а полки: по ним человек ходит, когда ищет «что-нибудь "
+    "в спальню».\n\n"
+    "Работает только закрытый список. «#пейзаж» и «#пейзажи» — две "
+    "разные полки, на каждой по половине работ, и обе бесполезны.\n\n"
+    "<b>Берите по одной метке с каждой оси, всего три-пять.</b> Больше "
+    "читается как шум.\n\n"
+    + "\n\n".join(
+        f"<b>{axis}</b>\n" + "  ".join(f"<code>{t}</code>" for t in tags)
+        for axis, tags in TAGS.items())
+    + "\n\n<b>Размер по большей стороне:</b>\n"
+    + "\n".join(f"  <code>{tag}</code> — {what}" for tag, what in TAG_SIZES)
+    + "\n\nПример: <code>#пейзаж #холст_масло #среднее #тихое</code>\n\n"
+      "<i>Пробел внутри метки её обрывает — пишите через нижнее "
+      "подчёркивание. Русские метки Telegram понимает.</i>"
+)
+
+
+@router.message(F.text.regexp(r"^/art_tags"))
+async def tags_help(message: Message):
+    if not config.is_admin(message.from_user.id):
+        return
+    await message.answer(TAG_HELP)
 
 
 @router.message(F.text.regexp(r"^/art_markup"))
@@ -407,6 +531,51 @@ async def markup_help(message: Message):
     if not config.is_admin(message.from_user.id):
         return
     await message.answer(MARKUP)
+
+
+@router.message(F.text.regexp(r"^/art_price"))
+async def price_command(message: Message):
+    """Прайс — здесь, а не в канале.
+
+    В канале цена живёт вечно и для каждого одна: её видит и тот, кому
+    вы сделали бы скидку, и тот, кто пришёл через год, когда цена
+    выросла. Здесь она ваша и меняется одной строкой.
+    """
+    if not config.is_admin(message.from_user.id):
+        return
+    parts = (message.text or "").split()
+    if len(parts) < 2:
+        works = await database.art_list()
+        lines = ["💰 <b>Прайс</b> — виден только вам", ""]
+        for work in works or []:
+            price = (f"{work['price']:,}".replace(",", " ") + " ₽") \
+                if work.get("price") else "—"
+            mark = "🔴" if work.get("status") == "sold" else "·"
+            lines.append(f"{mark} <code>{work['id']}</code> "
+                         f"{html.escape(work['title'][:34])} — {price}")
+        if not works:
+            lines.append("<i>Работ пока нет. Опубликуйте пост в канале "
+                         "картин — карточка заведётся сама.</i>")
+        lines.append("")
+        lines.append("Поставить цену: <code>/art_price 7 45000</code>\n"
+                     "Снять: <code>/art_price 7 нет</code>")
+        await message.answer("\n".join(lines))
+        return
+
+    if len(parts) < 3 or not parts[1].isdigit():
+        await message.answer("Нужно так: <code>/art_price 7 45000</code>")
+        return
+
+    work_id = int(parts[1])
+    raw = parts[2].lower()
+    value = None if raw in ("нет", "-", "0") else \
+        int(re.sub(r"\D", "", parts[2]) or 0) or None
+    if not await database.art_set(work_id, price=value):
+        await message.answer(f"Работы №{work_id} нет.")
+        return
+    shown = (f"{value:,}".replace(",", " ") + " ₽") if value else "снята"
+    await message.answer(f"💰 Работа №{work_id}: {shown}.\n\n"
+                         f"<i>В канал это не уходит — цену называете вы.</i>")
 
 
 @router.message(F.text.regexp(r"^/art_channel"))

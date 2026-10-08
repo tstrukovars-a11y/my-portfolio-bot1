@@ -150,3 +150,83 @@ def test_the_markup_help_shows_a_real_example():
     """Разметку читают один раз и по примеру, а не по описанию."""
     assert "60 × 80 см" in ac.MARKUP
     assert "/art_channel" in ac.MARKUP
+
+
+# --- цена живёт отдельно от канала ------------------------------------
+#
+# Цена, напечатанная в канале, живёт там вечно и для каждого одна: её
+# видит и тот, кому сделали бы скидку, и тот, кто пришёл через год,
+# когда цена выросла. Разговор о цене — это разговор про раму и
+# доставку, и начинается он с человека, а не с числа.
+
+def test_the_markup_does_not_ask_for_a_price():
+    assert "₽" not in ac.MARKUP.split("Цену в пост")[0]
+    assert "Цену в пост не ставим" in ac.MARKUP
+
+
+def test_the_post_carries_a_request_button_not_a_number():
+    rows = ac.try_row(7, "mybot")
+    labels = [b.text for row in rows for b in row]
+    assert any("Запросить цену" in t for t in labels)
+    assert all("₽" not in t for t in labels)
+
+
+def test_both_buttons_lead_into_the_bot():
+    rows = ac.try_row(7, "@mybot")
+    links = [b.url for row in rows for b in row]
+    assert any("start=try-7" in u for u in links)
+    assert any("start=ask-7" in u for u in links)
+
+
+def test_without_a_bot_name_there_are_no_buttons():
+    """Кнопка в никуда под постом хуже отсутствия кнопки."""
+    assert ac.try_row(7, "") is None
+
+
+def test_a_price_in_the_post_is_still_noticed():
+    """Прайс отдельный — но если цена всё же напечатана, молчать
+    нельзя: число уже видят подписчики."""
+    assert ac.parse("Работа\n60 × 80\n45 000 ₽")["price"] == 45000
+
+
+def test_the_bot_does_not_name_the_price_itself():
+    """Решает, кому и какую цену назвать, автор. Бот доносит вопрос."""
+    source = open("art_channel.py", encoding="utf-8").read()
+    ask = source[source.index("async def start_ask"):]
+    ask = ask[:ask.index("@router", 10)]
+    assert "config.ADMIN_ID" in ask, "вопрос не уходит автору"
+    assert "Передала вопрос" in ask
+
+
+# --- метки -------------------------------------------------------------
+
+def test_the_tag_list_is_closed():
+    """«#пейзаж» и «#пейзажи» — две разные полки, на каждой по
+    половине работ, и обе бесполезны."""
+    assert ac.TAGS and all(ac.TAGS.values())
+
+
+def test_every_tag_is_a_single_word():
+    """Пробел внутри метки её обрывает: «#холст масло» — это метка
+    «#холст» и слово «масло»."""
+    for tags in ac.TAGS.values():
+        for tag in tags:
+            assert tag.startswith("#") and " " not in tag, tag
+
+
+def test_no_tag_is_repeated_across_axes():
+    """Метка на двух осях ломает правило «по одной с оси»."""
+    seen = [t for tags in ac.TAGS.values() for t in tags]
+    assert len(seen) == len(set(seen))
+
+
+def test_the_size_tags_say_what_they_mean():
+    """«Среднее» у каждого своё, пока не написано, сколько это в
+    сантиметрах."""
+    named = {tag for tag, _ in ac.TAG_SIZES}
+    assert named <= set(ac.TAGS["какого размера"])
+    assert all(any(ch.isdigit() for ch in what) for _, what in ac.TAG_SIZES)
+
+
+def test_the_help_shows_an_example_line():
+    assert "#пейзаж #холст_масло" in ac.TAG_HELP
