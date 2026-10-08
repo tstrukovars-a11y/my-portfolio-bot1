@@ -44,12 +44,32 @@ SECTION = "genetics"
 # меняется к четвергу. Экономика собирается из событий дня и устаревает
 # вместе с ними — её пересобирают каждое утро, и вчерашняя сборка в ней
 # бесполезна так же, как вчерашняя газета.
+# Книги — третий вид. Источник у них свой: не статьи и не события дня, а
+# конспекты, которые владелица складывает в раздел книг. Пересказывать
+# книгу модель не может — она её не читала; она перекладывает в вопросы
+# то, что написано в конспекте, и ровно поэтому пустой аннотации для
+# разбора мало (см. books_source).
+#
+# "source" решает, из чего собирать. "articles" оставлено отдельно: по
+# нему считается охват — какие статьи вошли в дерево, а какие нет. У
+# экономики и книг охвата нет, считать там нечего.
 KINDS = {
-    "g": {"title": "🧬 Генетика", "live": "genetics_tree",
-          "draft": "genetics_tree_draft", "articles": True},
-    "e": {"title": "📊 Экономика", "live": "economy_tree",
-          "draft": "economy_tree_draft", "articles": False},
+    "g": {"title": "🧬 Генетика", "mark": "🧬", "live": "genetics_tree",
+          "draft": "genetics_tree_draft", "articles": True,
+          "source": "articles"},
+    "e": {"title": "📊 Экономика", "mark": "📊", "live": "economy_tree",
+          "draft": "economy_tree_draft", "articles": False,
+          "source": "economy"},
+    "b": {"title": "📚 Книги", "mark": "📚", "live": "books_tree",
+          "draft": "books_tree_draft", "articles": False,
+          "source": "books"},
 }
+
+# Общий вход. Человек нажал «Как это касается меня» — и получает все
+# разборы одним списком, а не три двери с одинаковой подписью. Откуда
+# какая тема, видно по значку; вид темы едет в самой кнопке, поэтому
+# дальше разговор идёт по своему дереву.
+ALL = "all"
 
 
 def keys(kind: str) -> tuple:
@@ -363,6 +383,90 @@ async def source_text(limit: int = 12000):
     return "\n\n---\n\n".join(parts), took, left
 
 
+# Короче этого конспект в разбор не идёт. Строка «чему научит» длиной в
+# две фразы — это витрина книжной полки, а не её содержание: разбор по
+# ней модель может только сочинить. Порог стоит на отдельной книге, а не
+# на сумме: двадцать аннотаций в сумме длинные, а знания в них нет.
+BOOK_MIN = 600
+
+
+# Полка целиком — это около сорока тысяч знаков, и в исходник она должна
+# влезать целиком: разбор группирует книги по общей мысли, а мысль,
+# собранная по трети полки, — не та же самая. Лимит оставлен не ради
+# модели (столько она читает свободно), а как предохранитель от полки,
+# разросшейся до неразумного.
+BOOKS_LIMIT = 60000
+
+
+async def books_source(limit: int = BOOKS_LIMIT) -> tuple:
+    """Конспекты книг одним куском — то, из чего собирается разбор.
+
+    Источник — `data/books_seed.json`, а не таблица книг. В таблице
+    лежит то, что уходит в канал: автор, название и пара фраз «чему
+    научит». Это витрина полки, и дописать в неё конспект нельзя —
+    пост в канале разбухнет до нечитаемого.
+
+    Файл же написан руками и выверен (см. шапку books_seed.py) — ровно
+    та провенанс, которая нужна: модель книгу не читала и собирает
+    разбор по тому, что о ней написал человек.
+
+    Возвращает (текст, что вошло, что не поместилось) — тем же составом,
+    что и source_text: книга, не попавшая даже в исходник, не могла
+    оказаться в дереве, и знать об этом надо до того, как удивляться,
+    почему темы нет.
+
+    Книги без поля `summary` в «не поместилось» не идут: это не потеря, а
+    осознанный пропуск — аннотацию в две фразы модель может развернуть
+    только выдумкой.
+    """
+    try:
+        import books_seed
+        books = books_seed.load_seed()
+    except Exception as e:
+        logging.warning(f"Список книг не прочитался: {e}")
+        return "", [], []
+
+    parts, took, cut, size = [], [], [], 0
+    for book in books:
+        summary = str(book.get("summary") or "").strip()
+        if len(summary) < BOOK_MIN:
+            continue
+        title = str(book.get("title") or "").strip()
+        if size >= limit:
+            cut.append(title)
+            continue
+        head = f"{book.get('author', '')} — {title}".strip()
+        parts.append(f"{head}\n{summary}".strip())
+        took.append(title)
+        size += len(summary)
+    if cut:
+        logging.warning(f"В разбор книг не поместилось: {', '.join(cut)}")
+    return "\n\n---\n\n".join(parts), took, cut
+
+
+BOOKS_PROMPT = (
+    "Ты помогаешь разложить конспекты деловых книг в короткие разговоры "
+    "с читателем.\n\n"
+    "Каждый кусок исходника — конспект одной книги: автор, название и то, "
+    "что в книге написано. Сгруппируй книги по темам — не по одной книге "
+    "на тему, а по мысли, которая в них общая, — и сделай на каждую тему "
+    "своё дерево вопросов. Дерево — это узлы: одна мысль в две-три строки "
+    "и два-три варианта ответа. Читатель идёт по своим ответам и получает "
+    "объяснение.\n\n"
+    "Темы пересекаются, и это хорошо: если в одном дереве читатель "
+    "упирается в тему соседнего, дай кнопку с переходом туда.\n\n"
+    "ЗАПРЕЩЕНО:\n"
+    "— добавлять от себя то, чего в конспекте нет. Ты книгу не читала, "
+    "у тебя есть только конспект, и всё дерево строится по нему;\n"
+    "— пересказывать книгу целиком: разбор — это мысль, с которой "
+    "читатель уйдёт, а не оглавление;\n"
+    "— приписывать мысль не тому автору. Если не уверена, чья она, "
+    "не называй автора вовсе;\n"
+    "— советовать, что человеку делать в его деле, и обещать результат.\n\n"
+    "Пиши так, как написано в конспекте, его же словами, где можно."
+)
+
+
 async def economy_source() -> str:
     """Сегодняшние заголовки и движение индексов — одним куском.
 
@@ -400,10 +504,16 @@ async def economy_source() -> str:
 
 async def build(kind: str = "g") -> tuple:
     """(дерево, что пошло не так). Ничего не сохраняет."""
-    if KINDS[kind]["articles"]:
+    source_kind = KINDS[kind].get("source", "articles")
+    if source_kind == "articles":
         source, took, cut = await source_text()
         prompt = PROMPT
         empty = "в разделе нет статей — собирать не из чего"
+    elif source_kind == "books":
+        source, took, cut = await books_source()
+        prompt = BOOKS_PROMPT
+        empty = ("в книгах только аннотации по паре фраз — для разбора "
+                 "нужен конспект. Добавьте его в текст книги")
     else:
         source, took, cut = await economy_source(), [], []
         prompt = ECONOMY_PROMPT
@@ -499,8 +609,13 @@ def _node_kb(kind: str, tree_id: str, node: dict,
     if not rows:
         # Конец ветки: отсюда либо в другую тему, либо в раздел — но не
         # в пустоту. Человек дочитал и должен видеть, куда идти дальше.
+        #
+        # «Другие темы» ведут в общий список, а не в список своего вида:
+        # дочитавшему про ставку незачем объяснять, что генетика живёт за
+        # другой кнопкой. Он читал разбор, и дальше ему тоже разбор.
+        back = ("trd_" if draft else "tre_") + ALL + "_list"
         rows.append([InlineKeyboardButton(text="📚 Другие темы",
-                                          callback_data=prefix + "list")])
+                                          callback_data=back)])
         home = ("intellect_genetics" if kind == "g" else "go_home")
         rows.append([InlineKeyboardButton(
             text=KINDS[kind]["title"] + " в боте", callback_data=home)])
@@ -516,19 +631,54 @@ def _list_kb(kind: str, data: dict, draft: bool) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def _all_kb(items: list, draft: bool) -> InlineKeyboardMarkup:
+    """Все темы одним списком. Вид едет в callback_data каждой кнопки —
+    поэтому дальше разговор идёт по своему дереву, а не по соседнему."""
+    rows = []
+    for kind, tree_id, title in items:
+        prefix = ("trd_" if draft else "tre_") + kind + "_"
+        mark = KINDS[kind].get("mark") or ""
+        rows.append([InlineKeyboardButton(
+            text=f"{mark} {title}".strip()[:60],
+            callback_data=f"{prefix}{tree_id}_start")])
+    rows.append([InlineKeyboardButton(text="⇦", callback_data="go_home")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def all_trees(draft: bool = False) -> list:
+    """(вид, дерево, название) по всем разборам, какие есть."""
+    out = []
+    for kind in KINDS:
+        data = await tree("draft" if draft else "live", kind)
+        for tree_id, body in (data.get("trees") or {}).items():
+            out.append((kind, tree_id, str(body.get("title") or tree_id)))
+    return out
+
+
 LIST_TEXT = ("🌳 <b>{title}: разбор вопросами</b>\n\n"
              "С чего начать? Темы связаны между собой — из любой можно "
              "перейти в соседнюю, когда до неё дойдёт разговор.")
 
+ALL_TEXT = ("🌳 <b>Как это касается меня</b>\n\n"
+            "С чего начать? Темы связаны между собой — из любой можно "
+            "перейти в соседнюю, когда до неё дойдёт разговор.")
+
 
 async def show_list(message: Message, kind: str = "g", draft: bool = False,
                     replace: bool = False):
-    data = await tree("draft" if draft else "live", kind)
-    if not data:
-        await message.answer("Разбор пока не собран.")
-        return
-    text = LIST_TEXT.format(title=KINDS[kind]["title"])
-    markup = _list_kb(kind, data, draft)
+    if kind == ALL:
+        items = await all_trees(draft)
+        if not items:
+            await message.answer("Разбор пока не собран.")
+            return
+        text, markup = ALL_TEXT, _all_kb(items, draft)
+    else:
+        data = await tree("draft" if draft else "live", kind)
+        if not data:
+            await message.answer("Разбор пока не собран.")
+            return
+        text = LIST_TEXT.format(title=KINDS[kind]["title"])
+        markup = _list_kb(kind, data, draft)
     if replace:
         try:
             await message.edit_text(text, reply_markup=markup)
@@ -553,8 +703,10 @@ async def show(message: Message, where: str, kind: str = "g",
     текстовое. Поэтому узел с картинкой присылается новым сообщением, а
     старое убирается.
     """
-    if where == "list":
-        await show_list(message, kind, draft, replace)
+    # Общий вид существует только как список: своего дерева у него нет,
+    # и узел в нём искать негде.
+    if where == "list" or kind == ALL:
+        await show_list(message, ALL if kind == ALL else kind, draft, replace)
         return
 
     data = await tree("draft" if draft else "live", kind)
@@ -614,20 +766,28 @@ async def _photo_of(node: dict):
 
 @router.message(F.text.regexp(r"^/(разбор|explain)\b"))
 async def start_command(message: Message):
-    await show_list(message, "g")
+    await show_list(message, ALL)
 
 
-@router.callback_query(F.data.in_({"tree_open", "eco_open"}))
+@router.callback_query(F.data.in_({"learn_open", "tree_open", "eco_open"}))
 async def open_tree(call: CallbackQuery):
+    """Один экран на все разборы.
+
+    Старые имена кнопок оставлены рабочими намеренно: `tree_open` и
+    `eco_open` стоят под постами, которые уже вышли в канал, и останутся
+    там навсегда. Переименовать их в коде можно, в опубликованном
+    сообщении — нет, и нажатие на такую кнопку просто перестало бы
+    работать.
+    """
     await call.answer()
-    await show_list(call.message, "g" if call.data == "tree_open" else "e")
+    await show_list(call.message, ALL)
 
 
 @router.callback_query(F.data.startswith("tre_"))
 async def step(call: CallbackQuery):
     kind, _, where = call.data[len("tre_"):].partition("_")
     await call.answer()
-    if kind not in KINDS:
+    if kind not in KINDS and kind != ALL:
         return
     await show(call.message, where, kind, replace=True)
 
@@ -639,7 +799,7 @@ async def step_draft(call: CallbackQuery):
         return
     kind, _, where = call.data[len("trd_"):].partition("_")
     await call.answer()
-    if kind not in KINDS:
+    if kind not in KINDS and kind != ALL:
         return
     await show(call.message, where, kind, draft=True, replace=True)
 
@@ -676,12 +836,17 @@ async def coverage_text(data: dict) -> str:
     return "\n".join(lines)
 
 
-@router.message(F.text.regexp(r"^/(дерево|эконом)"))
+@router.message(F.text.regexp(r"^/(дерево|эконом|книгиразбор)"))
 async def tree_command(message: Message):
     if not config.is_admin(message.from_user.id):
         return
 
-    kind = "e" if (message.text or "").startswith("/эконом") else "g"
+    # «/книгиразбор», а не «/книги»: поиск книги уже занимает /книга и
+    # /книгу, и соседняя команда, отличающаяся одной буквой, — способ
+    # однажды собрать дерево вместо поиска.
+    text_in = (message.text or "")
+    kind = ("e" if text_in.startswith("/эконом")
+            else "b" if text_in.startswith("/книгиразбор") else "g")
     parts = (message.text or "").split(maxsplit=1)
     action = parts[1].strip().lower() if len(parts) > 1 else ""
     name = KINDS[kind]["title"]
@@ -764,4 +929,107 @@ async def tree_command(message: Message):
 
 
 def _cmd(kind: str) -> str:
-    return "/дерево" if kind == "g" else "/эконом"
+    return {"g": "/дерево", "e": "/эконом", "b": "/книгиразбор"}.get(
+        kind, "/дерево")
+
+
+# ---------------------------------------------------------------------
+# АВТОСБОРКА К УТРУ
+# ---------------------------------------------------------------------
+
+TOLD_KEY = "tree_told_"            # + kind: о каком черновике уже сказали
+
+
+async def prepare(bot, kind: str = "g") -> str:
+    """Собрать черновик к утру, если людям показывать нечего.
+
+    Кнопка «Как это касается меня» появляется под постом только когда
+    дерево опубликовано: `_gen_row` в digest.py спрашивает
+    `tree("live", kind)` и при пустом ответе не ставит кнопку вовсе.
+    Поэтому забытая сборка выглядит не поломкой, а отсутствием кнопки —
+    узнать о ней можно было только от читателя.
+
+    Экономику в этом месте просто пересобирают и публикуют сами: она про
+    сегодняшние события, к завтрашнему утру устареет, и вычитывать её
+    ежедневно некогда. С генетикой так нельзя. Порядок «сначала
+    владелица, потом люди» заведён в этом файле намеренно (см. шапку):
+    это медицина, и модель перекладывает в вопросы чужой врачебный
+    текст. Поэтому здесь собирается ЧЕРНОВИК, а показывает его людям
+    по-прежнему человек — одной кнопкой из личного сообщения.
+
+    Молчит, когда дерево уже опубликовано: генетика живёт месяцами, и
+    пересобирать её к каждому утру незачем.
+    """
+    if await tree("live", kind):
+        return ""
+
+    draft = await tree("draft", kind)
+    if not draft:
+        draft, problem = await build(kind)
+        if problem:
+            logging.info(f"Черновик разбора не собрался: {problem}")
+            return ""
+        await save_tree(draft, "draft", kind)
+
+    # Про один и тот же черновик напоминаем один раз. Ежеутреннее
+    # «опубликуйте разбор» о том же самом — быстрый способ научить
+    # человека не читать сообщения от бота.
+    mark = str(len((draft.get("trees") or {})))
+    mark += ":" + ",".join(sorted((draft.get("trees") or {}).keys()))
+    if (await database.get_setting(TOLD_KEY + kind) or "") == mark:
+        return ""
+
+    if not config.ADMIN_ID:
+        return ""
+
+    trees = draft.get("trees") or {}
+    total = sum(len(b.get("nodes") or {}) for b in trees.values())
+    title = KINDS[kind]["title"]
+    try:
+        await bot.send_message(
+            config.ADMIN_ID,
+            f"🌳 <b>{title}: разбор собран, людям пока не виден</b>\n\n"
+            f"Тем {len(trees)}, узлов {total}.\n\n"
+            f"Пока он не опубликован, кнопка «Как это касается меня» под "
+            f"постом не появляется вовсе.\n\n"
+            f"Пройти самой: <code>{_cmd(kind)} черновик</code>",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="✅ Показать людям",
+                                     callback_data=f"trpub_{kind}")]]))
+    except Exception as e:
+        logging.warning(f"Про черновик разбора не сказалось: {e}")
+        return ""
+
+    await database.set_setting(TOLD_KEY + kind, mark)
+    return mark
+
+
+@router.callback_query(F.data.startswith("trpub_"))
+async def publish_from_note(call: CallbackQuery):
+    """Опубликовать черновик прямо из того письма, где о нём сказали.
+
+    Та же проверка, что и у команды: негодное дерево обрывает разговор
+    на середине, и человек решает, что сломано всё.
+    """
+    if not config.is_admin(call.from_user.id):
+        await call.answer()
+        return
+    kind = call.data[len("trpub_"):]
+    if kind not in KINDS:
+        await call.answer()
+        return
+
+    draft = await tree("draft", kind)
+    problem = check(draft)
+    if problem:
+        await call.answer(f"Публиковать нельзя: {problem}"[:200],
+                          show_alert=True)
+        return
+
+    await save_tree(draft, "live", kind)
+    await call.answer("Опубликовала. Кнопка появится под следующим постом.",
+                      show_alert=True)
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass

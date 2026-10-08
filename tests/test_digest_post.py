@@ -413,3 +413,62 @@ def test_call_sections_can_be_changed(settings, monkeypatch):
     settings[digest.CALL_KEY] = "books"
     assert run(digest._call_row("books")) is not None
     assert run(digest._call_row("travel")) is None
+
+
+# --- кнопки под постом генетики ---------------------------------------
+#
+# Обе пропадают молча: разбор — когда дерево не опубликовано, клуб —
+# когда не задана ссылка. В канале это выглядит не поломкой, а постом
+# без кнопок, и узнать об этом можно только от читателя. Так уже было:
+# кнопка разбора существовала в коде, а под постом её не видели.
+
+from conftest import run
+
+
+def test_genetics_post_has_its_own_club_wording(settings):
+    """«Спросить про анализы», а не общее «Обсудить в клубе»: человек
+    идёт туда не обсуждать новость, а спрашивать про свой анализ."""
+    settings["digest_club_link"] = "https://t.me/club"
+    rows = run(digest._genetics_rows(None))
+    labels = [b.text for row in rows for b in row]
+    assert "💬 Спросить про анализы" in labels
+    assert digest.CLUB_DEFAULT not in labels
+
+
+def test_genetics_post_offers_the_explainer(settings, monkeypatch):
+    import tree
+    monkeypatch.setattr(tree, "all_trees",
+                        lambda *a, **kw: _ready([("g", "t1", "Тема")]))
+    rows = run(digest._genetics_rows(None))
+    marks = [b.callback_data for row in rows for b in row
+             if b.callback_data]
+    assert "learn_open" in marks
+
+
+def test_genetics_and_news_offer_the_very_same_button(settings, monkeypatch):
+    """Две кнопки с одной подписью и разным содержимым означали, что
+    половину разборов читатель не находил никогда."""
+    import tree
+    monkeypatch.setattr(tree, "all_trees",
+                        lambda *a, **kw: _ready([("e", "t1", "Ставка")]))
+    gen = run(digest._gen_row())
+    eco = run(digest._eco_row())
+    assert gen[0].text == eco[0].text == digest.LEARN_LABEL
+    assert gen[0].callback_data == eco[0].callback_data == "learn_open"
+
+
+def test_no_published_tree_means_no_explainer_button(settings, monkeypatch):
+    """Кнопка в пустой разбор хуже отсутствующей: человек нажимает и
+    попадает в никуда."""
+    import tree
+    monkeypatch.setattr(tree, "all_trees", lambda *a, **kw: _ready([]))
+    rows = run(digest._genetics_rows(None))
+    marks = [b.callback_data for row in rows for b in row
+             if b.callback_data]
+    assert "learn_open" not in marks
+
+
+def _ready(value):
+    async def done():
+        return value
+    return done()
