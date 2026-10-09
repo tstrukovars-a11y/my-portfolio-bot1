@@ -725,3 +725,92 @@ def test_a_group_stage_loss_is_not_an_exit():
 def test_the_note_survives_a_broken_match():
     assert ta._exit_note({}) == ""
     assert ta._exit_note({"sides": []}) == ""
+
+
+# --- места в рейтинге --------------------------------------------------
+#
+# Разрыв в рейтинге и есть то, что делает поражение неожиданным: «34-я
+# обыграла первую» объясняет само себя. Но ESPN проставляет место не
+# всем, и строка пропадала как раз в тех матчах, ради которых пишется.
+
+
+def _run(coro):
+    import asyncio
+    return asyncio.run(coro)
+
+
+def _side(name, place=None, winner=False):
+    s = {"winner": winner, "athlete": {"displayName": name}}
+    if place is not None:
+        s["curatedRank"] = {"current": place}
+    return s
+
+
+def test_the_source_rank_is_used_when_it_is_there(settings, monkeypatch):
+    ta._places_cache["atp"] = {}
+    out = _run(ta._place_of(_side("Lorenzo Musetti", 8), "atp"))
+    assert out == "8"
+
+
+def test_our_ranking_fills_the_gap(monkeypatch):
+    """Без этого строка про ракетки молчала всякий раз, когда источник
+    места не дал."""
+    import database
+    ta._places_cache["atp"] = {}
+
+    async def table(tour):
+        return [(8, "Lorenzo Musetti"), (34, "Arthur Fils")]
+
+    monkeypatch.setattr(database, "ranking_places", table)
+    assert _run(ta._place_of(_side("Lorenzo Musetti"), "atp")) == "8"
+    assert _run(ta._place_of(_side("Arthur Fils"), "atp")) == "34"
+
+
+def test_an_unknown_player_has_no_place(monkeypatch):
+    import database
+    ta._places_cache["atp"] = {}
+
+    async def table(tour):
+        return [(8, "Lorenzo Musetti")]
+
+    monkeypatch.setattr(database, "ranking_places", table)
+    assert _run(ta._place_of(_side("Totally Unknown Player"), "atp")) == ""
+
+
+def test_the_ranking_line_names_both(monkeypatch):
+    import database
+    ta._places_cache["atp"] = {}
+
+    async def table(tour):
+        return [(8, "Lorenzo Musetti"), (34, "Arthur Fils")]
+
+    monkeypatch.setattr(database, "ranking_places", table)
+    line = _run(ta._ranking_line(_side("Arthur Fils", winner=True),
+                                _side("Lorenzo Musetti"), "atp"))
+    assert "8-я ракетка" in line and "34-я" in line
+    assert "Музетти" in line and "Фис" in line
+
+
+def test_without_both_places_the_line_stays_silent(monkeypatch):
+    """Половина сведения хуже её отсутствия: «8-я проиграла» без второго
+    места не объясняет ничего."""
+    import database
+    ta._places_cache["atp"] = {}
+
+    async def table(tour):
+        return [(8, "Lorenzo Musetti")]
+
+    monkeypatch.setattr(database, "ranking_places", table)
+    assert _run(ta._ranking_line(_side("Someone Else", winner=True),
+                                _side("Lorenzo Musetti"), "atp")) == ""
+
+
+def test_the_higher_place_wins_for_a_shared_surname(monkeypatch):
+    import database
+    ta._places_cache["wta"] = {}
+
+    async def table(tour):
+        return [(3, "Mirra Andreeva"), (88, "Erika Andreeva")]
+
+    monkeypatch.setattr(database, "ranking_places", table)
+    assert _run(ta._place_of(_side("Mirra Andreeva"), "wta")) == "3"

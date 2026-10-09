@@ -3845,6 +3845,25 @@ async def ranking_top(tour: str, limit: int = 20):
         return []
 
 
+async def ranking_places(tour: str):
+    """(место, имя) по всему сохранённому рейтингу тура.
+
+    Нужна там, где источник табло не отдал место игрока: ESPN
+    проставляет curatedRank не всем, и строка про ракетки пропадала
+    именно в тех матчах, ради которых она и писалась.
+    """
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT place, name FROM {SCHEMA}.tennis_ranking "
+                "WHERE tour = $1 ORDER BY place", tour)
+        return [(r["place"], r["name"]) for r in rows]
+    except Exception as e:
+        logging.error(f"Рейтинг недоступен: {e}")
+        return []
+
+
 async def ranking_updated():
     try:
         pool = await get_pool()

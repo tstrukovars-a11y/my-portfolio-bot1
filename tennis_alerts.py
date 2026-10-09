@@ -857,24 +857,28 @@ async def _event_text(kind: str, match, tour: str) -> str:
             lines.append(f'<a href="{html.escape(link)}">Подробнее у источника</a>')
 
         if win:
-            seed = _seed(win)
+            # Место берём и из своего рейтинга тоже: у снявшегося оно в
+            # табличке источника есть не всегда, и строка про ракетки
+            # пропадала как раз там, где снялся кто-то известный.
+            seed = await _place_of(win, tour)
             mark = f" ({seed})" if seed else ""
             lines.append("")
             lines.append(f"Дальше проходит "
                          f"{html.escape(tennis_live._named(win))}{mark}.")
+            place = await _place_of(who, tour)
+            if place and seed:
+                lines.append(f"{html.escape(_side_name_ru(who))} — "
+                             f"{place}-я ракетка.")
         return "\n".join(lines)
 
     line = _result_line(match)
     if line:
         lines.append(line)
 
-    # Разрыв в рейтинге и есть то, что делает поражение неожиданным:
-    # «34-я обыграла первую» объясняет само себя.
     if win and lose:
-        high, low = _seed(lose), _seed(win)
-        if high and low:
-            lines.append(f"{html.escape(_side_name_ru(lose))} — {high}-я ракетка, "
-                         f"{html.escape(_side_name_ru(win))} — {low}-я.")
+        ranking = await _ranking_line(win, lose, tour)
+        if ranking:
+            lines.append(ranking)
     if lose:
         lines.append("")
         # Та же интонация, что под строкой результата (_exit_note): в
@@ -895,6 +899,57 @@ async def _event_text(kind: str, match, tour: str) -> str:
 
 def _side_name_ru(side) -> str:
     return players_ru.short(_side_name(side)) or _side_name(side)
+
+
+# Места из нашего рейтинга — на случай, когда источник табло их не дал.
+_places_cache = {"atp": {}, "wta": {}}
+
+
+async def _places(tour: str) -> dict:
+    """{ключ фамилии: место} по сохранённому рейтингу тура.
+
+    Ключ тот же, которым сверяются «свои» и «верхушка» (players_ru._key),
+    — он уже умеет двойные фамилии и восточные имена, и второй способ
+    сопоставления здесь только развёл бы расхождения.
+    """
+    cache = _places_cache.setdefault(tour, {})
+    if cache:
+        return cache
+    for place, name in await database.ranking_places(tour):
+        key = players_ru._key(name)
+        # Первое вхождение сильнее: рейтинг идёт по возрастанию места, а
+        # однофамильцы ниже по списку не должны переписывать верхнего.
+        if key and key not in cache:
+            cache[key] = place
+    return cache
+
+
+async def _place_of(side, tour: str) -> str:
+    """Место игрока: сначала от источника, потом из своего рейтинга."""
+    own = _seed(side)
+    if own:
+        return own
+    place = (await _places(tour)).get(players_ru._key(_side_name(side)))
+    return str(place) if place else ""
+
+
+async def _ranking_line(win, lose, tour: str) -> str:
+    """«Музетти — 8-я ракетка, Фис — 34-я».
+
+    Разрыв в рейтинге и есть то, что делает поражение неожиданным:
+    «34-я обыграла первую» объясняет само себя.
+
+    Насколько игроки сдвинутся в рейтинге после этого матча, здесь не
+    пишем и написать не можем: в таблице сохранены только места, без
+    очков, а движение считается по очкам — набранным и тем, что игрок
+    защищал на этом турнире год назад. Выдуманное число позиций в
+    канале хуже его отсутствия.
+    """
+    high, low = await _place_of(lose, tour), await _place_of(win, tour)
+    if not high or not low:
+        return ""
+    return (f"{html.escape(_side_name_ru(lose))} — {high}-я ракетка, "
+            f"{html.escape(_side_name_ru(win))} — {low}-я.")
 
 
 async def _to_subscribers(kind: str, bot: Bot, text: str) -> None:
