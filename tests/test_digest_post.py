@@ -506,3 +506,52 @@ def test_a_title_without_a_country_breaks_nothing():
     assert digest._where_line("travel", "Живерни", False) == "Живерни"
     assert digest._where_line("travel", "", False) == ""
     assert digest._where_line("travel", None, False) == ""
+
+
+# --- ночная тишина -----------------------------------------------------
+#
+# Теннис идёт по всему миру, и снятие в Австралии приходится на три часа
+# ночи по часам канала. Снятие Алекса Молчана упало в 7:34 — за двадцать
+# минут до «Доброе утро», то есть открыло день вместо приветствия.
+
+def _at(settings, monkeypatch, hour, morning_today=True):
+    from datetime import datetime, timezone
+    now = datetime(2026, 10, 9, hour, 0, tzinfo=timezone.utc)
+
+    async def when():
+        return now
+
+    monkeypatch.setattr(digest, "_local_now", when)
+    settings["digest_slot_morning"] = "2026-10-09" if morning_today else "2026-10-08"
+
+
+def test_night_is_quiet(settings, monkeypatch):
+    _at(settings, monkeypatch, 23)
+    assert run(digest.night_hold()) is True
+
+
+def test_small_hours_are_quiet(settings, monkeypatch):
+    """Утро ещё не вышло — значит и событию рано."""
+    _at(settings, monkeypatch, 3, morning_today=False)
+    assert run(digest.night_hold()) is True
+
+
+def test_just_before_the_morning_post_is_still_quiet(settings, monkeypatch):
+    """Ровно тот случай: 7:34, до выпуска двадцать минут."""
+    _at(settings, monkeypatch, 7, morning_today=False)
+    assert run(digest.night_hold()) is True
+
+
+def test_after_the_morning_post_events_go_out(settings, monkeypatch):
+    _at(settings, monkeypatch, 9)
+    assert run(digest.night_hold()) is False
+
+
+def test_daytime_is_not_held(settings, monkeypatch):
+    _at(settings, monkeypatch, 15)
+    assert run(digest.night_hold()) is False
+
+
+def test_the_evening_closes_again_even_after_a_published_morning(settings, monkeypatch):
+    _at(settings, monkeypatch, 22)
+    assert run(digest.night_hold()) is True

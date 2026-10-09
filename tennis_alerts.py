@@ -182,11 +182,15 @@ PICK_ASK = {
 def _pick_question(match) -> str:
     who = html.escape(_title(match))
     stage_name = players_ru.rnd(match.get("round") or "")
+    # «Проголосуйте, и узнаете» вместо «нажмите — покажу»: первое
+    # называет выгоду читателя, второе — действие бота. Человек жмёт
+    # не потому, что его попросили нажать, а потому что хочет сравнить
+    # себя с остальными.
+    tail = " Проголосуйте, и узнаете, что думают остальные."
     ask = PICK_ASK.get(stage_name)
     if ask:
-        return ask.format(who=who) + " Нажмите — покажу, что думают остальные."
-    return (f"А кто победит в матче {who}? Нажмите — покажу, "
-            f"что думают остальные.")
+        return ask.format(who=who) + tail
+    return f"А кто победит в матче {who}?" + tail
 
 
 def _pick_labels(match_id: str, names, counts) -> list:
@@ -475,7 +479,7 @@ def _result_line(match) -> str:
 
 
 def _exit_note(match) -> str:
-    """«Каролина Мухова, к сожалению, вылетает» — под строкой результата.
+    """«Каролина Мухова, к сожалению, покидает турнир» — под результатом.
 
     Таблица счёта сообщает факт и ничего больше. Но читатель следит за
     конкретными людьми, и для него строка «Синнер — Музетти 6:4 6:3»
@@ -486,7 +490,7 @@ def _exit_note(match) -> str:
     приписка стояла бы под каждой второй строкой и перестала бы
     читаться — проигравший есть в любом матче.
 
-    Время настоящее («вылетает», а не «вылетел») выбрано не для живости.
+    Время настоящее («покидает», а не «покинул») выбрано не для живости.
     В прошедшем пришлось бы согласовывать род, а источник отдаёт имена
     строкой, и «Мухова вылетел» — вопрос времени. Настоящее время в
     русском по роду не изменяется.
@@ -504,25 +508,25 @@ def _exit_note(match) -> str:
     name = players_ru.ru(raw)
 
     # Снятие — не поражение. Человек не проиграл, он не смог продолжать,
-    # и «вылетает» про травму звучит упрёком.
+    # и «покидает турнир» про травму звучит упрёком.
     state = (match.get("state") or "").lower()
     if any(word in state for word in RETIRED):
         return f"<i>{html.escape(name)} снимается и выбывает из турнира</i>"
 
     step = players_ru.stage(match.get("round") or "")
     if step >= 100:
-        # Финалист никуда не вылетает: он дошёл дальше всех, кроме одного.
+        # Финалист турнир не покидает так: он дошёл дальше всех, кроме одного.
         return f"<i>{html.escape(name)} уступает в финале</i>"
     if step >= 90:
         return f"<i>{html.escape(name)} останавливается в шаге от финала</i>"
     if step >= 80:
-        return (f"<i>{html.escape(name)}, к сожалению, вылетает "
+        return (f"<i>{html.escape(name)}, к сожалению, покидает турнир "
                 f"в четвертьфинале</i>")
     if step == 65:
         # Групповой этап Итогового: поражение не означает вылета, из
         # группы выходят по сумме трёх матчей.
         return ""
-    return f"<i>{html.escape(name)}, к сожалению, вылетает</i>"
+    return f"<i>{html.escape(name)}, к сожалению, покидает турнир</i>"
 
 
 async def _pick_verdict(match) -> str:
@@ -873,7 +877,11 @@ async def _event_text(kind: str, match, tour: str) -> str:
                          f"{html.escape(_side_name_ru(win))} — {low}-я.")
     if lose:
         lines.append("")
-        lines.append(f"{html.escape(tennis_live._named(lose))} вылетает.")
+        # Та же интонация, что под строкой результата (_exit_note): в
+        # блоке событий стояло сухое «вылетает», и выходило, что о
+        # неожиданном поражении известного игрока сообщают протоколом.
+        lines.append(f"{html.escape(tennis_live._named(lose))}, к сожалению, "
+                     f"покидает турнир.")
 
     reason, link = await _why_gone(tour, _side_name(lose) if lose else "")
     russian = await _reason_ru(reason) if reason else ""
@@ -1873,6 +1881,10 @@ async def _events_to_channel(bot: Bot) -> None:
     """
     try:
         import digest
+        # Ночью придерживаем: событие не теряется, а выходит первым
+        # обходом после утреннего выпуска (см. digest.night_hold).
+        if await digest.night_hold():
+            return
         chat, thread = await digest._target()
         if chat:
             await publish_events(bot, chat, thread)

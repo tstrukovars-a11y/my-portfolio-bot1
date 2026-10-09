@@ -673,7 +673,7 @@ def _exited(winner, loser, rnd="2nd Round", state="post"):
 def test_a_followed_player_who_lost_is_mourned():
     note = ta._exit_note(_exited("Jannik Sinner", "Karolina Muchova"))
     assert "Каролина Мухова" in note
-    assert "к сожалению" in note and "вылетает" in note
+    assert "к сожалению" in note and "покидает турнир" in note
 
 
 def test_the_winner_is_never_the_one_who_leaves():
@@ -688,11 +688,11 @@ def test_an_unknown_loser_gets_no_note():
 
 
 def test_a_finalist_does_not_fly_out():
-    """Он дошёл дальше всех, кроме одного, — «вылетает» звучит обидно
-    и неверно."""
+    """Он дошёл дальше всех, кроме одного, — «покидает турнир» звучит
+    обидно и неверно."""
     note = ta._exit_note(_exited("Jannik Sinner", "Karolina Muchova", "Final"))
     assert "уступает в финале" in note
-    assert "вылетает" not in note
+    assert "покидает турнир" not in note
 
 
 def test_a_semifinal_is_named_as_such():
@@ -708,12 +708,12 @@ def test_a_quarterfinal_is_named_as_such():
 
 
 def test_a_retirement_is_not_called_a_defeat():
-    """Человек не проиграл — он не смог продолжать, и «вылетает» про
-    травму звучит упрёком."""
+    """Человек не проиграл — он не смог продолжать, и «покидает
+    турнир» про травму звучит упрёком."""
     note = ta._exit_note(_exited("Jannik Sinner", "Karolina Muchova",
                                 state="post retired"))
     assert "снимается" in note
-    assert "к сожалению, вылетает" not in note
+    assert "к сожалению, покидает" not in note
 
 
 def test_a_group_stage_loss_is_not_an_exit():
