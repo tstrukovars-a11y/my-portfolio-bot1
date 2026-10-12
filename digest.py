@@ -438,6 +438,7 @@ SECTION_TITLES = {
     "recipes": "🍳 Кулинария",
     "travel": "🌍 Путешествия",
     "books": "📚 Деловая литература",
+    "art": "🖼 Картины",
 }
 
 # Названия слотов сетки — для списков, где раньше светились служебные слова
@@ -2419,7 +2420,12 @@ async def digest_command(message: Message, bot: Bot):
 
     if command == "nomirror":
         await database.set_setting(MIRROR_KEY, "")
-        for section in ROTATION:
+        # Чистим все разделы, у которых бывает своя тема, а не только
+        # те, что крутятся в ротации справочников. Иначе «темы забыты»
+        # — неправда: книги и картины в ротации не участвуют, и их
+        # темы пережили бы отключение, чтобы всплыть при следующем
+        # включении уже неверными.
+        for section in set(SECTION_TITLES) | set(SECTION_ALIASES.values()):
             await database.set_setting(f"{MIRROR_THREAD_KEY}_{section}", "")
         await database.set_setting(MIRROR_THREAD_KEY, "")
         await message.answer("✅ Дубль в группу отключён, темы забыты.")

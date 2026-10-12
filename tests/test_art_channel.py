@@ -423,3 +423,26 @@ def test_the_buttons_reach_the_discussion_group():
     body = body[:body.index("@router", 10)]
     mirror = body[body.index("_mirror("):]
     assert "InlineKeyboardMarkup" in mirror[:200]
+
+
+# --- раздел прикрепляется к теме ---------------------------------------
+#
+# Команда подтверждает привязку названием раздела. Раздела без названия
+# достаточно, чтобы она упала на последней строке — уже записав
+# настройку, но не сказав об этом.
+
+def test_every_section_has_a_title():
+    import digest
+    for section in set(digest.SECTION_ALIASES.values()):
+        assert section in digest.SECTION_TITLES, section
+
+
+def test_turning_mirroring_off_forgets_every_thread():
+    """Иначе «темы забыты» — неправда: разделы вне ротации пережили бы
+    отключение и всплыли при следующем включении уже неверными."""
+    import digest
+    source = open("digest.py", encoding="utf-8").read()
+    body = source[source.index('if command == "nomirror"'):]
+    body = body[:body.index("return", 10)]
+    assert "SECTION_TITLES" in body and "SECTION_ALIASES" in body
+    assert "for section in ROTATION" not in body
