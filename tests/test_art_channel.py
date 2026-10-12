@@ -230,3 +230,56 @@ def test_the_size_tags_say_what_they_mean():
 
 def test_the_help_shows_an_example_line():
     assert "#пейзаж #холст_масло" in ac.TAG_HELP
+
+
+# --- то, что уже опубликовано ------------------------------------------
+#
+# Новые посты приходят боту сами, а старые не придут никогда: Telegram
+# историю канала не пересказывает. Значит, у висящего поста должен быть
+# способ попасть в карточки — иначе первая же работа, выложенная до
+# подключения бота, останется за бортом навсегда.
+
+def test_an_edit_picks_up_a_post_published_earlier():
+    source = open("art_channel.py", encoding="utf-8").read()
+    body = source[source.index("async def fix_post"):]
+    body = body[:body.index("# ---", 10)]
+    assert "await take_post(message)" in body, \
+        "правка не заводит карточку для уже висящего поста"
+
+
+# --- первая настоящая работа -------------------------------------------
+
+REAL = ("Герб рода Струковых\n"
+        "2026 · картон, масло · 50 × 40 см\n"
+        "Геральдическая композиция.\n"
+        "#герб #картон_масло #среднее #яркое")
+
+
+def test_the_first_real_post_is_read_whole():
+    d = ac.parse(REAL)
+    assert d["title"] == "Герб рода Струковых"
+    assert d["year"] == 2026
+    assert d["technique"] == "картон, масло"
+    assert (d["width"], d["height"]) == (50.0, 40.0)
+    assert d["status"] == "available"
+
+
+def test_a_story_without_a_blank_line_is_still_a_story():
+    """Пустую строку перед рассказом ставят не всегда — с телефона
+    особенно."""
+    assert "Геральдическая" in ac.parse(REAL)["story"]
+
+
+def test_the_tags_of_the_first_work_exist_in_the_list():
+    """Список закрытый, и закрывали его до того, как появилась первая
+    настоящая работа. Расходится список с работами — расходятся и
+    полки."""
+    used = {w for w in REAL.split() if w.startswith("#")}
+    known = {t for tags in ac.TAGS.values() for t in tags}
+    assert used <= known, f"нет в списке: {sorted(used - known)}"
+
+
+def test_the_backing_is_part_of_the_technique_axis():
+    """По картону и холсту вещь висит по-разному и стоит по-разному."""
+    axis = ac.TAGS["чем и на чём"]
+    assert "#картон_масло" in axis and "#холст_масло" in axis
