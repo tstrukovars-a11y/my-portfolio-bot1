@@ -674,6 +674,75 @@ async def publish_to_journal(bot: Bot, work_id: int) -> str:
     return f"«{work['title']}» — в «Акценте»"
 
 
+async def publish_next(bot: Bot) -> str:
+    """Очередная работа в журнал — по расписанию, без выбора руками.
+
+    Сначала выход из витрины был командой: мол, решает человек, какая
+    работа достойна журнала. На деле это значило, что работы не выходят
+    вовсе — команду надо вспомнить и набрать, а канал ждать не станет.
+    Расписание держит ритм там, где воля человека его не держит.
+
+    Отбор остаётся, но наоборот: не «какую показать», а «какую не
+    показывать». Работа выходит один раз, по очереди добавления.
+    """
+    work = await database.art_next_unannounced()
+    if not work:
+        return "показаны все работы"
+
+    result = await publish_to_journal(bot, work["id"])
+    if result.startswith(("ошибка", "канал", "работы")):
+        return result
+
+    from datetime import datetime, timezone
+    await database.art_set(
+        work["id"],
+        announced_at=datetime.now(timezone.utc).replace(tzinfo=None))
+    left = await database.art_waiting()
+    return f"{result} · в очереди ещё {left}"
+
+
+@router.message(F.text.regexp(r"^/art_queue"))
+async def queue_command(message: Message):
+    """Что и когда выйдет. Очередь невидима, пока о ней не спросишь."""
+    if not config.is_admin(message.from_user.id):
+        return
+    left = await database.art_waiting()
+    following = await database.art_next_unannounced()
+    lines = ["🖼 <b>Очередь в журнал</b>", ""]
+    if following:
+        lines.append(f"Следующая: <b>{html.escape(following['title'])}</b>")
+        lines.append(f"Ждут выхода: {left}")
+    else:
+        lines.append("<i>Все работы показаны. Новая выйдет в тот же день, "
+                     "когда появится в канале картин.</i>")
+    lines.append("")
+    lines.append("Выходят в 17:30, по одной.\n"
+                 "Показать сейчас: <code>/art_post 1</code>\n"
+                 "Вернуть в очередь: <code>/art_again 1</code>")
+    await message.answer("\n".join(lines))
+
+
+@router.message(F.text.regexp(r"^/art_again"))
+async def again_command(message: Message):
+    """Вернуть работу в очередь — показать ещё раз.
+
+    Нужна не для повторов ради повторов: работу правят, дописывают
+    рассказ, снижают цену. Показанная однажды и забытая навсегда — это
+    потеря, а не порядок.
+    """
+    if not config.is_admin(message.from_user.id):
+        return
+    parts = (message.text or "").split()
+    if len(parts) < 2 or not parts[1].isdigit():
+        await message.answer("Так: <code>/art_again 1</code> — работа "
+                             "вернётся в очередь и выйдет снова.")
+        return
+    if not await database.art_set(int(parts[1]), announced_at=None):
+        await message.answer(f"Работы №{parts[1]} нет.")
+        return
+    await message.answer(f"🖼 Работа №{parts[1]} снова в очереди.")
+
+
 @router.message(F.text.regexp(r"^/art_post"))
 async def post_command(message: Message, bot: Bot):
     if not config.is_admin(message.from_user.id):

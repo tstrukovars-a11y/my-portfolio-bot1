@@ -48,6 +48,10 @@ SCHEDULE = [
     ("13:00", "genetics", None),
     ("14:30", "puzzle",   None),
     ("16:00", "travel",   None),
+    # Картина — вечернее чтение: её смотрят, а не читают, и в середине
+    # рабочего дня она пролистывается вместе с новостями. Между
+    # путешествиями и спортом остаётся место, где взгляд не занят.
+    ("17:30", "art",      None),
     ("19:00", "sport",    None),
     ("20:30", "dinner",   "Приятного вечера."),
 ]
@@ -450,6 +454,7 @@ SLOT_TITLES = {
     "genetics": "🧬 Генетика",
     "puzzle": "🧩 Задача дня",
     "travel": "🌍 Путешествия",
+    "art": "🖼 Картина дня",
     "sport": "🏆 Спортивный факт",
     "dinner": "🍳 Рецепт на ужин",
 }
@@ -1832,6 +1837,15 @@ async def publish_slot(bot: Bot, force: str = None) -> str:
         import puzzle_daily
         result = await puzzle_daily.publish(bot, chat, thread)
         if not result.startswith(("ошибка", "банк", "у задачи")):
+            await _mark_slot(slot)
+        return result
+
+    if slot == "art":
+        import art_channel
+        result = await art_channel.publish_next(bot)
+        # Кончились работы — слот не помечаем: завтра появится новая, и
+        # выйти она должна в свой час, а не через день.
+        if not result.startswith(("ошибка", "канал", "показаны")):
             await _mark_slot(slot)
         return result
 

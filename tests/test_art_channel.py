@@ -446,3 +446,59 @@ def test_turning_mirroring_off_forgets_every_thread():
     body = body[:body.index("return", 10)]
     assert "SECTION_TITLES" in body and "SECTION_ALIASES" in body
     assert "for section in ROTATION" not in body
+
+
+# --- работы выходят сами, по расписанию --------------------------------
+#
+# Сначала выход из витрины был командой: мол, решает человек, какая
+# работа достойна журнала. На деле это значило, что работы не выходят
+# вовсе — команду надо вспомнить и набрать, а канал ждать не станет.
+
+def test_paintings_have_a_slot_in_the_day():
+    import digest
+    slots = {slot: at for at, slot, _ in digest.SCHEDULE}
+    assert "art" in slots, "картины не выходят сами"
+    assert "art" in digest.SLOT_TITLES, \
+        "слот без названия светится служебным словом в списках"
+
+
+def test_the_slot_does_not_collide_with_another():
+    import digest
+    times = [at for at, _, _ in digest.SCHEDULE]
+    assert len(times) == len(set(times)), "два выпуска в один час"
+
+
+def test_the_queue_goes_in_order_not_at_random():
+    """Случайный выбор однажды покажет одну и ту же дважды подряд, и
+    читатель решит, что работ всего две."""
+    source = open("database.py", encoding="utf-8").read()
+    body = source[source.index("async def art_next_unannounced"):]
+    body = body[:body.index("async def art_waiting")]
+    assert "announced_at IS NULL" in body
+    assert "ORDER BY" in body and "RANDOM" not in body.upper()
+
+
+def test_a_shown_work_is_marked():
+    """Повтор в журнале читатель замечает сразу."""
+    source = open("art_channel.py", encoding="utf-8").read()
+    body = source[source.index("async def publish_next"):]
+    body = body[:body.index("@router", 10)]
+    assert "announced_at=" in body
+
+
+def test_an_empty_queue_does_not_burn_the_slot():
+    """Кончились работы — завтра появится новая, и выйти она должна в
+    свой час, а не через день."""
+    source = open("digest.py", encoding="utf-8").read()
+    body = source[source.index('if slot == "art"'):]
+    body = body[:body.index("return result") + 13]
+    assert "показаны" in body, "пустая очередь помечает слот отработанным"
+
+
+def test_a_work_can_be_put_back_in_the_queue():
+    """Работу правят, дописывают рассказ, снижают цену. Показанная
+    однажды и забытая навсегда — это потеря, а не порядок."""
+    source = open("art_channel.py", encoding="utf-8").read()
+    assert "art_again" in source
+    body = source[source.index("async def again_command"):]
+    assert "announced_at=None" in body[:body.index("@router", 10)]

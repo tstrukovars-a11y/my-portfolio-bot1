@@ -587,6 +587,14 @@ async def init_db():
             f"ALTER TABLE {SCHEMA}.artworks "
             "ADD COLUMN IF NOT EXISTS sold_at TIMESTAMP")
 
+        # Когда работа выходила в журнал. Нужна отметка, а не порядок:
+        # работы добавляются в канал пачками и правятся задним числом,
+        # и «следующая по номеру» однажды оказалась бы той, что уже
+        # показывали. Повтор в журнале читатель замечает сразу.
+        await conn.execute(
+            f"ALTER TABLE {SCHEMA}.artworks "
+            "ADD COLUMN IF NOT EXISTS announced_at TIMESTAMP")
+
         # Переходы по кнопкам: своя статистика, не зависящая от сети.
         await conn.execute(f"""
         CREATE TABLE IF NOT EXISTS {SCHEMA}.link_clicks (
@@ -3970,6 +3978,39 @@ async def art_add(title: str, photo_file_id: str = None) -> int:
         return 0
 
 
+async def art_next_unannounced():
+    """Работа, которая ещё не выходила в журнал. None — все выходили.
+
+    Берём старейшую: очередь, а не случайный выбор. Случайный однажды
+    покажет одну и ту же дважды подряд, и читатель решит, что работ
+    всего две.
+    """
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                f"SELECT * FROM {SCHEMA}.artworks "
+                "WHERE announced_at IS NULL "
+                "ORDER BY ordering, id LIMIT 1")
+        return dict(row) if row else None
+    except Exception as e:
+        logging.error(f"Очередь работ недоступна: {e}")
+        return None
+
+
+async def art_waiting() -> int:
+    """Сколько работ ещё не показывали в журнале"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            return int(await conn.fetchval(
+                f"SELECT COUNT(*) FROM {SCHEMA}.artworks "
+                "WHERE announced_at IS NULL") or 0)
+    except Exception as e:
+        logging.error(f"Очередь работ не сосчиталась: {e}")
+        return 0
+
+
 async def art_set_channel_msg(artwork_id: int, message_id: int) -> bool:
     """Запомнить, из какого поста канала пришла работа.
 
@@ -4005,7 +4046,8 @@ async def art_by_channel_msg(message_id: int) -> int:
 async def art_set(artwork_id: int, **fields) -> bool:
     """Правка полей работы. Ключи ограничены — чужое сюда не попадёт."""
     allowed = {"title", "year", "technique", "size", "price", "story",
-               "photo_file_id", "status", "ordering", "sold_price", "sold_at"}
+               "photo_file_id", "status", "ordering", "sold_price", "sold_at",
+               "announced_at"}
     pairs = [(k, v) for k, v in fields.items() if k in allowed]
     if not pairs:
         return False
