@@ -822,7 +822,19 @@ async def publish_next(bot: Bot, only: str = None, lead: str = None,
             if not made:
                 await database.mark_published(section, candidate)  # битую запись пропускаем
                 continue
-            if readiness(section, made):
+            why = readiness(section, made)
+            if why:
+                # Материал остаётся в очереди, но теперь не молча: если
+                # дело только в картинке, владелица получает задание с
+                # кнопкой. Иначе он ждал бы месяцами, а узнать о нём
+                # можно было, лишь открыв «Что править».
+                if why == "нет фотографии":
+                    try:
+                        import content_plan
+                        await content_plan.ask_photo(bot, section, candidate,
+                                                     made[0])
+                    except Exception as e:
+                        logging.warning(f"Задание на фото не ушло: {e}")
                 continue
             item_id, built, repeat = candidate, made, False
             break

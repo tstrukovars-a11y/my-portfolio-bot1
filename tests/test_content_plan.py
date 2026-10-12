@@ -131,3 +131,63 @@ def test_running_out_is_reported(monkeypatch):
 def test_enough_everywhere_says_so(monkeypatch):
     _fake_stock(monkeypatch, {"books": (29, 1, 28), "genetics": (40, 1, 39)})
     assert "хватает больше чем на неделю" in run(cp.stock_text())
+
+
+# --- задание на картинку ----------------------------------------------
+#
+# Материал без фотографии в канал не идёт и молча остаётся в очереди.
+# Ждать он может месяцами: узнать о нём можно было, только открыв
+# «Что править» и вспомнив, что такой экран есть.
+
+import config
+import content_plan as cp
+
+
+class _Bot:
+    def __init__(self):
+        self.sent = []
+
+    async def send_message(self, chat_id, text, **kw):
+        self.sent.append((chat_id, text, kw.get("reply_markup")))
+
+
+def test_a_missing_photo_becomes_a_task(settings, monkeypatch):
+    monkeypatch.setattr(config, "ADMIN_ID", 77)
+    bot = _Bot()
+    assert run(cp.ask_photo(bot, "travel", 12, "Живерни")) is True
+    who, text, markup = bot.sent[0]
+    assert who == 77, "задание ушло не владелице"
+    assert "Живерни" in text and "нет фотографии" in text
+    marks = [b.callback_data for row in markup.inline_keyboard for b in row]
+    assert marks == ["photofor_travel_12"]
+
+
+def test_the_same_material_is_asked_about_once(settings, monkeypatch):
+    """Напоминать про тот же — учить не читать сообщения от бота."""
+    monkeypatch.setattr(config, "ADMIN_ID", 1)
+    bot = _Bot()
+    run(cp.ask_photo(bot, "travel", 12, "Живерни"))
+    run(cp.ask_photo(bot, "travel", 12, "Живерни"))
+    assert len(bot.sent) == 1
+
+
+def test_another_material_is_asked_about_separately(settings, monkeypatch):
+    monkeypatch.setattr(config, "ADMIN_ID", 1)
+    bot = _Bot()
+    run(cp.ask_photo(bot, "travel", 12, "Живерни"))
+    run(cp.ask_photo(bot, "travel", 13, "Онфлёр"))
+    assert len(bot.sent) == 2
+
+
+def test_a_section_that_needs_no_picture_is_left_alone(settings, monkeypatch):
+    monkeypatch.setattr(config, "ADMIN_ID", 1)
+    bot = _Bot()
+    assert run(cp.ask_photo(bot, "genetics", 5, "Что такое ген")) is False
+    assert not bot.sent
+
+
+def test_every_section_knows_where_to_put_the_file():
+    """Иначе фото уедет в никуда, а человек увидит «готово»."""
+    import database
+    for section, (name, setter) in cp.PHOTO_TASK.items():
+        assert hasattr(database, setter), f"{section}: нет {setter}"

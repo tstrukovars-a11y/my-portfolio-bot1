@@ -426,3 +426,125 @@ async def gaps_button(call: CallbackQuery):
     await call.message.answer(
         "✏️ <b>Что править</b>\n\n" + "\n".join(
             f"{mark} {text}\n    <code>{cmd}</code>" for mark, text, cmd in holes))
+
+
+# ---------------------------------------------------------------------
+# ЗАДАНИЕ: НУЖНА КАРТИНКА
+# ---------------------------------------------------------------------
+#
+# Материал без фотографии в канал не идёт (digest.readiness) — он молча
+# остаётся в очереди. Ждать он может месяцами: узнать о нём можно было,
+# только открыв «Что править» и вспомнив, что такой экран есть.
+#
+# Экран остаётся, но теперь бот приходит сам и ровно в ту минуту, когда
+# материал понадобился: не смог опубликовать — прислал задание с
+# кнопкой. Это и есть разделение труда, о котором договорились: бот
+# знает, что новость есть, и собирает всё, кроме картинки; картинку
+# приносит человек.
+#
+# Одно задание на материал. Напоминать про тот же — быстрый способ
+# научить не читать сообщения от бота.
+
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import StatesGroup, State
+
+ASKED_KEY = "photo_asked"        # материалы, про которые уже просили
+ASKED_MEMORY = 60                # больше не помним: очередь столько не живёт
+
+# Раздел -> (как назвать в задании, куда класть файл).
+PHOTO_TASK = {
+    "travel": ("🌍 Путешествия", "set_travel_photo"),
+    "spots": ("📍 Достопримечательности", "set_spot_photo"),
+    "books": ("📚 Книги", "set_book_cover"),
+}
+
+
+class PhotoTask(StatesGroup):
+    waiting = State()
+
+
+async def _asked() -> list:
+    raw = await database.get_setting(ASKED_KEY) or ""
+    return [x for x in raw.split(",") if x]
+
+
+async def _remember_asked(mark: str):
+    kept = (await _asked() + [mark])[-ASKED_MEMORY:]
+    await database.set_setting(ASKED_KEY, ",".join(kept))
+
+
+async def ask_photo(bot, section: str, item_id, title: str) -> bool:
+    """Попросить картинку к конкретному материалу. True — попросили.
+
+    Зовётся из публикации, когда материал не прошёл по отсутствию фото.
+    Молчит, если про этот материал уже просили или раздел картинки не
+    требует.
+    """
+    if section not in PHOTO_TASK or not config.ADMIN_ID:
+        return False
+    mark = f"{section}:{item_id}"
+    if mark in await _asked():
+        return False
+
+    name, _ = PHOTO_TASK[section]
+    try:
+        await bot.send_message(
+            config.ADMIN_ID,
+            f"📷 <b>Нужна картинка</b>\n\n"
+            f"{name}\n<b>{html.escape(str(title or '')[:120])}</b>\n\n"
+            f"Текст готов, выйти не может — нет фотографии.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="📷 Прислать фото",
+                                     callback_data=f"photofor_{section}_{item_id}")]]))
+    except Exception as e:
+        logging.warning(f"Задание на фото не ушло: {e}")
+        return False
+
+    await _remember_asked(mark)
+    return True
+
+
+@router.callback_query(F.data.startswith("photofor_"))
+async def photo_wanted(call: CallbackQuery, state: FSMContext):
+    if not config.is_admin(call.from_user.id):
+        await call.answer()
+        return
+    section, _, item_id = call.data[len("photofor_"):].partition("_")
+    if section not in PHOTO_TASK or not item_id.isdigit():
+        await call.answer()
+        return
+    await call.answer()
+    await state.set_state(PhotoTask.waiting)
+    await state.update_data(section=section, item_id=int(item_id))
+    await call.message.answer("Пришлите фотографию одним сообщением.")
+
+
+@router.message(PhotoTask.waiting, F.photo)
+async def photo_arrived(message: Message, state: FSMContext):
+    data = await state.get_data()
+    section, item_id = data.get("section"), data.get("item_id")
+    await state.clear()
+    if section not in PHOTO_TASK:
+        return
+
+    # Самый крупный размер: Telegram отдаёт лесенку, и мелкий в канале
+    # выглядит мылом.
+    file_id = message.photo[-1].file_id
+    _, setter = PHOTO_TASK[section]
+    try:
+        ok = await getattr(database, setter)(item_id, file_id)
+    except Exception as e:
+        logging.error(f"Фото к {section}:{item_id} не сохранилось: {e}")
+        ok = False
+
+    if ok:
+        await message.answer("✅ Готово. Материал выйдет в свою очередь.")
+    else:
+        await message.answer("⚠️ Не сохранилось. Материал мог быть удалён.")
+
+
+@router.message(PhotoTask.waiting)
+async def photo_expected(message: Message):
+    """Прислали не фотографию — объясняем, а не молчим."""
+    await message.answer("Нужна именно фотография. Пришлите её или "
+                         "напишите /отмена.")
