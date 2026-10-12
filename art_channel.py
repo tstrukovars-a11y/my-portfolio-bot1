@@ -605,6 +605,92 @@ def _money(value) -> str:
     return (f"{int(value):,}".replace(",", " ") + " ₽") if value else "—"
 
 
+# ---------------------------------------------------------------------
+# ИЗ ВИТРИНЫ В ЖУРНАЛ
+# ---------------------------------------------------------------------
+#
+# Канал картин — полка: там лежат все работы, и там их ищут. «Акцент» —
+# журнал, и у него свой голос.
+#
+# Слать туда каждую работу нельзя: журнал превратится в ленту товаров, а
+# читают его не за этим. Но новая работа — это событие, и молчать о ней
+# значит выкладывать на полку, мимо которой никто не ходит.
+#
+# Поэтому отбор руками. Команда, а не автоматическая пересылка: решает,
+# какая работа достойна журнала, человек.
+
+async def publish_to_journal(bot: Bot, work_id: int) -> str:
+    """Показать работу в «Акценте» и продублировать в клуб"""
+    import digest
+
+    work = await database.art_get(work_id)
+    if not work:
+        return f"работы №{work_id} нет"
+
+    chat, thread = await digest._target()
+    if not chat:
+        return "канал не задан: /digest chat -100…"
+
+    sold = work.get("status") == "sold"
+    head = "🖼 <b>Новая работа</b>" if not sold else "✅ <b>Работа нашла дом</b>"
+    lines = [head, "", f"<b>{html.escape(work['title'])}</b>"]
+
+    facts = [x for x in (str(work["year"]) if work.get("year") else "",
+                         work.get("technique") or "",
+                         work.get("size") or "") if x]
+    if facts:
+        lines.append(" · ".join(html.escape(f) for f in facts))
+    if work.get("story"):
+        lines.append("")
+        lines.append(html.escape(work["story"])[:900])
+
+    username = await database.get_setting("bot_username")
+    rows = []
+    if username and not sold:
+        rows = try_row(work_id, username)
+    club = await digest._club_row("art", bot)
+    if club:
+        rows.append(club)
+
+    try:
+        sent = await bot.send_photo(
+            chat, work["photo_file_id"], caption="\n".join(lines)[:1024],
+            message_thread_id=thread,
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=rows)
+            if rows else None)
+    except Exception as e:
+        logging.error(f"Работа №{work_id} в журнал не вышла: {e}")
+        return f"ошибка: {e}"
+
+    # Дубль в группу — в свою тему. Картина в теме про генетику
+    # выглядит ошибкой, а не публикацией.
+    #
+    # Кнопки передаём: в группе их и будут нажимать. Там человек уже
+    # разговаривает, и «примерить у себя» оттуда ближе, чем из канала,
+    # где он молча листает.
+    await digest._mirror(bot, chat, sent.message_id, "art",
+                         InlineKeyboardMarkup(inline_keyboard=rows)
+                         if rows else None)
+    return f"«{work['title']}» — в «Акценте»"
+
+
+@router.message(F.text.regexp(r"^/art_post"))
+async def post_command(message: Message, bot: Bot):
+    if not config.is_admin(message.from_user.id):
+        return
+    parts = (message.text or "").split()
+    if len(parts) < 2 or not parts[1].isdigit():
+        await message.answer(
+            "🖼 <b>Показать работу в «Акценте»</b>\n\n"
+            "<code>/art_post 1</code>\n\n"
+            "Номер работы — в <code>/art_price</code>.\n\n"
+            "<i>Не каждую: канал картин — полка, «Акцент» — журнал. "
+            "Слать туда всё подряд значит превратить журнал в ленту "
+            "товаров, а читают его не за этим.</i>")
+        return
+    await message.answer(f"🖼 {await publish_to_journal(bot, int(parts[1]))}")
+
+
 @router.message(F.text.regexp(r"^/art_sold"))
 async def sold_command(message: Message):
     """За сколько работа ушла на самом деле.

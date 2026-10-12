@@ -373,3 +373,53 @@ def test_buttons_are_not_redrawn_when_already_there():
     source = open("art_channel.py", encoding="utf-8").read()
     body = source[source.index("async def fix_post"):]
     assert "not message.reply_markup" in body[:body.index("# ---", 10)]
+
+
+# --- из витрины в журнал -----------------------------------------------
+#
+# Канал картин — полка: там лежат все работы и там их ищут. «Акцент» —
+# журнал, и у него свой голос. Слать туда каждую работу значит
+# превратить журнал в ленту товаров, а читают его не за этим.
+
+def test_the_journal_post_is_a_separate_decision():
+    """Команда, а не автоматическая пересылка: решает, какая работа
+    достойна журнала, человек."""
+    source = open("art_channel.py", encoding="utf-8").read()
+    assert "async def publish_to_journal" in source
+    assert "art_post" in source
+
+
+def test_a_sold_work_is_announced_differently():
+    """«Новая работа» под проданной — приглашение к разговору, который
+    закончится «извините, её уже нет»."""
+    source = open("art_channel.py", encoding="utf-8").read()
+    body = source[source.index("async def publish_to_journal"):]
+    body = body[:body.index("@router", 10)]
+    assert "нашла дом" in body
+    assert "if username and not sold" in body, \
+        "под проданной работой осталась кнопка примерки"
+
+
+def test_paintings_have_their_own_section():
+    """Картина в теме про генетику выглядит ошибкой, а не публикацией."""
+    import digest
+    assert digest.SECTION_ALIASES.get("картины") == "art"
+    assert digest.SECTION_ALIASES.get("живопись") == "art"
+    assert digest.CLUB_LABELS.get("art")
+
+
+def test_the_club_label_asks_about_the_work():
+    """У картины вопрос к людям другой, чем к новости: не «что
+    думаете», а «куда бы повесили»."""
+    import digest
+    assert "работе" in digest.CLUB_LABELS["art"]
+
+
+def test_the_buttons_reach_the_discussion_group():
+    """В группе человек уже разговаривает, и «примерить» оттуда ближе,
+    чем из канала, где он молча листает."""
+    source = open("art_channel.py", encoding="utf-8").read()
+    body = source[source.index("async def publish_to_journal"):]
+    body = body[:body.index("@router", 10)]
+    mirror = body[body.index("_mirror("):]
+    assert "InlineKeyboardMarkup" in mirror[:200]
