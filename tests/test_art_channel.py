@@ -243,7 +243,7 @@ def test_an_edit_picks_up_a_post_published_earlier():
     source = open("art_channel.py", encoding="utf-8").read()
     body = source[source.index("async def fix_post"):]
     body = body[:body.index("# ---", 10)]
-    assert "await take_post(message)" in body, \
+    assert "await take_post(message, bot)" in body, \
         "правка не заводит карточку для уже висящего поста"
 
 
@@ -336,3 +336,40 @@ def test_the_list_tells_asked_from_realised():
     body = source[source.index("async def price_command"):]
     assert "продана за" in body
     assert "Реализовано" in body
+
+
+# --- кнопки под чужим постом -------------------------------------------
+#
+# Пост пишет владелица, а кнопки нужны боту: он дописывает их к чужому
+# сообщению. В канале это разрешено администратору с правом править
+# чужие посты, и есть ли оно у бота — заранее не известно.
+
+def test_the_buttons_are_attached_to_the_post():
+    source = open("art_channel.py", encoding="utf-8").read()
+    assert "edit_message_reply_markup" in source
+
+
+def test_a_refusal_is_not_silent():
+    """Кнопки — единственный путь из канала в бота. Без них пост
+    остаётся картинкой: примерить нельзя, цену спросить не у кого, и
+    понять это по тишине невозможно."""
+    assert "Редактировать сообщения других" in ac.NO_RIGHTS
+    source = open("art_channel.py", encoding="utf-8").read()
+    body = source[source.index("async def attach_buttons"):]
+    body = body[:body.index("@router", 10)]
+    assert "config.ADMIN_ID" in body, "об отказе не сообщают владелице"
+
+
+def test_an_edit_is_a_second_chance_for_the_buttons():
+    """Право выдали и поправили пост именно затем."""
+    source = open("art_channel.py", encoding="utf-8").read()
+    body = source[source.index("async def fix_post"):]
+    body = body[:body.index("# ---", 10)]
+    assert "attach_buttons" in body
+
+
+def test_buttons_are_not_redrawn_when_already_there():
+    """Иначе каждая правка текста дёргала бы Telegram впустую."""
+    source = open("art_channel.py", encoding="utf-8").read()
+    body = source[source.index("async def fix_post"):]
+    assert "not message.reply_markup" in body[:body.index("# ---", 10)]

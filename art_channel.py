@@ -158,8 +158,54 @@ def _photo_of(message: Message):
     return message.photo[-1].file_id if message.photo else None
 
 
+NO_RIGHTS = (
+    "🎨 Карточка «{title}» завелась, но кнопки под постом не встали.\n\n"
+    "Боту нужно право <b>«Редактировать сообщения других»</b> в канале: "
+    "пост написан вами, и без этого права бот не может ничего к нему "
+    "добавить.\n\n"
+    "Канал → Администраторы → бот → включить. Потом поправьте пост — "
+    "кнопки встанут.\n\n"
+    "<code>{error}</code>"
+)
+
+
+async def attach_buttons(bot: Bot, message: Message, work_id: int,
+                         title: str) -> bool:
+    """Повесить кнопки под пост, который написан рукой.
+
+    Пост пишет владелица, а кнопки нужны боту — значит, он должен
+    дописать их к чужому сообщению. В канале это разрешено
+    администратору с правом править чужие посты; есть оно у бота или
+    нет, заранее не известно.
+
+    Поэтому не молчим при отказе. Кнопки — единственный путь из канала
+    в бота: без них пост остаётся картинкой, примерить работу нельзя и
+    цену спросить не у кого, а понять это по тишине невозможно.
+    """
+    username = await database.get_setting("bot_username")
+    rows = try_row(work_id, username or "")
+    if not rows:
+        logging.warning("Канал картин: имя бота не известно — кнопок не будет")
+        return False
+    try:
+        await bot.edit_message_reply_markup(
+            chat_id=message.chat.id, message_id=message.message_id,
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+        return True
+    except Exception as e:
+        logging.error(f"Кнопки под постом «{title}» не встали: {e}")
+        try:
+            await bot.send_message(
+                config.ADMIN_ID,
+                NO_RIGHTS.format(title=html.escape(title),
+                                 error=html.escape(str(e)[:160])))
+        except Exception:
+            pass
+        return False
+
+
 @router.channel_post(_is_art_post)
-async def take_post(message: Message):
+async def take_post(message: Message, bot: Bot = None):
     """Новая работа из канала.
 
     Номер поста запоминаем: правка в канале должна менять карточку, а
@@ -191,9 +237,12 @@ async def take_post(message: Message):
         logging.warning(f"Канал картин: в посте «{data['title']}» "
                         f"напечатана цена — она видна всем")
 
+    if bot is not None:
+        await attach_buttons(bot, message, work_id, data["title"])
+
 
 @router.edited_channel_post(_is_art_post)
-async def fix_post(message: Message):
+async def fix_post(message: Message, bot: Bot = None):
     """Поправили пост — поправилась карточка.
 
     Если карточки ещё нет, правка её заводит. Это не щедрость, а
@@ -211,7 +260,7 @@ async def fix_post(message: Message):
     if not data:
         return
     if not work_id:
-        await take_post(message)
+        await take_post(message, bot)
         return
     fields = {"title": data["title"], "year": data["year"],
               "technique": data["technique"], "size": data["size"],
@@ -222,6 +271,11 @@ async def fix_post(message: Message):
         fields["photo_file_id"] = photo
     await database.art_set(work_id, **fields)
     logging.info(f"🎨 Канал картин: поправлена работа #{work_id}")
+
+    # Правка — второй шанс для кнопок: если в первый раз у бота не было
+    # права, владелица его выдала и поправила пост именно затем.
+    if bot is not None and not message.reply_markup:
+        await attach_buttons(bot, message, work_id, data["title"])
 
 
 # ---------------------------------------------------------------------
