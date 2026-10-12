@@ -283,3 +283,56 @@ def test_the_backing_is_part_of_the_technique_axis():
     """По картону и холсту вещь висит по-разному и стоит по-разному."""
     axis = ac.TAGS["чем и на чём"]
     assert "#картон_масло" in axis and "#холст_масло" in axis
+
+
+# --- продано за и прошу за --------------------------------------------
+#
+# Это разные числа, и смешивать их нельзя. «Прошу» — намерение: оно
+# меняется и бывает неверным. «Продано за» — факт: он не меняется
+# никогда, и в нём весь смысл. По реализованным ценам считается, сколько
+# стоит следующая работа. Одно поле на оба превращает будущую
+# статистику в список догадок.
+
+def test_the_sold_price_has_its_own_field():
+    source = open("database.py", encoding="utf-8").read()
+    assert "sold_price" in source and "sold_at" in source
+    allowed = source[source.index('allowed = {"title"'):]
+    assert "sold_price" in allowed[:300], \
+        "цену продажи нельзя записать — поле не разрешено к правке"
+
+
+def test_money_is_written_the_russian_way():
+    assert ac._money(1500000) == "1 500 000 ₽"
+    assert ac._money(45000) == "45 000 ₽"
+
+
+def test_no_price_is_a_dash_not_a_zero():
+    """«0 ₽» читается как «отдам даром»."""
+    assert ac._money(None) == "—"
+    assert ac._money(0) == "—"
+
+
+def test_selling_marks_the_work_and_keeps_it():
+    """Проданное из канала не исчезает: это лучший довод для
+    следующего покупателя."""
+    source = open("art_channel.py", encoding="utf-8").read()
+    body = source[source.index("async def sold_command"):]
+    body = body[:body.index("@router", 10)]
+    assert 'status="sold"' in body
+    assert "sold_price=value" in body
+    assert "sold_at" in body, "дата продажи не записывается"
+
+
+def test_a_sale_can_be_undone():
+    """Отметили не ту работу — это случается, и чинить руками в базе
+    владелице нечем."""
+    source = open("art_channel.py", encoding="utf-8").read()
+    body = source[source.index("async def sold_command"):]
+    assert 'status="available"' in body[:body.index("@router", 10)]
+
+
+def test_the_list_tells_asked_from_realised():
+    source = open("art_channel.py", encoding="utf-8").read()
+    body = source[source.index("async def price_command"):]
+    assert "продана за" in body
+    assert "Реализовано" in body

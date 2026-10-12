@@ -571,6 +571,22 @@ async def init_db():
             f"ALTER TABLE {SCHEMA}.artworks "
             "ADD COLUMN IF NOT EXISTS channel_msg_id BIGINT")
 
+        # За сколько работа ушла на самом деле — отдельно от того,
+        # сколько за неё просят.
+        #
+        # Это разные числа, и смешивать их нельзя. «Прошу» — намерение,
+        # оно меняется и бывает неверным. «Продано за» — факт, он не
+        # меняется никогда и в нём весь смысл: по реализованным ценам
+        # считается, сколько стоит следующая работа, и из них же
+        # вырастает довод для покупателя. Одно поле на оба превращает
+        # будущую статистику в список догадок.
+        await conn.execute(
+            f"ALTER TABLE {SCHEMA}.artworks "
+            "ADD COLUMN IF NOT EXISTS sold_price BIGINT")
+        await conn.execute(
+            f"ALTER TABLE {SCHEMA}.artworks "
+            "ADD COLUMN IF NOT EXISTS sold_at TIMESTAMP")
+
         # Переходы по кнопкам: своя статистика, не зависящая от сети.
         await conn.execute(f"""
         CREATE TABLE IF NOT EXISTS {SCHEMA}.link_clicks (
@@ -3989,7 +4005,7 @@ async def art_by_channel_msg(message_id: int) -> int:
 async def art_set(artwork_id: int, **fields) -> bool:
     """Правка полей работы. Ключи ограничены — чужое сюда не попадёт."""
     allowed = {"title", "year", "technique", "size", "price", "story",
-               "photo_file_id", "status", "ordering"}
+               "photo_file_id", "status", "ordering", "sold_price", "sold_at"}
     pairs = [(k, v) for k, v in fields.items() if k in allowed]
     if not pairs:
         return False

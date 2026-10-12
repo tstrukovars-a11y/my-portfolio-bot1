@@ -547,6 +547,61 @@ async def markup_help(message: Message):
     await message.answer(MARKUP)
 
 
+def _money(value) -> str:
+    return (f"{int(value):,}".replace(",", " ") + " ₽") if value else "—"
+
+
+@router.message(F.text.regexp(r"^/art_sold"))
+async def sold_command(message: Message):
+    """За сколько работа ушла на самом деле.
+
+    Отдельно от «прошу за» намеренно. «Прошу» — намерение: оно меняется
+    и бывает неверным. «Продано за» — факт: он не меняется никогда, и в
+    нём весь смысл. По реализованным ценам считается, сколько стоит
+    следующая работа, и из них же растёт довод для покупателя. Одно
+    поле на оба превращает будущую статистику в список догадок.
+    """
+    if not config.is_admin(message.from_user.id):
+        return
+    parts = (message.text or "").split()
+    if len(parts) < 3 or not parts[1].isdigit():
+        await message.answer(
+            "💼 <b>Отметить продажу</b>\n\n"
+            "<code>/art_sold 1 1500000</code>\n\n"
+            "Работа получит отметку «продана» и записанную цену "
+            "продажи. Из канала она не исчезнет: проданное — лучший "
+            "довод для следующего покупателя.\n\n"
+            "Отменить: <code>/art_sold 1 нет</code>")
+        return
+
+    work_id = int(parts[1])
+    raw = parts[2].lower()
+    if raw in ("нет", "-", "0"):
+        if not await database.art_set(work_id, status="available",
+                                      sold_price=None, sold_at=None):
+            await message.answer(f"Работы №{work_id} нет.")
+            return
+        await message.answer(f"Работа №{work_id} снова в наличии.")
+        return
+
+    value = int(re.sub(r"\D", "", parts[2]) or 0)
+    if not value:
+        await message.answer("Нужна сумма: <code>/art_sold 1 1500000</code>")
+        return
+
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    if not await database.art_set(work_id, status="sold", sold_price=value,
+                                  sold_at=now):
+        await message.answer(f"Работы №{work_id} нет.")
+        return
+    await message.answer(
+        f"💼 Работа №{work_id} продана за {_money(value)}.\n\n"
+        f"<i>Это первая запись в статистике реализованного. По ней и "
+        f"считается цена следующих работ — и она же главный довод для "
+        f"того, кто придёт после.</i>")
+
+
 @router.message(F.text.regexp(r"^/art_price"))
 async def price_command(message: Message):
     """Прайс — здесь, а не в канале.
@@ -561,18 +616,30 @@ async def price_command(message: Message):
     if len(parts) < 2:
         works = await database.art_list()
         lines = ["💰 <b>Прайс</b> — виден только вам", ""]
+        sold_total = 0
         for work in works or []:
-            price = (f"{work['price']:,}".replace(",", " ") + " ₽") \
-                if work.get("price") else "—"
-            mark = "🔴" if work.get("status") == "sold" else "·"
-            lines.append(f"{mark} <code>{work['id']}</code> "
-                         f"{html.escape(work['title'][:34])} — {price}")
+            if work.get("status") == "sold":
+                # Проданную показываем ценой продажи, а не той, что
+                # просили: просили — намерение, продали — факт.
+                got = work.get("sold_price") or work.get("price")
+                sold_total += int(got or 0)
+                lines.append(f"✅ <code>{work['id']}</code> "
+                             f"{html.escape(work['title'][:32])} — "
+                             f"продана за {_money(got)}")
+                continue
+            lines.append(f"· <code>{work['id']}</code> "
+                         f"{html.escape(work['title'][:32])} — "
+                         f"{_money(work.get('price'))}")
         if not works:
             lines.append("<i>Работ пока нет. Опубликуйте пост в канале "
                          "картин — карточка заведётся сама.</i>")
+        if sold_total:
+            lines.append("")
+            lines.append(f"<b>Реализовано: {_money(sold_total)}</b>")
         lines.append("")
-        lines.append("Поставить цену: <code>/art_price 7 45000</code>\n"
-                     "Снять: <code>/art_price 7 нет</code>")
+        lines.append("Прошу за: <code>/art_price 7 45000</code>\n"
+                     "Продана:  <code>/art_sold 7 1500000</code>\n"
+                     "Снять:    <code>/art_price 7 нет</code>")
         await message.answer("\n".join(lines))
         return
 
