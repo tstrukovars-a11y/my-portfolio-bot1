@@ -757,7 +757,29 @@ REASON_PROMPT = (
 REASON_LIMIT = 600
 
 
-async def _reason_ru(english: str) -> str:
+
+DRAMA_PROMPT = (
+    "Ты пересказываешь спортивную заметку по-русски для телеграм-канала "
+    "об одном эпизоде: что игрок сделал по ходу матча — сломал ракетку, "
+    "поспорил с судьёй, получил предупреждение, поранился.\n\n"
+    "Верни от двух до четырёх коротких строк, каждая с новой строки, "
+    "каждая — законченное предложение. Порядок: что произошло и при "
+    "каком счёте; чем это кончилось для самого матча; слова игрока, "
+    "если они в тексте есть.\n\n"
+    "Пиши только то, что сказано в тексте. Это главное правило, и оно "
+    "важнее полноты.\n\n"
+    "Запрещено:\n"
+    "— додумывать причину срыва и объяснять характер игрока;\n"
+    "— дописывать штраф, снятие очков или дисквалификацию, если про них "
+    "в тексте не сказано;\n"
+    "— оценки: «истерика», «позор», «скандал», «шок», «сенсация»;\n"
+    "— вступления, заголовки, кавычки вокруг всего ответа, списки.\n\n"
+    "Если игрок после этого выиграл или проиграл матч и это сказано в "
+    "тексте — скажи об этом: ради такого поворота эпизод и вспоминают."
+)
+
+
+async def _reason_ru(english: str, prompt: str = None) -> str:
     """Пересказ по-русски. Пусто — значит, сказать нечего."""
     if not english.strip():
         return ""
@@ -771,11 +793,18 @@ async def _reason_ru(english: str) -> str:
     try:
         answer = await client.messages.create(
             model="claude-haiku-4-5-20251001", max_tokens=400,
-            system=REASON_PROMPT,
+            system=prompt or REASON_PROMPT,
             messages=[{"role": "user", "content": english[:6000]}])
         text = (answer.content[0].text or "").strip().strip('"«»')
     except Exception as e:
         logging.warning(f"Пересказ не собрался: {e}")
+        return ""
+
+    # Ответ про исходник вместо события — не пересказ, а служебная
+    # реплика. В канал такое не идёт (см. digest.is_meta).
+    import digest
+    if digest.is_meta(text):
+        logging.info(f"Пересказ отброшен как служебный: {text[:80]}")
         return ""
 
     # Маркеры списка модель иногда ставит вопреки запрету: убираем их
@@ -1025,7 +1054,37 @@ LOUD = ("disqualif", "dq'd", "dq’d", "default", "withdraw", "withdrew",
 WINS = ("wins", "win ", "beats", "beat ", "retains", "reach", "reaches",
         "advances", "defeats", "overcomes", "rallies", "улучш")
 
+# Происшествие ПО ХОДУ матча — отдельный вид, и запрет на заголовки о
+# победе для него не действует. Бублик разбил ракетку, рассёк руку и
+# всё равно выиграл: история держится именно на том, что он выиграл, и
+# отсев по слову «wins» выбрасывал как раз её.
+#
+# Каждая строка — набор слов, которые должны встретиться все сразу.
+# Одного «smash» мало: это ещё и удар над головой, и «Синнер выиграл
+# смэшем» стало бы происшествием.
+DRAMA = (
+    ("smash", "rack"),          # разбил ракетку
+    ("break", "rack"),
+    ("broke", "rack"),
+    ("destroy", "rack"),
+    ("blood",),                 # рассёк руку
+    ("bleed",),
+    ("code violation",),
+    ("point penalty",),
+    ("outburst",),
+    ("meltdown",),
+    ("tirade",),
+    ("row with", "umpire"),
+    ("argument with", "umpire"),
+)
+
+
+def _is_drama(head: str) -> bool:
+    return any(all(word in head for word in combo) for combo in DRAMA)
+
+
 NEWS_HEAD = "📣 <b>Вне корта</b>"
+DRAMA_HEAD = "🎭 <b>На корте</b>"
 
 
 def _loud_about(headline: str, description: str) -> str:
@@ -1035,6 +1094,9 @@ def _loud_about(headline: str, description: str) -> str:
     соперник, и получалось «отказался Легечка», когда отказался другой.
     """
     head = (headline or "").lower()
+    # Происшествие на корте остаётся новостью и при победе — см. DRAMA.
+    if _is_drama(head):
+        return players_ru.first_known(head)
     if not any(word in head for word in LOUD):
         return ""
     if any(word in head for word in WINS):
@@ -1063,15 +1125,19 @@ async def _news_event_text(tour: str, who: str, headline: str,
     получить восемь слов заголовка там, где рядом лежат три тысячи
     знаков с его собственными словами.
     """
+    # Происшествию на корте — свой промпт. С прежним модель искала в
+    # тексте снятие или дисквалификацию, не находила и отвечала, что
+    # таких сведений нет; эта реплика и уходила в канал.
+    drama = _is_drama((headline or "").lower())
     gathered, _ = await _why_gone(tour, who)
     source = gathered or f"{headline}. {description}\n\n{await _story(article_id)}"
-    recap = await _reason_ru(source)
+    recap = await _reason_ru(source, DRAMA_PROMPT if drama else None)
     if not recap:
         # Без пересказа остаётся английский заголовок — это не публикация
         # для русского канала, лучше промолчать.
         return ""
 
-    lines = [NEWS_HEAD, ""]
+    lines = [DRAMA_HEAD if drama else NEWS_HEAD, ""]
     russian = players_ru.ru(who)
     if russian:
         lines.append(f"<b>{html.escape(russian)}</b>")

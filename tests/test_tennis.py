@@ -609,7 +609,7 @@ def test_an_event_without_a_recap_is_not_published(monkeypatch):
     чем выдать читателю строку, которую он не прочтёт."""
     import asyncio
 
-    async def nothing(english):
+    async def nothing(english, prompt=None):
         return ""
 
     async def gathered(tour, name):
@@ -625,7 +625,7 @@ def test_an_event_without_a_recap_is_not_published(monkeypatch):
 def test_the_recap_reaches_the_channel(monkeypatch):
     import asyncio
 
-    async def recap(english):
+    async def recap(english, prompt=None):
         return ("Медведев дисквалифицирован в полуфинале.\n"
                 "Мяч попал зрителю в лицо.\n"
                 "Он извинился перед пострадавшим.")
@@ -814,3 +814,57 @@ def test_the_higher_place_wins_for_a_shared_surname(monkeypatch):
 
     monkeypatch.setattr(database, "ranking_places", table)
     assert _run(ta._place_of(_side("Mirra Andreeva"), "wta")) == "3"
+
+
+# --- происшествия на корте --------------------------------------------
+#
+# Бублик разбил ракетку, рассёк руку и всё равно выиграл. История
+# держится именно на том, что он выиграл, — а отсев по слову «wins»
+# выбрасывал как раз её.
+
+
+def test_a_racket_smash_is_news_even_with_a_win():
+    who = ta._loud_about("Bublik smashes racket, bloodies hand, then wins", "")
+    assert who, "происшествие отсеялось из-за слова wins"
+
+
+def test_blood_alone_is_enough():
+    assert ta._is_drama("bublik bloodied his hand mid-match") is True
+
+
+def test_an_argument_with_the_umpire_counts():
+    assert ta._is_drama("medvedev in a row with the umpire") is True
+
+
+def test_an_overhead_smash_is_not_drama():
+    """«Smash» — ещё и удар над головой: «выиграл смэшем» происшествием
+    не является."""
+    assert ta._is_drama("sinner wins the point with a smash") is False
+
+
+def test_a_win_is_still_not_an_incident():
+    """Старое правило на месте: заголовок о победе сам по себе не
+    происшествие, даже со словом injury."""
+    assert ta._loud_about("Alcaraz retains title following injury layoff", "") == ""
+
+
+def test_a_withdrawal_is_still_caught():
+    who = ta._loud_about("Rublev withdraws from Paris", "")
+    assert who
+
+
+def test_the_two_kinds_have_different_headings():
+    """«Вне корта» над историей, случившейся прямо на корте, — неправда."""
+    assert ta.DRAMA_HEAD != ta.NEWS_HEAD
+    assert "корте" in ta.DRAMA_HEAD
+
+
+def test_the_drama_prompt_asks_for_the_outcome():
+    """Ради поворота «и всё равно выиграл» эпизод и вспоминают."""
+    low = ta.DRAMA_PROMPT.lower()
+    assert "выиграл или проиграл" in low
+
+
+def test_the_drama_prompt_forbids_judging_the_player():
+    low = ta.DRAMA_PROMPT.lower()
+    assert "истерика" in low and "характер игрока" in low

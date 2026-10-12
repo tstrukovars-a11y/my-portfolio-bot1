@@ -555,3 +555,48 @@ def test_daytime_is_not_held(settings, monkeypatch):
 def test_the_evening_closes_again_even_after_a_published_morning(settings, monkeypatch):
     _at(settings, monkeypatch, 22)
     assert run(digest.night_hold()) is True
+
+
+# --- служебные реплики модели в канал не идут -------------------------
+#
+# Промпт просит вернуть пустую строку, когда сказать нечего, и модель
+# понимает это наоборот: пишет предложение о том, что информации нет.
+# Так в рубрике «Неожиданность» вышло «В тексте нет информации об
+# игроке, который недоиграл матч…».
+
+СЛУЖЕБНЫЕ = [
+    "В тексте нет информации об игроке, который недоиграл матч, снялся, "
+    "был дисквалифицирован или пропускает турнир.",
+    "В статье не содержится сведений об этом эпизоде.",
+    "К сожалению, в предоставленном тексте нет нужных данных.",
+    "Недостаточно информации для пересказа.",
+    "Я не могу составить пересказ по этому тексту.",
+    "Возвращаю пустую строку.",
+]
+
+НАСТОЯЩИЕ = [
+    "Медведев снялся после второго сета.\nПричина не названа.",
+    "Бублик разбил ракетку при счёте 3:5 и рассёк руку.\n"
+    "Матч он всё равно доиграл и выиграл.",
+    "Соболенко пропустит турнир из-за травмы плеча.",
+]
+
+
+@pytest.mark.parametrize("text", СЛУЖЕБНЫЕ)
+def test_a_remark_about_the_source_never_reaches_the_channel(text):
+    assert digest.is_meta(text) is True
+
+
+@pytest.mark.parametrize("text", НАСТОЯЩИЕ)
+def test_a_real_retelling_passes(text):
+    assert digest.is_meta(text) is False
+
+
+def test_an_unnamed_reason_is_not_a_service_remark():
+    """«Причина не названа» — это сведение о событии, а не о тексте."""
+    assert digest.is_meta("Причина снятия не названа.") is False
+
+
+def test_empty_is_not_meta():
+    assert digest.is_meta("") is False
+    assert digest.is_meta(None) is False
