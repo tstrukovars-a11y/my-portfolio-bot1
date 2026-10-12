@@ -585,7 +585,7 @@ RETIRED = ("retired", "withdrew", "withdrawn", "default", "walkover")
 
 EVENT_HEADS = {
     "retired": "🚑 <b>Снятие</b>",
-    "upset": "⚡️ <b>Неожиданность</b>",
+    "upset": "⚡️ <b>Неожиданно</b>",
 }
 
 
