@@ -287,6 +287,18 @@ class TryOn(StatesGroup):
     waiting_width = State()
 
 
+class Valuing(StatesGroup):
+    """Человек считает свою работу"""
+    waiting_size = State()
+    waiting_technique = State()
+    waiting_sold = State()
+
+
+class Selling(StatesGroup):
+    """Художник предлагает работы в канал"""
+    waiting_about = State()
+
+
 ASK_WALL = (
     "🖼 <b>Примерим у вас</b>\n\n"
     "Пришлите фотографию стены, на которую смотрите.\n\n"
@@ -374,11 +386,164 @@ async def start_ask(message: Message, bot: Bot):
     await message.answer(
         "💬 Передала вопрос — отвечу здесь же.\n\n"
         "Заодно расскажу про раму, доставку и то, как работа ведёт "
-        "себя при разном свете.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text="🖼 Пока примерить у себя",
-                                 callback_data=f"try_open_{work['id']}")]]))
+        "себя при разном свете.")
+
+    # Пока ждёт ответа — показываем, откуда вообще берутся цены на
+    # картины. Человек спросил о цене: значит, вопрос «сколько это
+    # стоит и почему» у него уже возник, и отвечать на него надо
+    # сейчас, а не когда он остынет.
+    await _value_screen(message, work)
     raise SkipHandler
+
+
+async def _value_screen(message: Message, work: dict) -> None:
+    """Откуда берётся цена этой работы — и предложение посчитать свою"""
+    import art_value
+
+    width, height = _size_of(work.get("size") or "")
+    sold = await database.art_sold_count()
+
+    if art_value.is_commission(work["title"], work.get("technique") or ""):
+        text = art_value.explain(width, height,
+                                 work.get("technique") or "",
+                                 sold, work["title"])
+    elif width:
+        text = art_value.explain(width, height,
+                                 work.get("technique") or "", sold)
+    else:
+        text = ("📐 У этой работы не записан размер — посчитать ориентир "
+                "не из чего.")
+
+    rows = [[InlineKeyboardButton(text="🖼 Примерить у себя",
+                                  callback_data=f"try_open_{work['id']}")],
+            [InlineKeyboardButton(text="📐 Посчитать свою работу",
+                                  callback_data="val_start")],
+            [InlineKeyboardButton(text="🎨 Я художник, хочу продавать здесь",
+                                  callback_data="sell_start")]]
+    await message.answer(text, reply_markup=InlineKeyboardMarkup(
+        inline_keyboard=rows))
+
+
+# ---------------------------------------------------------------------
+# ПОСЧИТАТЬ СВОЮ РАБОТУ
+# ---------------------------------------------------------------------
+#
+# Развилка после вопроса о цене. Человек, которому интересно, сколько
+# стоит чужая картина, почти всегда либо собирается купить, либо пишет
+# сам — и второй случай ценнее: покупатель приходит один раз, художник
+# приносит работы.
+
+@router.callback_query(F.data == "val_start")
+async def value_start(call: CallbackQuery, state: FSMContext):
+    await call.answer()
+    await state.set_state(Valuing.waiting_size)
+    await call.message.answer(
+        "📐 <b>Посчитаем вашу работу</b>\n\n"
+        "Размер в сантиметрах — ширина и высота.\n"
+        "Например: <code>60 на 80</code>")
+
+
+@router.message(Valuing.waiting_size, F.text)
+async def value_size(message: Message, state: FSMContext):
+    import art_value
+    width, height = art_value.parse_size(message.text)
+    if not width:
+        await message.answer("Не разобрала размер. Напишите как "
+                             "<code>60 на 80</code>.")
+        return
+    await state.update_data(width=width, height=height)
+    await state.set_state(Valuing.waiting_technique)
+    rows = [[InlineKeyboardButton(text=name, callback_data=f"val_t_{key}")]
+            for key, name in (("холст_масло", "Холст, масло"),
+                              ("картон_масло", "Картон, масло"),
+                              ("акрил", "Акрил"),
+                              ("акварель", "Акварель"),
+                              ("графика", "Графика"))]
+    await message.answer("Чем написана?",
+                         reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+
+
+@router.callback_query(F.data.startswith("val_t_"), Valuing.waiting_technique)
+async def value_technique(call: CallbackQuery, state: FSMContext):
+    await call.answer()
+    await state.update_data(technique=call.data[len("val_t_"):])
+    await state.set_state(Valuing.waiting_sold)
+    rows = [[InlineKeyboardButton(text=name, callback_data=f"val_s_{n}")]
+            for n, name in ((0, "Пока ничего не продавал"),
+                            (1, "Одну-две"),
+                            (5, "Около пяти"),
+                            (15, "Больше пятнадцати"))]
+    await call.message.answer(
+        "Сколько работ уже продали?\n\n"
+        "<i>Это главный множитель: пока продаж нет, цену держит только "
+        "размер.</i>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+
+
+@router.callback_query(F.data.startswith("val_s_"), Valuing.waiting_sold)
+async def value_result(call: CallbackQuery, state: FSMContext):
+    import art_value
+    await call.answer("Считаю…")
+    data = await state.get_data()
+    try:
+        sold = int(call.data[len("val_s_"):])
+    except ValueError:
+        sold = 0
+    await state.clear()
+
+    text = art_value.explain(data.get("width", 0), data.get("height", 0),
+                             data.get("technique", ""), sold)
+    await call.message.answer(text, reply_markup=InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📐 Посчитать ещё одну",
+                                  callback_data="val_start")],
+            [InlineKeyboardButton(text="🎨 Предложить работы в канал",
+                                  callback_data="sell_start")]]))
+
+
+# ---------------------------------------------------------------------
+# ХУДОЖНИК ПРЕДЛАГАЕТ РАБОТЫ
+# ---------------------------------------------------------------------
+
+SELL_ASK = (
+    "🎨 <b>Расскажите о себе и работах</b>\n\n"
+    "Одним сообщением: что пишете, сколько работ готовы показать, "
+    "в каком городе, есть ли опыт продаж. Ссылку на свои страницы — "
+    "тоже сюда.\n\n"
+    "<i>Отвечу лично. Сразу честно: приём чужих работ ещё не запущен, "
+    "сначала нужно оформить ИП — продавать чужое без него нельзя. "
+    "Ваша заявка станет очередью, с которой это начнётся.</i>"
+)
+
+
+@router.callback_query(F.data == "sell_start")
+async def sell_start(call: CallbackQuery, state: FSMContext):
+    await call.answer()
+    await state.set_state(Selling.waiting_about)
+    await call.message.answer(SELL_ASK)
+
+
+@router.message(Selling.waiting_about, F.text)
+async def sell_about(message: Message, state: FSMContext, bot: Bot):
+    await state.clear()
+    user = message.from_user
+    contact = (f"@{user.username}" if user.username else
+               f"<a href='tg://user?id={user.id}'>"
+               f"{html.escape(user.full_name)}</a>")
+    try:
+        await bot.send_message(
+            config.ADMIN_ID,
+            f"🎨 <b>Художник хочет продавать через канал</b>\n\n"
+            f"{contact}\n\n{html.escape(message.text[:2000])}")
+    except Exception as e:
+        logging.error(f"Заявка художника не дошла: {e}")
+    await message.answer(
+        "🎨 Записала. Отвечу лично.\n\n"
+        "Пока можете посчитать свои работы и примерить их на стене — "
+        "это та же механика, что увидят ваши покупатели.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="📐 Посчитать работу",
+                                 callback_data="val_start")]]))
 
 
 @router.message(F.text.regexp(r"^/start\s+try-"))

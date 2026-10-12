@@ -3998,6 +3998,19 @@ async def art_next_unannounced():
         return None
 
 
+async def art_sold_count() -> int:
+    """Сколько работ уже продано — множитель в расчёте ориентира"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            return int(await conn.fetchval(
+                f"SELECT COUNT(*) FROM {SCHEMA}.artworks "
+                "WHERE status = 'sold'") or 0)
+    except Exception as e:
+        logging.error(f"Проданные не сосчитались: {e}")
+        return 0
+
+
 async def art_waiting() -> int:
     """Сколько работ ещё не показывали в журнале"""
     try:
