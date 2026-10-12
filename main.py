@@ -49,6 +49,7 @@ import urgent
 import personal
 import indices
 import tree
+import world
 import subs
 import esim
 import exchange
@@ -645,6 +646,7 @@ async def main():
     dp.include_router(invite_card.router)
     dp.include_router(commands.router)
     dp.include_router(content_plan.router)
+    dp.include_router(world.router)
     dp.include_router(xo.router)
     dp.include_router(rally.router)
     dp.include_router(lang.router)

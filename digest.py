@@ -1757,6 +1757,32 @@ async def publish_slot(bot: Bot, force: str = None) -> str:
         # публикаций, а утренний выпуск идёт своим путём.
         await _mirror(bot, chat, sent.message_id, "morning")
 
+        # «Что в мире» — отдельным постом по тем же причинам, что и
+        # генетика: своя тема, свой читатель и своя клавиатура, которой
+        # у блока внутри поста быть не может. Молчит, когда тем не
+        # задано или за сутки по ним ничего существенного.
+        try:
+            import world
+            world_text = await world.post()
+        except Exception as e:
+            logging.warning(f"Дайджест: «Что в мире» не собралось: {e}")
+            world_text = ""
+        if world_text:
+            await asyncio.sleep(3.2)
+            try:
+                world_sent = await bot.send_message(
+                    chat, world_text[:MAX_MESSAGE],
+                    message_thread_id=thread,
+                    disable_web_page_preview=True,
+                    reply_markup=(InlineKeyboardMarkup(inline_keyboard=[row])
+                                  if (row := await _club_row("morning", bot))
+                                  else None))
+                await _mirror(bot, chat, world_sent.message_id, "morning")
+            except Exception as e:
+                # Утро уже вышло — ронять выпуск из-за добавочного поста
+                # нельзя: главное в канале есть, и это важнее.
+                logging.error(f"Дайджест: «Что в мире» не вышло: {e}")
+
         # Генетика — вторым постом, со своей кнопкой. Пауза не для
         # красоты: два сообщения подряд Telegram показывает одним
         # уведомлением, и второе теряется.
