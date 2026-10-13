@@ -276,6 +276,17 @@ async def commands_stay_private(handler, event, data):
         return await handler(event, data)
 
     user = getattr(event, "from_user", None)
+
+    # Одно исключение, и оно вынужденное: «/id» отвечает, в каком чате и
+    # в какой теме его набрали. В личке этот ответ бессмыслен — там нет
+    # ни чата, ни темы, о которых спрашивают.
+    #
+    # Правило при этом не нарушено: обработчик ничего не пишет в группу,
+    # ответ уходит владелице в личку. Запрещено показывать служебное
+    # всем, а не узнавать номер темы.
+    if text.strip().lower() == "/id" and user and config.is_admin(user.id):
+        return await handler(event, data)
+
     if user and config.is_admin(user.id):
         try:
             await event.bot.send_message(

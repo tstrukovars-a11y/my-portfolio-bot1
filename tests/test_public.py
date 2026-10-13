@@ -335,3 +335,38 @@ def test_the_guard_runs_before_the_gate():
     source = open("main.py", encoding="utf-8").read()
     assert source.index("public.keep_private") < \
            source.index("growth.gate_middleware")
+
+
+# --- «/id» — вынужденное исключение ------------------------------------
+#
+# Эта команда отвечает, в каком чате и в какой теме её набрали. В личке
+# ответ бессмыслен: там нет ни чата, ни темы, о которых спрашивают.
+# Запрет на служебное в общем чате при этом не нарушен — обработчик
+# ничего в группу не пишет, ответ уходит владелице в личку.
+
+def test_the_owner_can_ask_for_the_topic_number(monkeypatch):
+    monkeypatch.setattr(config, "ADMIN_ID", 1)
+    assert run_commands(Msg("/id", user_id=1)), \
+        "узнать номер темы стало нельзя — а он нужен именно там"
+
+
+def test_a_stranger_cannot(monkeypatch):
+    monkeypatch.setattr(config, "ADMIN_ID", 1)
+    assert not run_commands(Msg("/id", user_id=999))
+
+
+def test_the_exception_is_only_for_that_one_command(monkeypatch):
+    """Иначе под видом исключения в группу вернутся все команды."""
+    monkeypatch.setattr(config, "ADMIN_ID", 1)
+    for text in ("/idea", "/id something", "/продажи", "/digest"):
+        assert not run_commands(Msg(text, user_id=1)), text
+
+
+def test_the_answer_goes_to_the_owner_not_to_the_group():
+    """Список разделов с номерами чатов — служебное: показать его в
+    группе значит показать всем, кто туда зашёл."""
+    source = open("digest.py", encoding="utf-8").read()
+    body = source[source.index("async def show_chat_id"):]
+    body = body[:body.index("@router.callback_query")]
+    assert 'message.chat.type != "private"' in body
+    assert "send_message(message.from_user.id" in body

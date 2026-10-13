@@ -2198,9 +2198,25 @@ async def show_chat_id(message: Message):
         callback_data=f"clubpic_{chat_id}")])
 
     where = f"Чат <code>{chat_id}</code>" + (f", тема <code>{thread}</code>" if thread else "")
-    await message.answer(
-        f"📍 {where}\n\nЧто дублировать сюда из канала?",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+    text = (f"📍 {where}\n\nЧто дублировать сюда из канала?")
+    kb = InlineKeyboardMarkup(inline_keyboard=rows)
+
+    # Ответ уходит в личку, а не в тему, где набрали команду. Список
+    # разделов с номерами чатов — служебное: показать его в группе
+    # значит показать всем, кто туда зашёл. А номер темы без ответа в
+    # ней же узнать нельзя — отсюда и такая развилка.
+    if message.chat.type != "private":
+        try:
+            await message.bot.send_message(message.from_user.id, text,
+                                           reply_markup=kb)
+        except Exception as e:
+            logging.warning(f"Ответ на /id не ушёл в личку: {e}")
+            # Личка закрыта — тогда уж в группе, иначе человек остаётся
+            # ни с чем и не понимает, почему.
+            await message.answer(text, reply_markup=kb)
+        return
+
+    await message.answer(text, reply_markup=kb)
 
 
 @router.callback_query(F.data.startswith("setmirror_"))
