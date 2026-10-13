@@ -4079,6 +4079,53 @@ async def listing_set(listing_id: int, **fields) -> bool:
         return False
 
 
+async def listing_lead(listing_id: int, user_id: int) -> bool:
+    """Записать обращение к автору.
+
+    Считаем нажатия, а не продажи: о продаже площадка не узнаёт — она
+    в сделке не участвует. Зато обращение — то единственное, что она
+    действительно даёт художнику, и то, что когда-нибудь станет
+    предметом отдельной платы.
+
+    Один человек считается один раз: иначе число растёт от того, что
+    кто-то потерял переписку, и перестаёт что-либо значить.
+    """
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(f"""
+            CREATE TABLE IF NOT EXISTS {SCHEMA}.art_leads (
+                listing_id INTEGER,
+                user_id BIGINT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (listing_id, user_id)
+            )""")
+            await conn.execute(
+                f"INSERT INTO {SCHEMA}.art_leads (listing_id, user_id) "
+                "VALUES ($1, $2) ON CONFLICT DO NOTHING",
+                listing_id, user_id)
+        return True
+    except Exception as e:
+        logging.error(f"Обращение не записано: {e}")
+        return False
+
+
+async def listing_leads(listing_id: int = 0) -> int:
+    """Сколько человек просили контакт: по объявлению или всего"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            if listing_id:
+                return int(await conn.fetchval(
+                    f"SELECT COUNT(*) FROM {SCHEMA}.art_leads "
+                    "WHERE listing_id = $1", listing_id) or 0)
+            return int(await conn.fetchval(
+                f"SELECT COUNT(*) FROM {SCHEMA}.art_leads") or 0)
+    except Exception as e:
+        logging.error(f"Обращения не сосчитались: {e}")
+        return 0
+
+
 async def listing_get(listing_id: int):
     try:
         pool = await get_pool()

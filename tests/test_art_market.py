@@ -12,18 +12,18 @@ import art_market as am
 
 # --- площадка не в сделке ----------------------------------------------
 
-def test_the_listing_carries_the_seller_contact():
-    """Контакт площадки в объявлении возвращает её в середину сделки,
+def test_the_listing_names_the_author_not_the_channel():
+    """Площадка, названная продавцом, оказывается в середине сделки,
     что бы ни было написано ниже."""
     text = am.render({"title": "Работа", "price": 45000,
-                      "contact": "@artist", "author": "Анна Петрова"})
-    assert "@artist" in text
-    assert "Продаёт автор" in text
+                      "author": "Анна Петрова"})
+    assert "Анна Петрова" in text
+    assert "обращаться к автору" in text
 
 
 def test_the_listing_says_who_is_not_responsible():
     text = am.render({"title": "Работа", "author": "Анна"})
-    assert "в сделке не участвует" in text
+    assert "ответственности не несёт" in text
 
 
 # --- согласия -----------------------------------------------------------
@@ -100,3 +100,63 @@ def test_the_price_hint_comes_before_the_artist_names_his_own():
     body = source[source.index("async def got_size"):]
     body = body[:body.index("async def got_price")]
     assert "art_value" in body and "Ваша цена" in body
+
+
+# --- контакт за кнопкой -------------------------------------------------
+#
+# Написанный в канале контакт достаётся и тем, кто пришёл не покупать:
+# спам собирается по открытым каналам в первую очередь. И главное —
+# нажатие видно, а переписанный глазами телеграм нет, и художник не
+# узнает, сколько человек им заинтересовалось.
+
+def test_the_contact_is_not_printed_in_the_post():
+    text = am.render({"title": "Работа", "author": "Анна",
+                      "contact": "@anna_art"})
+    assert "@anna_art" not in text
+
+
+def test_the_post_says_where_to_ask():
+    text = am.render({"title": "Работа", "author": "Анна"})
+    assert "обращаться к автору работы" in text
+    assert "ответственности не несёт" in text
+
+
+def test_the_post_carries_a_button_to_the_author():
+    row = am.contact_row(3, "mybot")
+    assert row and "start=lead-3" in row[0].url
+
+
+def test_without_a_bot_name_there_is_no_button():
+    assert am.contact_row(3, "") is None
+
+
+def test_asking_for_the_contact_is_counted():
+    """Считаем нажатия, а не продажи: о продаже площадка не узнаёт —
+    она в сделке не участвует."""
+    source = open("art_market.py", encoding="utf-8").read()
+    body = source[source.index("async def give_contact"):]
+    assert "listing_lead" in body[:1200]
+
+
+def test_one_person_counts_once():
+    """Иначе число растёт от того, что кто-то потерял переписку, и
+    перестаёт что-либо значить."""
+    source = open("database.py", encoding="utf-8").read()
+    body = source[source.index("async def listing_lead"):]
+    body = body[:body.index("async def listing_leads")]
+    assert "PRIMARY KEY (listing_id, user_id)" in body
+    assert "ON CONFLICT DO NOTHING" in body
+
+
+def test_the_artist_learns_about_interest():
+    """Это и есть то, за что он платил: не публикация сама по себе, а
+    люди, которые дошли."""
+    source = open("art_market.py", encoding="utf-8").read()
+    body = source[source.index("async def give_contact"):]
+    assert "listing[\"user_id\"]" in body[:2200]
+
+
+def test_a_dead_listing_gives_no_contact():
+    source = open("art_market.py", encoding="utf-8").read()
+    body = source[source.index("async def give_contact"):]
+    assert 'status") != "live"' in body[:1000]

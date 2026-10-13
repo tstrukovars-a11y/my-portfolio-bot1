@@ -302,13 +302,71 @@ def render(listing: dict) -> str:
         lines.append(f"📍 {html.escape(listing['city'])}")
     lines.append("")
     lines.append(f"Автор: {html.escape(listing.get('author') or '—')}")
-    lines.append(f"Связаться: {html.escape(listing.get('contact') or '—')}")
     lines.append("")
-    lines.append("<i>Продаёт автор. Канал только разместил объявление и "
-                 "в сделке не участвует.</i>")
+    lines.append("<i>По вопросам приобретения обращаться к автору работы. "
+                 "Канал за сопровождение сделки ответственности не несёт.</i>")
     lines.append(f"<i>Реклама. {html.escape(listing.get('author') or '')} "
                  f"erid: {html.escape(listing.get('erid') or '')}</i>")
     return "\n".join(lines)
+
+
+def contact_row(listing_id: int, username: str):
+    """Контакт автора — за кнопкой, а не строкой в посте.
+
+    Строкой он работает хуже по двум причинам. Первая: написанный в
+    канале контакт достаётся и тем, кто пришёл не покупать, — спам
+    собирается по открытым каналам в первую очередь. Вторая важнее для
+    дела: нажатие видно, а переписанный глазами телеграм — нет, и
+    художник не узнает, сколько человек им заинтересовалось.
+
+    Из этого же вырастает возможность когда-нибудь брать за контакт
+    деньги. Сегодня он бесплатен, но путь уже проложен: считать
+    обращения задним числом нельзя, а не считать их — значит не знать
+    о площадке ничего.
+    """
+    if not username:
+        return None
+    return [InlineKeyboardButton(
+        text="✉️ Написать автору",
+        url=f"https://t.me/{username.lstrip('@')}?start=lead-{listing_id}")]
+
+
+@router.message(F.text.regexp(r"^/start\s+lead-"))
+async def give_contact(message: Message, bot: Bot):
+    """Отдать контакт автора и записать обращение"""
+    from aiogram.dispatcher.event.bases import SkipHandler
+
+    raw = (message.text or "").split("lead-", 1)[1].strip()
+    if not raw.isdigit():
+        raise SkipHandler
+    listing = await database.listing_get(int(raw))
+    if not listing or listing.get("status") != "live":
+        await message.answer("Это объявление больше не действует.")
+        raise SkipHandler
+
+    await database.listing_lead(listing["id"], message.from_user.id)
+
+    await message.answer(
+        f"✉️ <b>{html.escape(listing.get('title') or 'Работа')}</b>\n"
+        f"{html.escape(listing.get('size') or '')} · "
+        f"{_money(listing.get('price'))}\n\n"
+        f"Автор: {html.escape(listing.get('author') or '—')}\n"
+        f"Связаться: {html.escape(listing.get('contact') or '—')}\n\n"
+        f"<i>Дальше вы договариваетесь напрямую. Канал в сделке не "
+        f"участвует: ни оплату, ни доставку, ни возврат не ведёт.</i>")
+
+    # Художнику — что им заинтересовались. Это и есть то, за что он
+    # платил: не публикация сама по себе, а люди, которые дошли.
+    try:
+        count = await database.listing_leads(listing["id"])
+        await bot.send_message(
+            listing["user_id"],
+            f"✉️ Вашей работой «{html.escape(listing.get('title') or '')}» "
+            f"заинтересовались. Всего обращений: {count}.\n\n"
+            f"<i>Контакт у человека есть — ждите сообщения.</i>")
+    except Exception:
+        pass
+    raise SkipHandler
 
 
 @router.message(F.text.regexp(r"^/listing_paid"))
@@ -366,9 +424,14 @@ async def post(message: Message, bot: Bot):
                              "<code>/art_channel -100…</code>")
         return
 
+    username = await database.get_setting("bot_username")
+    row = contact_row(listing["id"], username or "")
     try:
-        sent = await bot.send_photo(int(chat), listing["photo_file_id"],
-                                    caption=render(listing)[:1024])
+        sent = await bot.send_photo(
+            int(chat), listing["photo_file_id"],
+            caption=render(listing)[:1024],
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[row])
+            if row else None)
     except Exception as e:
         logging.error(f"Объявление №{listing['id']} не вышло: {e}")
         await message.answer(f"Не вышло: {html.escape(str(e))}")
@@ -402,11 +465,18 @@ async def listing_board(message: Message):
              "live": "✅ в канале"}
     lines = ["🎨 <b>Объявления</b>", ""]
     for row in rows:
+        leads = await database.listing_leads(row["id"])
+        # Обращения — единственное, что площадка действительно даёт
+        # художнику. Доска без них показывает работу, а не результат.
+        tail = f" · обращений {leads}" if leads else ""
         lines.append(f"<code>{row['id']}</code> "
-                     f"{html.escape((row.get('title') or '')[:28])} — "
-                     f"{marks.get(row.get('status'), row.get('status'))}")
+                     f"{html.escape((row.get('title') or '')[:26])} — "
+                     f"{marks.get(row.get('status'), row.get('status'))}{tail}")
     lines.append("")
     lines.append(f"Цена размещения: {_money(await _fee())}")
+    total = await database.listing_leads()
+    if total:
+        lines.append(f"Всего обращений: {total}")
     await message.answer("\n".join(lines))
 
 
