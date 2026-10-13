@@ -862,7 +862,13 @@ async def _event_text(kind: str, match, tour: str) -> str:
     lines = [EVENT_HEADS.get(kind, EVENT_HEADS["upset"])]
     event = _event(match)
     rnd = players_ru.rnd(match.get("round") or "")
-    where = " · ".join(x for x in (event, rnd) if x)
+
+    # Турнир называем один раз за пост. У «Неожиданно» он стоит внизу,
+    # в строке про вылет, — там он часть фразы и читается. Повторённый
+    # ещё и в шапке, он превращается в подпись к подписи: глаз его
+    # второй раз не берёт, а место занято.
+    head_parts = (rnd,) if kind == "upset" else (event, rnd)
+    where = " · ".join(x for x in head_parts if x)
     if where:
         lines.append(f"<i>{html.escape(where)}</i>")
     lines.append("")
@@ -883,7 +889,7 @@ async def _event_text(kind: str, match, tour: str) -> str:
             lines.append("")
             lines.append(html.escape(russian))
         if link:
-            lines.append(f'<a href="{html.escape(link)}">Подробнее у источника</a>')
+            lines.append(f'<a href="{html.escape(link)}">Подробнее тут</a>')
 
         if win:
             # Место берём и из своего рейтинга тоже: у снявшегося оно в
@@ -924,7 +930,7 @@ async def _event_text(kind: str, match, tour: str) -> str:
         lines.append("")
         lines.append(html.escape(russian))
     if link:
-        lines.append(f'<a href="{html.escape(link)}">Подробнее у источника</a>')
+        lines.append(f'<a href="{html.escape(link)}">Подробнее тут</a>')
     return "\n".join(lines)
 
 
@@ -1146,7 +1152,7 @@ async def _news_event_text(tour: str, who: str, headline: str,
     lines.append(html.escape(recap).replace("\n", "\n"))
     if link:
         lines.append("")
-        lines.append(f'<a href="{html.escape(link)}">Подробнее у источника</a>')
+        lines.append(f'<a href="{html.escape(link)}">Подробнее тут</a>')
     return "\n".join(lines)
 
 

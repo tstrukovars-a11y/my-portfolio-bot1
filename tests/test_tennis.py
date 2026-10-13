@@ -896,3 +896,18 @@ def test_the_surprise_block_names_the_tournament():
 
 def test_the_surprise_header_is_a_word_not_a_noun():
     assert ta.EVENT_HEADS["upset"].count("Неожиданно") == 1
+
+
+def test_the_tournament_is_named_once_in_a_surprise():
+    """Повторённый в шапке и внизу, он превращается в подпись к
+    подписи: глаз его второй раз не берёт, а место занято."""
+    source = open("tennis_alerts.py", encoding="utf-8").read()
+    body = source[source.index("async def _event_text"):]
+    body = body[:body.index("def _side_name_ru")]
+    assert 'head_parts = (rnd,) if kind == "upset"' in body
+
+
+def test_the_link_is_called_plainly():
+    source = open("tennis_alerts.py", encoding="utf-8").read()
+    assert "Подробнее у источника" not in source
+    assert "Подробнее тут" in source

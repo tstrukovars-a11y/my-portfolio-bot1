@@ -88,3 +88,61 @@ def test_it_is_registered_before_everything_else():
     списку роутеров."""
     source = open("main.py", encoding="utf-8").read()
     assert source.index("ping.router") < source.index("planner.router")
+
+
+# --- команда, набранная в канале ---------------------------------------
+#
+# Пост в канале приходит боту отдельным типом события, и обработчики
+# команд его не видят вовсе. Для человека это выглядит так же, как
+# мёртвый бот: он пишет команду за командой и не получает ничего.
+
+class Post:
+    def __init__(self, text="/пинг"):
+        self.text = text
+        self.bot = self
+
+    async def send_message(self, chat, text, **kw):
+        self.sent = (chat, text)
+
+
+def test_a_command_in_the_channel_is_not_ignored(monkeypatch, settings):
+    monkeypatch.setattr(config, "ADMIN_ID", 5)
+    post = Post()
+    run(ping.command_in_channel(post))
+    chat, text = post.sent
+    assert chat == 5
+    assert "в канале" in text and "в личке" in text
+
+
+def test_the_hint_names_the_command(monkeypatch, settings):
+    monkeypatch.setattr(config, "ADMIN_ID", 5)
+    post = Post("/art_queue")
+    run(ping.command_in_channel(post))
+    assert "/art_queue" in post.sent[1]
+
+
+def test_the_same_command_is_not_hinted_twice(monkeypatch, settings):
+    """Человек, не получивший ответа, набирает команду трижды подряд —
+    три одинаковых письма раздражают сильнее молчания."""
+    monkeypatch.setattr(config, "ADMIN_ID", 5)
+    first = Post()
+    run(ping.command_in_channel(first))
+    second = Post()
+    run(ping.command_in_channel(second))
+    assert not hasattr(second, "sent")
+
+
+def test_without_an_owner_nothing_is_sent(monkeypatch, settings):
+    monkeypatch.setattr(config, "ADMIN_ID", 0)
+    post = Post()
+    run(ping.command_in_channel(post))
+    assert not hasattr(post, "sent")
+
+
+def test_the_bot_listens_to_channel_posts():
+    """Иначе подсказка не сработает: обновление просто не придёт."""
+    import asyncio
+    from aiogram import Dispatcher
+    dp = Dispatcher()
+    dp.include_router(ping.router)
+    assert "channel_post" in dp.resolve_used_update_types()
