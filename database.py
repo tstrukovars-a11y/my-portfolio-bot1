@@ -3998,6 +3998,116 @@ async def art_next_unannounced():
         return None
 
 
+async def ensure_listings_table():
+    """Объявления художников — чужие работы на своей полке.
+
+    Отдельно от artworks намеренно. Там свои работы: владелица отвечает
+    за каждое слово. Здесь чужие: за слова отвечает тот, кто их написал,
+    сделка идёт мимо площадки, и хранить надо совсем другое — согласия,
+    контакт продавца, отметку оплаты и маркировку рекламы.
+
+    Смешай их в одной таблице — и однажды чужая работа уйдёт в выдачу
+    как своя, с ценой из прайса владелицы.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.art_listings (
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT NOT NULL,
+            username TEXT,
+            author TEXT,
+            title TEXT,
+            size TEXT,
+            technique TEXT,
+            price BIGINT,
+            city TEXT,
+            contact TEXT,
+            photo_file_id TEXT,
+            story TEXT,
+            -- Согласия храним вместе с версией текста: доказывать
+            -- придётся не «он согласился», а «он согласился вот с
+            -- этим». Текст правок не переживает, версия переживает.
+            consent_version TEXT,
+            consent_at TIMESTAMP,
+            paid_at TIMESTAMP,
+            erid TEXT,
+            status TEXT NOT NULL DEFAULT 'draft',
+            channel_msg_id BIGINT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+
+
+async def listing_add(user_id: int, username: str, fields: dict) -> int:
+    try:
+        await ensure_listings_table()
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            return await conn.fetchval(
+                f"INSERT INTO {SCHEMA}.art_listings "
+                "(user_id, username, author, title, size, technique, price, "
+                " city, contact, photo_file_id, story, consent_version, "
+                " consent_at, status) "
+                "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'waiting') "
+                "RETURNING id",
+                user_id, username, fields.get("author"), fields.get("title"),
+                fields.get("size"), fields.get("technique"),
+                fields.get("price"), fields.get("city"), fields.get("contact"),
+                fields.get("photo"), fields.get("story"),
+                fields.get("consent_version"), fields.get("consent_at")) or 0
+    except Exception as e:
+        logging.error(f"Объявление не сохранено: {e}")
+        return 0
+
+
+async def listing_set(listing_id: int, **fields) -> bool:
+    allowed = {"status", "paid_at", "erid", "channel_msg_id", "price",
+               "contact", "story"}
+    pairs = [(k, v) for k, v in fields.items() if k in allowed]
+    if not pairs:
+        return False
+    sets = ", ".join(f"{k} = ${i + 2}" for i, (k, _) in enumerate(pairs))
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            done = await conn.execute(
+                f"UPDATE {SCHEMA}.art_listings SET {sets} WHERE id = $1",
+                listing_id, *[v for _, v in pairs])
+        return done.endswith("1")
+    except Exception as e:
+        logging.error(f"Объявление не обновлено: {e}")
+        return False
+
+
+async def listing_get(listing_id: int):
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                f"SELECT * FROM {SCHEMA}.art_listings WHERE id = $1",
+                listing_id)
+        return dict(row) if row else None
+    except Exception as e:
+        logging.error(f"Объявление недоступно: {e}")
+        return None
+
+
+async def listing_list(status: str = ""):
+    try:
+        await ensure_listings_table()
+        where = "WHERE status = $1" if status else ""
+        args = [status] if status else []
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT * FROM {SCHEMA}.art_listings {where} "
+                "ORDER BY created_at DESC LIMIT 50", *args)
+        return [dict(r) for r in rows]
+    except Exception as e:
+        logging.error(f"Объявления недоступны: {e}")
+        return []
+
+
 async def art_sold_count() -> int:
     """Сколько работ уже продано — множитель в расчёте ориентира"""
     try:

@@ -294,11 +294,6 @@ class Valuing(StatesGroup):
     waiting_sold = State()
 
 
-class Selling(StatesGroup):
-    """Художник предлагает работы в канал"""
-    waiting_about = State()
-
-
 ASK_WALL = (
     "🖼 <b>Примерим у вас</b>\n\n"
     "Пришлите фотографию стены, на которую смотрите.\n\n"
@@ -419,7 +414,7 @@ async def _value_screen(message: Message, work: dict) -> None:
             [InlineKeyboardButton(text="📐 Посчитать свою работу",
                                   callback_data="val_start")],
             [InlineKeyboardButton(text="🎨 Я художник, хочу продавать здесь",
-                                  callback_data="sell_start")]]
+                                  callback_data="mkt_start")]]
     await message.answer(text, reply_markup=InlineKeyboardMarkup(
         inline_keyboard=rows))
 
@@ -498,52 +493,14 @@ async def value_result(call: CallbackQuery, state: FSMContext):
             [InlineKeyboardButton(text="📐 Посчитать ещё одну",
                                   callback_data="val_start")],
             [InlineKeyboardButton(text="🎨 Предложить работы в канал",
-                                  callback_data="sell_start")]]))
+                                  callback_data="mkt_start")]]))
 
 
-# ---------------------------------------------------------------------
-# ХУДОЖНИК ПРЕДЛАГАЕТ РАБОТЫ
-# ---------------------------------------------------------------------
-
-SELL_ASK = (
-    "🎨 <b>Расскажите о себе и работах</b>\n\n"
-    "Одним сообщением: что пишете, сколько работ готовы показать, "
-    "в каком городе, есть ли опыт продаж. Ссылку на свои страницы — "
-    "тоже сюда.\n\n"
-    "<i>Отвечу лично. Сразу честно: приём чужих работ ещё не запущен, "
-    "сначала нужно оформить ИП — продавать чужое без него нельзя. "
-    "Ваша заявка станет очередью, с которой это начнётся.</i>"
-)
-
-
-@router.callback_query(F.data == "sell_start")
-async def sell_start(call: CallbackQuery, state: FSMContext):
-    await call.answer()
-    await state.set_state(Selling.waiting_about)
-    await call.message.answer(SELL_ASK)
-
-
-@router.message(Selling.waiting_about, F.text)
-async def sell_about(message: Message, state: FSMContext, bot: Bot):
-    await state.clear()
-    user = message.from_user
-    contact = (f"@{user.username}" if user.username else
-               f"<a href='tg://user?id={user.id}'>"
-               f"{html.escape(user.full_name)}</a>")
-    try:
-        await bot.send_message(
-            config.ADMIN_ID,
-            f"🎨 <b>Художник хочет продавать через канал</b>\n\n"
-            f"{contact}\n\n{html.escape(message.text[:2000])}")
-    except Exception as e:
-        logging.error(f"Заявка художника не дошла: {e}")
-    await message.answer(
-        "🎨 Записала. Отвечу лично.\n\n"
-        "Пока можете посчитать свои работы и примерить их на стене — "
-        "это та же механика, что увидят ваши покупатели.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text="📐 Посчитать работу",
-                                 callback_data="val_start")]]))
+# Форма «расскажите о себе» жила здесь, пока приём чужих работ был
+# обещанием. Теперь он есть и устроен иначе: художник размещается
+# сам и продаёт сам — см. art_market.py. Анкета «напишите, и я
+# отвечу» на её фоне стала тупиком: человек пишет и ждёт, вместо
+# того чтобы разместиться за пять шагов.
 
 
 @router.message(F.text.regexp(r"^/start\s+try-"))

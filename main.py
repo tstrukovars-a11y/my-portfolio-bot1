@@ -29,6 +29,7 @@ import books_seed
 import tennis_alerts
 import tennis_champion
 import art_channel
+import art_market
 import banners
 import avatars
 import puzzle_daily
@@ -619,6 +620,7 @@ async def main():
     dp.include_router(puzzle_daily.router)
     dp.include_router(tennis_rank.router)
     dp.include_router(art_channel.router)
+    dp.include_router(art_market.router)
     dp.include_router(art_shop.router)
     dp.include_router(checklist.router)
     dp.include_router(advcake.router)

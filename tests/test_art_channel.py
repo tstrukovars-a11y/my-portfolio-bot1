@@ -512,25 +512,26 @@ def test_a_work_can_be_put_back_in_the_queue():
 
 def test_the_price_question_leads_somewhere():
     source = open("art_channel.py", encoding="utf-8").read()
-    assert "val_start" in source and "sell_start" in source
+    assert "val_start" in source and "mkt_start" in source
 
 
 def test_the_fork_offers_both_ways_on():
-    """Посчитать ещё одну — или прийти со своими работами."""
+    """Посчитать ещё одну — или разместить свою работу."""
     source = open("art_channel.py", encoding="utf-8").read()
     body = source[source.index("async def value_result"):]
-    body = body[:body.index("# ---", 10)]
-    assert "val_start" in body and "sell_start" in body
+    assert "val_start" in body[:900] and "mkt_start" in body[:900]
 
 
-def test_the_artist_is_told_the_truth_about_timing():
-    """Приём чужих работ ещё не запущен: продавать чужое без ИП
-    нельзя. Молчать об этом — обещать то, чего не будет."""
-    assert "ИП" in ac.SELL_ASK
-    assert "не запущен" in ac.SELL_ASK
+def test_the_artist_sells_by_himself():
+    """Площадка не продаёт чужое: встать между двумя людьми значит
+    отвечать за подлинность, доставку, возврат и чужие деньги на своём
+    счёте. Размещение — своя услуга, оказанная один раз."""
+    import art_market
+    assert "продаёте сами" in art_market.START
+    assert "в сделку не вмешивается" in art_market.START
 
 
-def test_the_artist_request_reaches_the_owner():
-    source = open("art_channel.py", encoding="utf-8").read()
-    body = source[source.index("async def sell_about"):]
-    assert "config.ADMIN_ID" in body[:800]
+def test_the_listing_reaches_the_owner():
+    source = open("art_market.py", encoding="utf-8").read()
+    body = source[source.index("async def send("):]
+    assert "config.ADMIN_ID" in body[:2000]
