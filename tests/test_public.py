@@ -370,3 +370,22 @@ def test_the_answer_goes_to_the_owner_not_to_the_group():
     body = body[:body.index("@router.callback_query")]
     assert 'message.chat.type != "private"' in body
     assert "send_message(message.from_user.id" in body
+
+
+def test_the_group_form_of_the_command_is_accepted(monkeypatch):
+    """В группе Telegram дописывает к команде имя бота: приходит не
+    «/id», а «/id@имя_бота». Команда, существующая ровно для групп, в
+    группе из-за этого и не работала."""
+    monkeypatch.setattr(config, "ADMIN_ID", 1)
+    assert run_commands(Msg("/id@MyBotOllFree_bot", user_id=1))
+
+
+def test_the_handler_accepts_it_too():
+    import re
+    source = open("digest.py", encoding="utf-8").read()
+    start = source.index("async def show_chat_id")
+    head = source[:start].rsplit("@router.message(", 1)[1]
+    pattern = re.compile(head.split('r"')[1].split('"')[0])
+    assert pattern.match("/id")
+    assert pattern.match("/id@MyBotOllFree_bot")
+    assert not pattern.match("/idea")

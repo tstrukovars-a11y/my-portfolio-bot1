@@ -284,7 +284,12 @@ async def commands_stay_private(handler, event, data):
     # Правило при этом не нарушено: обработчик ничего не пишет в группу,
     # ответ уходит владелице в личку. Запрещено показывать служебное
     # всем, а не узнавать номер темы.
-    if text.strip().lower() == "/id" and user and config.is_admin(user.id):
+    # Ровно «/id» или «/id@имя_бота» и ничего больше. «/id something»
+    # обработчик всё равно не возьмёт, но пропускать его через границу
+    # значит однажды пропустить и то, что возьмёт.
+    import re
+    if re.fullmatch(r"/id(@\w+)?", text.strip().lower()) \
+            and user and config.is_admin(user.id):
         return await handler(event, data)
 
     if user and config.is_admin(user.id):

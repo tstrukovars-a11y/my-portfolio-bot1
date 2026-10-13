@@ -2167,7 +2167,10 @@ async def buffer_command(message: Message):
           "<code>/buffer путешествия</code> — только один раздел")
 
 
-@router.message(F.text == "/id")
+# В группе Telegram дописывает к команде имя бота: приходит не «/id»,
+# а «/id@имя_бота». Точное сравнение этого не ловило — и команда,
+# существующая ровно для групп, в группе и не работала.
+@router.message(F.text.regexp(r"^/id(@\w+)?\s*$"))
 async def show_chat_id(message: Message):
     """Спрашивает прямо здесь: какой раздел дублировать в эту тему.
 
