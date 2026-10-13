@@ -451,7 +451,10 @@ SLOT_TITLES = {
     "results": "🎾 Итоги матчей",
     "tennis": "🎾 Расписание тенниса",
     "books": "📚 Деловая литература",
-    "genetics": "🧬 Генетика",
+    # Генетик в сетке две, и путать их дорого: в 13:00 выходит разбор из
+    # справочника — ваши статьи, а не лента. Обзор новостей по генетике
+    # идёт утром, отдельным постом следом за выпуском.
+    "genetics": "🧬 Генетика: статья из справочника",
     "puzzle": "🧩 Задача дня",
     "travel": "🌍 Путешествия",
     "art": "🖼 Картина дня",
@@ -823,6 +826,12 @@ async def publish_next(bot: Bot, only: str = None, lead: str = None,
         order = ROTATION[ROTATION.index(last) + 1:] + ROTATION[:ROTATION.index(last) + 1] \
             if last in ROTATION else ROTATION
 
+    # Почему материал не прошёл — по разделам. «Публиковать нечего» при
+    # двадцати пяти ждущих записях звучит как «их нет», и владелица идёт
+    # искать поломку там, где её не было: материал есть, он просто весь
+    # отбракован, и причина у брака одна на всех.
+    rejected = {}
+
     for section in order:
         # Идём по кандидатам, пока не найдётся годный к публикации.
         # Непрошедшие остаются в очереди и ждут вас в буфере.
@@ -845,6 +854,7 @@ async def publish_next(bot: Bot, only: str = None, lead: str = None,
                                                      made[0])
                     except Exception as e:
                         logging.warning(f"Задание на фото не ушло: {e}")
+                rejected[why] = rejected.get(why, 0) + 1
                 continue
             item_id, built, repeat = candidate, made, False
             break
@@ -990,6 +1000,11 @@ async def publish_next(bot: Bot, only: str = None, lead: str = None,
         kind = "напоминание" if repeat else "опубликовано"
         return f"{kind}: {section}/{item_id} — {title[:50]}"
 
+    if rejected:
+        what = ", ".join(f"{n} — {why}" for why, n in
+                         sorted(rejected.items(), key=lambda x: -x[1]))
+        return (f"публиковать нечего: все готовые отбракованы ({what}). "
+                f"Чинить — в «Что править»")
     return "публиковать нечего: новых нет, а повторы ещё не отлежались"
 
 
