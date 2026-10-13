@@ -910,11 +910,13 @@ async def _event_text(kind: str, match, tour: str) -> str:
             lines.append(ranking)
     if lose:
         lines.append("")
-        # Та же интонация, что под строкой результата (_exit_note): в
-        # блоке событий стояло сухое «вылетает», и выходило, что о
-        # неожиданном поражении известного игрока сообщают протоколом.
+        # Турнир называем по имени. «Покидает турнир» — канцелярская
+        # формула: читатель только что прочитал «Шанхай» заголовком и
+        # ждёт, что речь о нём, а получает безличное слово. Имя места
+        # делает строку новостью, а не отпиской.
+        where = _event(match) or "турнир"
         lines.append(f"{html.escape(tennis_live._named(lose))}, к сожалению, "
-                     f"покидает турнир.")
+                     f"покидает {html.escape(where)}.")
 
     reason, link = await _why_gone(tour, _side_name(lose) if lose else "")
     russian = await _reason_ru(reason) if reason else ""
@@ -1248,9 +1250,13 @@ async def publish_results(bot: Bot, chat: int, thread=None) -> str:
             line = _result_line(m)
             if line:
                 lines.append(line)
-                note = _exit_note(m)
-                if note:
-                    lines.append(note)
+                # Сочувствия здесь не место. «Вчера на кортах» — таблица
+                # дня: двадцать строк подряд, и под каждой второй «к
+                # сожалению, покидает турнир» превращает сводку в
+                # причитание. Сопереживают одному событию, а не списку.
+                #
+                # Та же мысль живёт в блоке «Неожиданно» — там она про
+                # один матч и работает.
                 verdict = await _pick_verdict(m)
                 if verdict:
                     lines.append(verdict)

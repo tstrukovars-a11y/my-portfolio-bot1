@@ -2516,6 +2516,33 @@ async def digest_command(message: Message, bot: Bot):
     ad = await database.get_setting("digest_ad")
     lines.append(f"Реклама: {'есть' if ad else 'нет'}")
 
+    # Что вышло сегодня, а что молчит.
+    #
+    # Раньше о пропущенном выпуске узнавали, листая канал: пост не
+    # вышел, а причина лежала в логах Render, куда никто не смотрит.
+    # Вопрос «почему вчера не было картины» должен иметь ответ здесь.
+    now = await _local_now()
+    today = now.strftime("%Y-%m-%d")
+    done, waiting, ahead = [], [], []
+    for at, slot, _ in sorted(SCHEDULE, key=lambda x: x[0]):
+        name = SLOT_TITLES.get(slot, slot)
+        if await database.get_setting(f"digest_slot_{slot}") == today:
+            done.append(name)
+        elif (now.hour, now.minute) >= tuple(int(x) for x in at.split(":")):
+            waiting.append(f"{at} {name}")
+        else:
+            ahead.append(f"{at} {name}")
+
+    lines.append(f"\n<b>Сегодня, {now.strftime('%d.%m %H:%M')}</b>")
+    lines.append(f"Вышло: {len(done)} из {len(SCHEDULE)}")
+    if waiting:
+        # Главное в этом экране: слот, чьё время прошло, а поста нет.
+        lines.append("⚠️ <b>Время прошло, а выпуска нет:</b>\n  "
+                     + "\n  ".join(html.escape(x) for x in waiting))
+    if ahead:
+        lines.append(f"Впереди: {html.escape(ahead[0])}"
+                     + (f" и ещё {len(ahead) - 1}" if len(ahead) > 1 else ""))
+
     error = await database.get_setting("digest_last_error")
     if error:
         lines.append(f"\n⚠️ Последний сбой: <code>{html.escape(error)}</code>")

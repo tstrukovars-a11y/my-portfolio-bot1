@@ -868,3 +868,31 @@ def test_the_drama_prompt_asks_for_the_outcome():
 def test_the_drama_prompt_forbids_judging_the_player():
     low = ta.DRAMA_PROMPT.lower()
     assert "истерика" in low and "характер игрока" in low
+
+
+# --- сочувствие там, где оно работает ----------------------------------
+#
+# «Вчера на кортах» — таблица дня: двадцать строк подряд. Под каждой
+# второй «к сожалению, покидает турнир» превращает сводку в причитание.
+# Сопереживают одному событию, а не списку.
+
+def test_the_results_table_does_not_mourn_every_line():
+    source = open("tennis_alerts.py", encoding="utf-8").read()
+    body = source[source.index("async def publish_results"):]
+    body = body[:body.index("blocks.append")]
+    assert "_exit_note" not in body, \
+        "сочувствие вернулось в таблицу результатов"
+
+
+def test_the_surprise_block_names_the_tournament():
+    """«Покидает турнир» — канцелярская формула: читатель только что
+    прочитал «Шанхай» заголовком и ждёт, что речь о нём."""
+    source = open("tennis_alerts.py", encoding="utf-8").read()
+    body = source[source.index("async def _event_text"):]
+    body = body[:body.index("def _side_name_ru")]
+    assert "покидает {html.escape(where)}" in body
+    assert "_event(match)" in body
+
+
+def test_the_surprise_header_is_a_word_not_a_noun():
+    assert ta.EVENT_HEADS["upset"].count("Неожиданно") == 1
