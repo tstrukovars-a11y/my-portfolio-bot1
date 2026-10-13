@@ -165,7 +165,10 @@ async def start(call: CallbackQuery, state: FSMContext):
                               reply_markup=_rules_kb())
 
 
-@router.message(F.text.regexp(r"^/разместить|^/listing"))
+# Образец точный, без хвоста: «/listing» без границы слова ловил и
+# «/listings», и «/listing_paid» — служебные команды открывали
+# художнику форму вместо доски.
+@router.message(F.text.regexp(r"^/(разместить|listing)\s*$"))
 async def start_command(message: Message, state: FSMContext):
     await state.set_state(Listing.rules)
     await message.answer(RULES.format(fee=_money(await _fee())),

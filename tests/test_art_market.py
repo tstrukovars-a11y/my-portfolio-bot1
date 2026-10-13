@@ -218,3 +218,17 @@ def test_the_inn_never_reaches_the_post():
     text = am.render({"title": "Работа", "author": "Анна",
                       "inn": "500100732259", "erid": "2Vfn"})
     assert "500100732259" not in text
+
+
+def test_the_artist_form_does_not_swallow_admin_commands():
+    """«/listing» без границы слова ловил и «/listings», и
+    «/listing_paid»: служебные команды открывали художнику форму
+    вместо доски — и выглядело это как молчащий бот."""
+    import re
+    source = open("art_market.py", encoding="utf-8").read()
+    start = source.index('@router.message(F.text.regexp(r"^/(разместить')
+    pattern = re.compile(source[start:].split('r"')[1].split('"')[0])
+    assert pattern.match("/listing")
+    for other in ("/listings", "/listing_paid 3", "/listing_post 3 x",
+                  "/listing_price 500"):
+        assert not pattern.match(other), other

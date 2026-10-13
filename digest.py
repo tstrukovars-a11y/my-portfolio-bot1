@@ -2107,6 +2107,7 @@ async def show_chat_id(message: Message):
                                ("recipes", "🍳 Сюда — кулинарию"),
                                ("travel", "🌍 Сюда — путешествия"),
                                ("books", "📚 Сюда — книги"),
+                               ("art", "🖼 Сюда — картины"),
                                ("sport", "🏅 Сюда — спортивные факты"))]
     rows.append([InlineKeyboardButton(
         text="📥 Сюда — вообще всё", callback_data=f"setmirror_all_{chat_id}_{thread or 0}")])
