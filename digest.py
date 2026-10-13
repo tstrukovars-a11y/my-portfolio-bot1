@@ -792,6 +792,33 @@ async def _mirror(bot: Bot, from_chat: int, message_id: int, section: str,
         )
     except Exception as e:
         logging.error(f"Дайджест: пост вышел, но дубль в группу не прошёл: {e}")
+        # Пост в канале есть, в группе его нет, и заметить это можно,
+        # только зайдя в группу и вспомнив, что там чего-то не хватает.
+        # Поэтому говорим прямо — но не чаще раза на раздел, иначе
+        # сломанная тема будет писать по сообщению на каждую публикацию.
+        try:
+            mark = f"mirror_fail_{section}"
+            if await database.get_setting(mark) != str(e)[:60]:
+                await database.set_setting(mark, str(e)[:60])
+                where = SECTION_TITLES.get(section, section)
+                await bot.send_message(
+                    config.ADMIN_ID,
+                    f"⚠️ <b>Дубль не дошёл до группы</b>\n\n"
+                    f"Раздел: {html.escape(where)}\n"
+                    f"Тема: {html.escape(str(thread) or 'общий поток')}\n"
+                    f"<code>{html.escape(str(e)[:200])}</code>\n\n"
+                    f"<i>В канале пост вышел — не дошла только копия. "
+                    f"Если тема не задана, задайте её: напишите "
+                    f"<code>/id</code> в нужной теме группы.</i>")
+        except Exception:
+            pass
+    else:
+        # Получилось — забываем прошлую жалобу, чтобы следующая поломка
+        # не показалась повтором и не промолчала.
+        try:
+            await database.set_setting(f"mirror_fail_{section}", "")
+        except Exception:
+            pass
 
 
 async def _ad_block() -> str:
