@@ -43,7 +43,53 @@ PRICE_DEFAULT = 500
 # Версия текста согласий. Меняется вместе с текстом — иначе однажды
 # придётся доказывать согласие с правилами, которых в тот день ещё не
 # существовало.
-CONSENT_VERSION = "2026-10-12"
+CONSENT_VERSION = "2026-10-13"
+
+
+def inn_valid(raw: str) -> bool:
+    """Проверить ИНН по контрольной сумме, а не по длине.
+
+    Опечатка в ИНН всплывёт не здесь, а в ОРД — через несколько дней,
+    когда деньги за размещение уже взяты, а объявление опубликовать
+    нельзя. Контрольная сумма ловит почти все описки на месте.
+    """
+    digits = re.sub(r"\D", "", raw or "")
+    if len(digits) == 12:
+        nums = [int(x) for x in digits]
+        k1 = [7, 2, 4, 10, 3, 5, 9, 4, 6, 8]
+        k2 = [3, 7, 2, 4, 10, 3, 5, 9, 4, 6, 8]
+        first = sum(a * b for a, b in zip(k1, nums[:10])) % 11 % 10
+        second = sum(a * b for a, b in zip(k2, nums[:11])) % 11 % 10
+        return first == nums[10] and second == nums[11]
+    if len(digits) == 10:
+        nums = [int(x) for x in digits]
+        k = [2, 4, 10, 3, 5, 9, 4, 6, 8]
+        return sum(a * b for a, b in zip(k, nums[:9])) % 11 % 10 == nums[9]
+    return False
+
+
+RULES = (
+    "🎨 <b>Как здесь всё устроено</b>\n\n"
+    "<b>Вы продаёте сами.</b> В объявлении стоит кнопка с вашим "
+    "контактом; покупатель пишет вам напрямую. Цена, оплата, доставка, "
+    "возврат — ваши. Канал в сделке не участвует.\n\n"
+    "<b>Плата — за размещение, разово.</b> {fee}. Работа может не "
+    "продаться; деньги за публикацию не возвращаются.\n\n"
+    "<b>Нужна самозанятость или ИП.</b> Это условие площадки, а не "
+    "требование закона. Причина простая: вы будете принимать деньги от "
+    "покупателя и обязаны выдать ему чек. Продавец, который не может "
+    "этого сделать, однажды приведёт спор обратно в канал — а канал в "
+    "сделке не участвует и помочь не сможет.\n\n"
+    "<b>Понадобится ваш ИНН.</b> Платное размещение — реклама, и по "
+    "закону она маркируется: сведения о рекламодателе, то есть о вас, "
+    "передаются оператору рекламных данных. Без ИНН объявление "
+    "опубликовать нельзя.\n\n"
+    "<b>Что увидят люди:</b> фотография, название, размер, техника, "
+    "цена, город, ваше имя и кнопка «написать автору». Сам контакт "
+    "открывается по нажатию — так его не соберут спам-боты и так видно, "
+    "сколько человек вами заинтересовалось. Эти числа я вам пришлю.\n\n"
+    "Шагов семь. Начнём?"
+)
 
 CONSENTS = (
     ("rules", "Правила размещения",
@@ -56,18 +102,26 @@ CONSENTS = (
      "Договариваюсь с покупателем я сам: цена, оплата, доставка, "
      "возврат. Площадка в сделке не участвует и за неё не отвечает."),
     ("data", "Данные",
-     "Согласен, что мои имя, контакт и город будут опубликованы в "
-     "объявлении и сохранены для связи со мной."),
+     "Согласен, что имя, контакт и город будут опубликованы в "
+     "объявлении, а имя и ИНН переданы оператору рекламных данных — "
+     "этого требует маркировка рекламы. ИНН в объявлении не "
+     "публикуется."),
+    ("tax", "Самозанятость",
+     "Я самозанятый или ИП и выдам покупателю чек. Без этого "
+     "разместиться нельзя: принимать деньги и не дать чек — проблема, "
+     "которая вернётся и ко мне, и к каналу."),
 )
 
 
 class Listing(StatesGroup):
+    rules = State()
     photo = State()
     title = State()
     size = State()
     price = State()
     city = State()
     contact = State()
+    inn = State()
     consents = State()
 
 
@@ -97,17 +151,35 @@ START = (
 )
 
 
+def _rules_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="Понятно, начинаем",
+                             callback_data="mkt_go")]])
+
+
 @router.callback_query(F.data == "mkt_start")
 async def start(call: CallbackQuery, state: FSMContext):
     await call.answer()
-    await state.set_state(Listing.photo)
-    await call.message.answer(START.format(fee=_money(await _fee())))
+    await state.set_state(Listing.rules)
+    await call.message.answer(RULES.format(fee=_money(await _fee())),
+                              reply_markup=_rules_kb())
 
 
 @router.message(F.text.regexp(r"^/разместить|^/listing"))
 async def start_command(message: Message, state: FSMContext):
+    await state.set_state(Listing.rules)
+    await message.answer(RULES.format(fee=_money(await _fee())),
+                         reply_markup=_rules_kb())
+
+
+@router.callback_query(F.data == "mkt_go")
+async def begin(call: CallbackQuery, state: FSMContext):
+    """Правила прочитаны. Отдельным экраном намеренно: условия,
+    показанные вперемешку с вопросами формы, не читает никто, а потом
+    выясняется, что человек не знал ни про чек, ни про ИНН."""
+    await call.answer()
     await state.set_state(Listing.photo)
-    await message.answer(START.format(fee=_money(await _fee())))
+    await call.message.answer(START.format(fee=_money(await _fee())))
 
 
 @router.message(Listing.photo, F.photo)
@@ -176,7 +248,25 @@ async def got_city(message: Message, state: FSMContext):
 
 @router.message(Listing.contact, F.text)
 async def got_contact(message: Message, state: FSMContext):
-    await state.update_data(contact=message.text.strip()[:80], ticked=[])
+    await state.update_data(contact=message.text.strip()[:80])
+    await state.set_state(Listing.inn)
+    await message.answer(
+        "Ваш ИНН — 12 цифр.\n\n"
+        "<i>Он нужен для маркировки рекламы: сведения о рекламодателе "
+        "передаются оператору рекламных данных. В объявлении ИНН не "
+        "публикуется.</i>")
+
+
+@router.message(Listing.inn, F.text)
+async def got_inn(message: Message, state: FSMContext):
+    if not inn_valid(message.text):
+        await message.answer(
+            "Это не похоже на ИНН. Нужны 12 цифр — проверьте, не "
+            "потерялась ли одна.\n\n"
+            "<i>Свой ИНН можно посмотреть в приложении «Мой налог» или "
+            "на сайте налоговой.</i>")
+        return
+    await state.update_data(inn=re.sub(r"\D", "", message.text), ticked=[])
     await state.set_state(Listing.consents)
     await message.answer(await _consent_text(state),
                          reply_markup=_consent_kb([]))
@@ -271,9 +361,12 @@ async def send(call: CallbackQuery, state: FSMContext, bot: Bot):
             f"{_money(data.get('price'))}\n"
             f"{html.escape(data.get('city', ''))} · "
             f"{html.escape(data.get('contact', ''))}\n"
+            f"ИНН: <code>{html.escape(data.get('inn', ''))}</code>\n"
             f"От: {username or user.id}\n\n"
-            f"Оплата: <code>/listing_paid {listing_id}</code>\n"
-            f"Публикация: <code>/listing_post {listing_id} erid</code>")
+            f"1. Оплата: <code>/listing_paid {listing_id}</code>\n"
+            f"2. Завести рекламодателя в ОРД по имени и ИНН, "
+            f"загрузить креатив — ОРД вернёт erid.\n"
+            f"3. Публикация: <code>/listing_post {listing_id} erid</code>")
     except Exception as e:
         logging.error(f"Объявление №{listing_id} не дошло владелице: {e}")
 

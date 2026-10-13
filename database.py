@@ -4023,6 +4023,7 @@ async def ensure_listings_table():
             price BIGINT,
             city TEXT,
             contact TEXT,
+            inn TEXT,
             photo_file_id TEXT,
             story TEXT,
             -- Согласия храним вместе с версией текста: доказывать
@@ -4046,14 +4047,14 @@ async def listing_add(user_id: int, username: str, fields: dict) -> int:
             return await conn.fetchval(
                 f"INSERT INTO {SCHEMA}.art_listings "
                 "(user_id, username, author, title, size, technique, price, "
-                " city, contact, photo_file_id, story, consent_version, "
+                " city, contact, inn, photo_file_id, story, consent_version, "
                 " consent_at, status) "
-                "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'waiting') "
-                "RETURNING id",
+                "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,"
+                "'waiting') RETURNING id",
                 user_id, username, fields.get("author"), fields.get("title"),
                 fields.get("size"), fields.get("technique"),
                 fields.get("price"), fields.get("city"), fields.get("contact"),
-                fields.get("photo"), fields.get("story"),
+                fields.get("inn"), fields.get("photo"), fields.get("story"),
                 fields.get("consent_version"), fields.get("consent_at")) or 0
     except Exception as e:
         logging.error(f"Объявление не сохранено: {e}")

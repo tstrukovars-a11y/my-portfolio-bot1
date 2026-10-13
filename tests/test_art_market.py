@@ -28,16 +28,16 @@ def test_the_listing_says_who_is_not_responsible():
 
 # --- согласия -----------------------------------------------------------
 
-def test_all_four_consents_are_required():
-    """Три из четырёх — это согласие с тем, что человек не дочитал."""
-    assert len(am.CONSENTS) == 4
+def test_every_consent_is_required():
+    """Отмеченные не все — это согласие с тем, что человек не дочитал."""
+    assert len(am.CONSENTS) >= 4
     keys = {k for k, _, _ in am.CONSENTS}
     assert am._consent_kb(list(keys)).inline_keyboard[-1][0].callback_data \
         == "mkt_send"
 
 
 def test_a_partial_tick_offers_no_send_button():
-    keys = [k for k, _, _ in am.CONSENTS][:3]
+    keys = [k for k, _, _ in am.CONSENTS][:-1]
     data = [b.callback_data for row in am._consent_kb(keys).inline_keyboard
             for b in row]
     assert "mkt_send" not in data
@@ -160,3 +160,61 @@ def test_a_dead_listing_gives_no_contact():
     source = open("art_market.py", encoding="utf-8").read()
     body = source[source.index("async def give_contact"):]
     assert 'status") != "live"' in body[:1000]
+
+
+# --- ИНН и правила ------------------------------------------------------
+#
+# Опечатка в ИНН всплывёт не в боте, а в ОРД — через несколько дней,
+# когда деньги за размещение уже взяты, а объявление опубликовать
+# нельзя.
+
+def test_a_real_inn_passes():
+    assert am.inn_valid("500100732259")      # физлицо, 12 цифр
+    assert am.inn_valid("7707083893")        # организация, 10 цифр
+
+
+def test_a_typo_in_the_inn_is_caught_here():
+    """Контрольная сумма ловит почти все описки на месте."""
+    assert not am.inn_valid("123456789012")
+    assert not am.inn_valid("500100732258")  # последняя цифра не та
+    assert not am.inn_valid("50010073225")   # потеряна цифра
+
+
+def test_nonsense_is_not_an_inn():
+    for raw in ("", "abc", "0", None):
+        assert not am.inn_valid(raw)
+
+
+def test_the_rules_say_what_the_platform_requires():
+    """Условие площадки названо условием площадки, а не законом:
+    написать «этого требует закон» там, где требует хозяин канала,
+    значит соврать человеку в его же интересах."""
+    assert "самозанятость или ИП" in am.RULES.lower() or \
+           "Нужна самозанятость" in am.RULES
+    assert "условие площадки, а не требование закона" in am.RULES
+
+
+def test_the_rules_explain_why_the_inn_is_needed():
+    assert "ИНН" in am.RULES
+    assert "реклам" in am.RULES.lower()
+
+
+def test_the_rules_are_a_screen_of_their_own():
+    """Условия вперемешку с вопросами формы не читает никто, а потом
+    выясняется, что человек не знал ни про чек, ни про ИНН."""
+    source = open("art_market.py", encoding="utf-8").read()
+    assert "mkt_go" in source
+    body = source[source.index("async def begin("):]
+    assert "Listing.photo" in body[:400]
+
+
+def test_the_data_consent_mentions_the_ord():
+    bodies = " ".join(b for _, _, b in am.CONSENTS)
+    assert "оператору рекламных данных" in bodies
+    assert "не публикуется" in bodies
+
+
+def test_the_inn_never_reaches_the_post():
+    text = am.render({"title": "Работа", "author": "Анна",
+                      "inn": "500100732259", "erid": "2Vfn"})
+    assert "500100732259" not in text
