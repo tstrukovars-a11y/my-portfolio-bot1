@@ -1879,6 +1879,35 @@ async def publish_slot(bot: Bot, force: str = None) -> str:
     return result
 
 
+async def _try_slot(bot: Bot, want: str = None) -> str:
+    """Выпустить слот и, если он упал, сказать где.
+
+    Планировщик ловит ошибку сам и живёт дальше — это правильно, канал не
+    должен замолкать целиком из-за одного раздела. Но при ручном запуске
+    тишина вредна: владелица нажала и ждёт ответа, а получает его только
+    в логах Render, куда не ходит.
+
+    Поэтому здесь ошибка возвращается текстом, с файлом и строкой. Имя
+    ошибки без места — не отчёт, а намёк: «string index out of range»
+    встречается в сотне мест.
+    """
+    try:
+        return await publish_slot(bot, force=want) if want \
+            else await publish_slot(bot)
+    except Exception as e:
+        import traceback
+        frames = traceback.extract_tb(e.__traceback__)
+        where = " ← ".join(
+            f"{f.filename.rsplit('/', 1)[-1]}:{f.lineno}" for f in frames[-3:])
+        logging.exception(f"Ручной выпуск слота упал: {e}")
+        await database.set_setting(
+            "digest_last_error",
+            f"ручной выпуск {want or ''}: {type(e).__name__}: "
+            f"{str(e)[:120]} ({where})")
+        return (f"❌ {type(e).__name__}: {html.escape(str(e)[:160])}\n\n"
+                f"<code>{html.escape(where)}</code>")
+
+
 async def refresh_bot_name(bot: Bot) -> bool:
     """Сверить имя бота с тем, что знает Telegram.
 
@@ -1920,9 +1949,17 @@ async def scheduler(bot: Bot):
             # смотрит: канал молчал, и причина молчания была не видна нигде.
             logging.exception(f"Ошибка планировщика дайджеста: {e}")
             try:
+                # Имя ошибки без места — не отчёт, а намёк: «string index
+                # out of range» встречается в сотне мест, и искать по нему
+                # можно неделю. Берём последний кадр трассировки — тот, где
+                # упало на самом деле.
+                import traceback
+                last = traceback.extract_tb(e.__traceback__)[-1]
+                where = f"{last.filename.rsplit('/', 1)[-1]}:{last.lineno}"
                 await database.set_setting(
                     "digest_last_error",
-                    f"планировщик: {type(e).__name__}: {str(e)[:160]}")
+                    f"планировщик: {type(e).__name__}: {str(e)[:120]} "
+                    f"({where})")
             except Exception:
                 pass
         await asyncio.sleep(300)
@@ -2198,9 +2235,9 @@ async def digest_command(message: Message, bot: Bot):
             if want not in known:
                 await message.answer("Слоты: " + ", ".join(sorted(known)))
                 return
-            await message.answer(f"📤 {await publish_slot(bot, force=want)}")
+            await message.answer(f"📤 {await _try_slot(bot, want)}")
             return
-        await message.answer(f"📤 {await publish_slot(bot)}")
+        await message.answer(f"📤 {await _try_slot(bot)}")
         return
 
     if command == "tz" and len(parts) > 2:
@@ -2484,11 +2521,11 @@ async def digest_command(message: Message, bot: Bot):
     today = now.strftime("%Y-%m-%d")
     for at, slot, _ in SCHEDULE:
         done = await database.get_setting(f"digest_slot_{slot}") == today
-        titles = {"morning": "новости и курсы", "results": "итоги вчерашних матчей",
-                  "puzzle": "задача дня", "tennis": "расписание тенниса",
-                  "books": "деловая литература", "genetics": "наука",
-                  "travel": "путешествия", "sport": "спортивный факт",
-                  "dinner": "рецепт на ужин"}
+        # Названия слотов живут в SLOT_TITLES; свой список здесь был
+        # копией, и новый слот в нём не появлялся — в сетке дня светилось
+        # служебное слово «art» вместо «Картина дня».
+        titles = {slot: name.split(" ", 1)[-1].lower()
+                  for slot, name in SLOT_TITLES.items()}
         lines.append(f"{'✅' if done else '⬜️'} {at} — {titles.get(slot, slot)}")
     lines.append("")
     for section, data in stats.items():
