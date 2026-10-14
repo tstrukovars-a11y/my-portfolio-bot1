@@ -116,3 +116,14 @@ def test_links_can_be_entered_before_the_shop_templates_exist():
     body = source[source.index("async def _ready_link"):]
     body = body[:body.index("@router.message", body.index("async def _ready_link"))]
     assert "return raw" in body, "без шаблона ссылка теряется"
+
+
+def test_the_rewrap_report_mentions_books_it_did_not_touch():
+    """Команда перезаворачивает только существующие ссылки. Книги без
+    ссылки в отчёт не попадают — и числа перестают сходиться с
+    размером полки: выходит, будто часть книг потерялась."""
+    source = open("books_seed.py", encoding="utf-8").read()
+    body = source[source.index("🔗 <b>Перезавернула ссылки</b>"):]
+    body = body[:body.index("@router.message", body.index("await message.answer"))]
+    assert "Книг без ссылки" in body
+    assert "books_link_stats" in body

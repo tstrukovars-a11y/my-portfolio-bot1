@@ -788,6 +788,16 @@ async def rewrap_links(message: Message):
         lines += ["", f"⚠️ Остались обычными: {len(skipped)} — для их магазина "
                       f"нет шаблона в <code>/digest shop</code>:"]
         lines += [f"· {html.escape(t)}" for t in skipped[:6]]
+
+    # Книги без ссылки сюда не попадают вовсе: перезаворачивать нечего.
+    # Молчать об этом нельзя — числа в отчёте не сходятся с размером
+    # полки, и выходит, что часть книг команда будто бы потеряла.
+    stats = await database.books_link_stats()
+    without = stats["total"] - stats["done"]
+    if without:
+        lines += ["", f"📋 Книг без ссылки: <b>{without}</b> — их эта команда "
+                      f"не трогает, заворачивать нечего.",
+                  "Пройти их: 📚 Книги → «Проставить ссылки»."]
     await message.answer("\n".join(lines))
 
 
