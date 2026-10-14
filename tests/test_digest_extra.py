@@ -71,3 +71,36 @@ def test_a_fixed_mirror_forgets_the_old_complaint():
     body = source[source.index("async def _mirror("):]
     body = body[:body.index("async def _ad_block")]
     assert 'set_setting(f"mirror_fail_{section}", "")' in body
+
+
+# --- дослать то, что не доехало ----------------------------------------
+#
+# Дубль делается в момент публикации, и пост, вышедший до того, как тема
+# была задана, задним числом туда не попадёт. Переиздавать его ради
+# этого — значит получить вторую копию в канале: читатель увидит одно и
+# то же дважды, а виновата настройка, о которой он не знает.
+
+def _remirror_body():
+    source = open("digest.py", encoding="utf-8").read()
+    body = source[source.index("async def remirror"):]
+    return body[:body.index('@router.message(F.text.startswith("/digest"))')]
+
+
+def test_there_is_a_way_to_resend_without_republishing():
+    body = _remirror_body()
+    assert "_mirror(" in body
+    assert "publish_slot" not in body, "это переиздание, а не досылка"
+
+
+def test_it_names_the_sections_it_knows():
+    """«Раздел не тот» без списка возможных — загадка вместо ответа."""
+    assert _remirror_body().count("SECTION_ALIASES") >= 2
+
+
+def test_it_explains_where_to_take_the_post_number():
+    assert "Копировать ссылку" in _remirror_body()
+
+
+def test_paintings_are_among_the_sections_it_accepts():
+    import digest
+    assert digest.SECTION_ALIASES.get("картины") == "art"

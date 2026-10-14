@@ -2249,6 +2249,55 @@ async def set_mirror_here(call: CallbackQuery):
     await call.answer("Готово")
 
 
+@router.message(F.text.regexp(r"^/дослать|^/remirror"))
+async def remirror(message: Message, bot: Bot):
+    """Дослать в группу пост, который там не появился.
+
+    Дубль делается в момент публикации, и пост, вышедший до того, как
+    тема была задана, задним числом туда не попадёт. Переиздавать его
+    ради этого — значит получить вторую копию в канале: читатель
+    увидит одно и то же дважды, а виновата настройка, о которой он не
+    знает.
+
+    Поэтому отдельная команда. Нужна она не только сейчас: дубль
+    падает и от закрытой темы, и от снятых прав, и после починки
+    вышедшее всё равно остаётся недосланным.
+    """
+    if not config.is_admin(message.from_user.id):
+        return
+    parts = (message.text or "").split()
+    if len(parts) < 3 or not parts[1].isdigit():
+        await message.answer(
+            "📤 <b>Дослать пост в группу</b>\n\n"
+            "<code>/дослать 412 картины</code>\n\n"
+            "Первое — номер поста в канале: откройте пост, "
+            "«Копировать ссылку», последнее число в ней.\n"
+            "Второе — раздел: "
+            + ", ".join(sorted(set(SECTION_ALIASES) - set(SECTION_ALIASES.values())))
+            + ".")
+        return
+
+    section = SECTION_ALIASES.get(" ".join(parts[2:]).lower())
+    if not section:
+        await message.answer("Такого раздела нет. Возможные: "
+                             + ", ".join(sorted(set(SECTION_ALIASES)
+                                                - set(SECTION_ALIASES.values()))))
+        return
+
+    chat, _ = await _target()
+    if not chat:
+        await message.answer("Канал не задан: <code>/digest chat -100…</code>")
+        return
+
+    thread = await _mirror_thread(section)
+    await _mirror(bot, chat, int(parts[1]), section)
+    await message.answer(
+        f"📤 Отправила пост {parts[1]} в "
+        f"{SECTION_TITLES.get(section, section)} → "
+        f"тема {thread or 'общий поток'}.\n\n"
+        f"<i>Если не дошло — придёт отдельное сообщение с причиной.</i>")
+
+
 @router.message(F.text.startswith("/digest"))
 async def digest_command(message: Message, bot: Bot):
     if not config.is_admin(message.from_user.id):
