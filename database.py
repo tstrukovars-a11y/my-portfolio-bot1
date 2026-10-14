@@ -5134,3 +5134,119 @@ async def plan_space_recode(space_id: int, code: str) -> bool:
     except Exception as e:
         logging.error(f"Не удалось сменить код приглашения {space_id}: {e}")
         return False
+
+
+# ---------------------------------------------------------------------
+# ОБЩИЙ ДОСТУП К МАТЕРИАЛАМ РАЗДЕЛОВ
+# ---------------------------------------------------------------------
+#
+# Разделы живут в четырёх таблицах, и до сих пор к каждой ходили своим
+# путём: правка книги не умела того, что умела правка путешествия, и
+# наоборот. Чинить и дополнять приходилось четыре раза, а на деле
+# чинили один — тот, о котором вспомнили.
+#
+# Поэтому одна дверь. Имена таблиц и колонок берутся из этого словаря и
+# ниоткуда больше: подстановка имени в запрос безопасна ровно до тех
+# пор, пока имя не приходит снаружи.
+
+CONTENT = {
+    "genetics": {"table": "articles", "text": "text_content",
+                 "photo": "photo_file_id", "scope": "section = 'genetics'",
+                 "name": "🧬 Генетика"},
+    "recipes": {"table": "recipes", "text": "text_content",
+                "photo": "photo_file_id", "scope": "", "name": "🍳 Кулинария"},
+    "books": {"table": "books", "text": "text_content",
+              "photo": "cover_file_id", "scope": "", "name": "📚 Книги"},
+    "travel": {"table": "travel_places", "text": "text_content",
+               "photo": "photo_file_id", "scope": "",
+               "name": "🌍 Путешествия"},
+}
+
+
+def _content_meta(section: str):
+    meta = CONTENT.get(section)
+    if not meta:
+        raise ValueError(f"неизвестный раздел: {section}")
+    return meta
+
+
+async def content_list(section: str, page: int = 0, per_page: int = 8):
+    """[(id, первая строка)] материалов раздела и сколько всего.
+
+    Первая строка, а не отдельное поле «название»: у книг и рецептов
+    названия как колонки нет вовсе, а первая строка есть везде и именно
+    она видна читателю.
+    """
+    meta = _content_meta(section)
+    where = f"WHERE {meta['scope']}" if meta["scope"] else ""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            total = int(await conn.fetchval(
+                f"SELECT COUNT(*) FROM {SCHEMA}.{meta['table']} {where}") or 0)
+            rows = await conn.fetch(
+                f"SELECT id, {meta['text']} AS body "
+                f"FROM {SCHEMA}.{meta['table']} {where} "
+                f"ORDER BY id DESC LIMIT $1 OFFSET $2",
+                per_page, page * per_page)
+        out = []
+        for r in rows:
+            head = ((r["body"] or "").strip().split("\n") or [""])[0]
+            out.append((r["id"], head[:60] or "без текста"))
+        return out, total
+    except Exception as e:
+        logging.error(f"Список материалов недоступен: {e}")
+        return [], 0
+
+
+async def content_get(section: str, item_id: int):
+    """(текст, фото) материала либо None"""
+    meta = _content_meta(section)
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                f"SELECT {meta['text']} AS body, {meta['photo']} AS photo "
+                f"FROM {SCHEMA}.{meta['table']} WHERE id = $1", item_id)
+        return (row["body"], row["photo"]) if row else None
+    except Exception as e:
+        logging.error(f"Материал недоступен: {e}")
+        return None
+
+
+async def content_set(section: str, item_id: int, text: str = None,
+                      photo: str = None) -> bool:
+    """Правка текста или фотографии. Что не передали — не трогаем."""
+    meta = _content_meta(section)
+    sets, args = [], []
+    if text is not None:
+        sets.append(f"{meta['text']} = ${len(args) + 2}")
+        args.append(text)
+    if photo is not None:
+        sets.append(f"{meta['photo']} = ${len(args) + 2}")
+        args.append(photo)
+    if not sets:
+        return False
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            done = await conn.execute(
+                f"UPDATE {SCHEMA}.{meta['table']} SET {', '.join(sets)} "
+                f"WHERE id = $1", item_id, *args)
+        return done.endswith("1")
+    except Exception as e:
+        logging.error(f"Материал не поправился: {e}")
+        return False
+
+
+async def content_delete(section: str, item_id: int) -> bool:
+    meta = _content_meta(section)
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            done = await conn.execute(
+                f"DELETE FROM {SCHEMA}.{meta['table']} WHERE id = $1", item_id)
+        return done.endswith("1")
+    except Exception as e:
+        logging.error(f"Материал не удалился: {e}")
+        return False

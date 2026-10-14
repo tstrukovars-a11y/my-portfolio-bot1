@@ -20,6 +20,7 @@ import digest
 import growth
 import public
 import ping
+import content_edit
 import race
 import cartoon
 import characters
@@ -618,6 +619,7 @@ async def main():
     # Диагностика — первым роутером: она отвечает всем и должна
     # пережить поломку в любом другом разделе.
     dp.include_router(ping.router)
+    dp.include_router(content_edit.router)
     dp.include_router(planner.router)
     dp.include_router(banners.router)
     dp.include_router(avatars.router)
