@@ -1003,6 +1003,10 @@ async def set_channel(message: Message):
             f"Разметка поста: <code>/art_markup</code>")
         return
     await database.set_setting(CHANNEL_KEY, parts[1].strip())
+    # Имя канала кэшируется для кнопки «все работы в канале». Сменили
+    # канал — кэш врёт, и кнопка ведёт в прежний: туда, где новых работ
+    # уже не появится.
+    await database.set_setting("art_channel_username", "")
     await message.answer(
         "🎨 Канал записан. Публикуйте по одной работе в пост — "
         "карточки заведутся сами.\n\nРазметка: <code>/art_markup</code>")

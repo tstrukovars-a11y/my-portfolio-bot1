@@ -127,3 +127,40 @@ def test_the_rewrap_report_mentions_books_it_did_not_touch():
     body = body[:body.index("@router.message", body.index("await message.answer"))]
     assert "Книг без ссылки" in body
     assert "books_link_stats" in body
+
+
+# --- «Моя галерея» ведёт в канал ---------------------------------------
+#
+# Канал — полка: там все работы, по одной на пост, с метками и поиском.
+# Экран бота показывает тридцать штук списком и упирается в длину
+# сообщения, а канал не упирается ни во что.
+
+def test_the_gallery_offers_the_channel():
+    source = open("art_shop.py", encoding="utf-8").read()
+    assert "async def _channel_row" in source
+    body = source[source.index("async def show_gallery"):]
+    body = body[:body.index("@router.callback_query")]
+    assert "_channel_row" in body
+
+
+def test_the_empty_gallery_offers_it_too():
+    """Пустой экран без выхода — тупик, а в канале работы уже есть."""
+    source = open("art_shop.py", encoding="utf-8").read()
+    body = source[source.index("async def show_gallery"):]
+    body = body[:body.index("rows = []")]
+    assert "channel" in body.split("Галерея пока пуста")[1][:300]
+
+
+def test_the_gallery_and_the_import_share_one_channel_setting():
+    """Иначе кнопка поведёт в один канал, а работы придут из другого."""
+    import art_shop
+    import art_channel
+    assert art_shop.CHANNEL_KEY == art_channel.CHANNEL_KEY
+
+
+def test_changing_the_channel_forgets_the_cached_name():
+    """Кэш иначе врёт, и кнопка ведёт в прежний канал — туда, где новых
+    работ уже не появится."""
+    source = open("art_channel.py", encoding="utf-8").read()
+    body = source[source.index("async def set_channel"):]
+    assert 'set_setting("art_channel_username", "")' in body

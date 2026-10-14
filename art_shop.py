@@ -72,6 +72,8 @@ def _work_buttons(work, lang: str = "ru") -> InlineKeyboardMarkup:
             text="✉️ Хочу эту работу", callback_data=f"artask_{work['id']}")])
     rows.append([InlineKeyboardButton(text="🖼 Другие работы",
                                       callback_data="art_my_portfolio")])
+    if channel:
+        rows.append(channel)
     rows.append([InlineKeyboardButton(text="🔙 Назад",
                                       callback_data="creative_paintings")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -81,11 +83,55 @@ def _work_buttons(work, lang: str = "ru") -> InlineKeyboardMarkup:
 # ГАЛЕРЕЯ ДЛЯ ПОСЕТИТЕЛЯ
 # =====================================================================
 
+async def _channel_row(bot=None):
+    """Кнопка в канал с работами.
+
+    Канал — полка: там все работы, по одной на пост, с метками и
+    поиском. Экран бота показывает тридцать штук списком и дальше
+    упирается в длину сообщения, а канал не упирается ни во что.
+
+    Поэтому путь туда должен быть на виду, а не подразумеваться: о
+    существовании канала читатель не знает, пока ему не покажут.
+    """
+    raw = await database.get_setting(CHANNEL_KEY)
+    if not raw:
+        return None
+    name = (raw or "").strip()
+    if name.startswith("@"):
+        url = f"https://t.me/{name.lstrip('@')}"
+    elif name.startswith("http"):
+        url = name
+    elif bot is not None:
+        # Номер канала ссылкой не открывается — спрашиваем его имя у
+        # Telegram. Кэшируем: имя меняют редко, а лишний запрос стоит
+        # секунды ожидания на каждом открытии галереи.
+        cached = await database.get_setting("art_channel_username")
+        if cached == "-":
+            return None
+        if not cached:
+            try:
+                chat = await bot.get_chat(int(name))
+                cached = chat.username or "-"
+            except Exception as e:
+                logging.info(f"Имя канала картин не узналось: {e}")
+                return None
+            await database.set_setting("art_channel_username", cached)
+        if cached == "-":
+            return None
+        url = f"https://t.me/{cached}"
+    else:
+        return None
+    return [InlineKeyboardButton(text="🖼 Все работы в канале", url=url)]
+
+
 async def show_gallery(call: CallbackQuery):
     works = await database.art_list()
+    channel = await _channel_row(call.bot)
     if not works:
         await call.message.answer(
-            "🖼 Галерея пока пуста.\n\nРаботы появятся здесь совсем скоро.")
+            "🖼 Галерея пока пуста.\n\nРаботы появятся здесь совсем скоро.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[channel])
+            if channel else None)
         return
 
     rows = []
