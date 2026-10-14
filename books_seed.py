@@ -1150,3 +1150,153 @@ async def links_show(message: Message):
                   "Снять: <code>/book_link 12 нет</code>",
                   "Пройти все подряд: <code>/book_links все</code>"]
     await message.answer("\n".join(lines))
+
+
+# =====================================================================
+# ЭКРАН КНИГ В СЛУЖЕБНОМ МЕНЮ
+# =====================================================================
+#
+# Всё, что здесь собрано, существовало и раньше — но командами, которые
+# надо помнить. Помнить их приходилось не боту, а человеку, и ровно
+# поэтому полка кончилась, а ссылки остались непроставленными: работа
+# была возможна, но каждый раз начиналась с вопроса «как это
+# называлось».
+#
+# Кнопки ничего нового не умеют. Они делают возможное — очевидным.
+
+class NewBook(StatesGroup):
+    shelf = State()
+    text = State()
+
+
+SHELF_HINT = {
+    "business": "про дело: управление, стратегия, команда",
+    "horizon": "про мир: наука, история, человек",
+    "tools": "про навык: переговоры, мышление, привычки",
+}
+
+
+async def _books_screen() -> tuple:
+    stats = await database.books_link_stats()
+    counts = await database.book_counts()
+    total = sum(counts.values()) or 0
+
+    lines = ["📚 <b>Книжная полка</b>", ""]
+    for key, name in SHELVES.items():
+        lines.append(f"{name}: {counts.get(key, 0)}")
+    lines.append("")
+    lines.append(f"Со ссылками: {stats['done']} из {stats['total']}")
+    if stats["total"] and stats["done"] < stats["total"]:
+        # Число без действия — просто цифра. Называем, сколько осталось,
+        # чтобы было видно, велика ли работа.
+        left = stats["total"] - stats["done"]
+        lines.append(f"<i>Без ссылки: {left}. Это и есть недополученные "
+                     f"переходы.</i>")
+
+    rows = [
+        [InlineKeyboardButton(text="➕ Добавить книгу",
+                              callback_data="bk_new")],
+        [InlineKeyboardButton(text="🔗 Проставить ссылки",
+                              callback_data="bk_links")],
+        [InlineKeyboardButton(text="🖼 Загрузить обложки",
+                              callback_data="bookcovers")],
+        [InlineKeyboardButton(text="📥 Загрузить список из файла",
+                              callback_data="bk_seed")],
+        [InlineKeyboardButton(text="⇦ Назад", callback_data="admin_panel")],
+    ]
+    return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.callback_query(F.data == "admin_books")
+async def books_screen(call: CallbackQuery):
+    if not config.is_admin(call.from_user.id):
+        await call.answer()
+        return
+    await call.answer()
+    text, kb = await _books_screen()
+    await call.message.answer(text, reply_markup=kb)
+
+
+@router.callback_query(F.data == "bk_links")
+async def links_button(call: CallbackQuery):
+    """Та же карусель, что по команде — просто её видно"""
+    if not config.is_admin(call.from_user.id):
+        await call.answer()
+        return
+    await call.answer()
+    call.message.text = "/book_links"
+    call.message.from_user = call.from_user
+    await book_links(call.message)
+
+
+@router.callback_query(F.data == "bk_seed")
+async def seed_button(call: CallbackQuery):
+    if not config.is_admin(call.from_user.id):
+        await call.answer()
+        return
+    await call.answer()
+    call.message.from_user = call.from_user
+    await seed(call.message)
+
+
+# --- добавить книгу руками --------------------------------------------
+#
+# Файл со списком хорош для пачки, но плох для одной книги: править
+# его с телефона нельзя, а книга попадается именно тогда, когда
+# телефон и есть под рукой.
+
+@router.callback_query(F.data == "bk_new")
+async def new_book(call: CallbackQuery, state: FSMContext):
+    if not config.is_admin(call.from_user.id):
+        await call.answer()
+        return
+    await call.answer()
+    await state.set_state(NewBook.shelf)
+    rows = [[InlineKeyboardButton(text=f"{name} — {SHELF_HINT[key]}",
+                                  callback_data=f"bk_s_{key}")]
+            for key, name in SHELVES.items()]
+    await call.message.answer("На какую полку?",
+                              reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+
+
+@router.callback_query(F.data.startswith("bk_s_"), NewBook.shelf)
+async def new_book_shelf(call: CallbackQuery, state: FSMContext):
+    shelf = call.data[len("bk_s_"):]
+    if shelf not in SHELVES:
+        await call.answer()
+        return
+    await state.update_data(shelf=shelf)
+    await state.set_state(NewBook.text)
+    await call.answer()
+    await call.message.answer(
+        "Теперь книга — двумя кусками через пустую строку:\n\n"
+        "<code>Энди Гроув — Высокоэффективный менеджмент\n\n"
+        "Чему научит: вести совещания и оценивать работу "
+        "руководителя по результату его команды.</code>\n\n"
+        "<i>Первая строка — автор и название, по ней ищется дубль. "
+        "Вторая часть — зачем её читать: это и попадёт в пост.</i>")
+
+
+@router.message(NewBook.text, F.text)
+async def new_book_text(message: Message, state: FSMContext):
+    raw = (message.text or "").strip()
+    head = raw.split("\n")[0].strip()
+    if "—" not in head and "-" not in head:
+        await message.answer(
+            "В первой строке нужны автор и название через тире:\n"
+            "<code>Энди Гроув — Высокоэффективный менеджмент</code>")
+        return
+
+    data = await state.get_data()
+    await state.clear()
+    result = await database.add_book_unique(data.get("shelf", "business"), raw)
+    if result == "error":
+        await message.answer("⚠️ Не сохранилось. Попробуйте ещё раз.")
+        return
+
+    was = "обновила" if result == "updated" else "добавила"
+    text, kb = await _books_screen()
+    await message.answer(
+        f"📚 {was.capitalize()}: <b>{html.escape(head[:70])}</b>\n\n"
+        f"<i>Обложку и ссылку можно поставить сразу — кнопками ниже.</i>")
+    await message.answer(text, reply_markup=kb)

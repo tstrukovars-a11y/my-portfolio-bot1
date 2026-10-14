@@ -173,6 +173,8 @@ def _admin_menu() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🗄 База данных", callback_data="admin_db")],
         [InlineKeyboardButton(text="🗓 План публикаций", callback_data="admin_plan")],
         [InlineKeyboardButton(text="📦 Запасы контента", callback_data="planstock")],
+        [InlineKeyboardButton(text="📚 Книги", callback_data="admin_books")],
+        [InlineKeyboardButton(text="🖼 Картины", callback_data="admin_art")],
         [InlineKeyboardButton(text="📨 Приглашения", callback_data="admin_invite")],
         [InlineKeyboardButton(text="⚡️ Срочная новость", callback_data="admin_urgent")],
         [InlineKeyboardButton(text="🎧 Проверка иврита", callback_data="admin_check")],

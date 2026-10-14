@@ -1006,3 +1006,112 @@ async def set_channel(message: Message):
     await message.answer(
         "🎨 Канал записан. Публикуйте по одной работе в пост — "
         "карточки заведутся сами.\n\nРазметка: <code>/art_markup</code>")
+
+
+# =====================================================================
+# ЭКРАН КАРТИН В СЛУЖЕБНОМ МЕНЮ
+# =====================================================================
+#
+# Команд у раздела набралось восемь, и все они помнятся только тем, кто
+# их писал. Кнопки ничего нового не умеют — они делают возможное
+# очевидным, и этого достаточно, чтобы работа делалась.
+
+@router.callback_query(F.data == "admin_art")
+async def art_screen(call: CallbackQuery):
+    if not config.is_admin(call.from_user.id):
+        await call.answer()
+        return
+    await call.answer()
+
+    works = await database.art_list()
+    waiting = await database.art_waiting()
+    sold = [w for w in works or [] if w.get("status") == "sold"]
+    earned = sum(int(w.get("sold_price") or 0) for w in sold)
+    listings = await database.listing_list()
+    unpaid = [x for x in listings if x.get("status") == "waiting"]
+
+    lines = ["🖼 <b>Картины</b>", ""]
+    lines.append(f"Работ: {len(works or [])}, продано: {len(sold)}")
+    if earned:
+        lines.append(f"Реализовано: {_money(earned)}")
+    lines.append(f"Ждут выхода в журнал: {waiting}")
+    if listings:
+        lines.append("")
+        lines.append(f"Объявления художников: {len(listings)}"
+                     + (f", ждут оплаты: {len(unpaid)}" if unpaid else ""))
+
+    rows = [
+        [InlineKeyboardButton(text="💰 Прайс и продажи",
+                              callback_data="art_prices")],
+        [InlineKeyboardButton(text="🗓 Очередь в журнал",
+                              callback_data="art_queue_btn")],
+        [InlineKeyboardButton(text="🏷 Метки для постов",
+                              callback_data="art_tags_btn")],
+        [InlineKeyboardButton(text="📝 Разметка поста",
+                              callback_data="art_markup_btn")],
+    ]
+    if listings:
+        rows.append([InlineKeyboardButton(text="🎨 Объявления художников",
+                                          callback_data="art_listings_btn")])
+    rows.append([InlineKeyboardButton(text="⇦ Назад",
+                                      callback_data="admin_panel")])
+    await call.message.answer("\n".join(lines),
+                              reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+
+
+def _as_command(call: CallbackQuery, text: str):
+    """Нажатие как набранная команда — чтобы не копировать обработчик.
+
+    Два пути к одному и тому же расходятся на первой же правке: один
+    чинят, про второй забывают. Поэтому кнопка зовёт тот же код, а не
+    повторяет его.
+    """
+    call.message.text = text
+    call.message.from_user = call.from_user
+    return call.message
+
+
+@router.callback_query(F.data == "art_prices")
+async def prices_button(call: CallbackQuery):
+    if not config.is_admin(call.from_user.id):
+        await call.answer()
+        return
+    await call.answer()
+    await price_command(_as_command(call, "/art_price"))
+
+
+@router.callback_query(F.data == "art_queue_btn")
+async def queue_button(call: CallbackQuery):
+    if not config.is_admin(call.from_user.id):
+        await call.answer()
+        return
+    await call.answer()
+    await queue_command(_as_command(call, "/art_queue"))
+
+
+@router.callback_query(F.data == "art_tags_btn")
+async def tags_button(call: CallbackQuery):
+    if not config.is_admin(call.from_user.id):
+        await call.answer()
+        return
+    await call.answer()
+    await tags_help(_as_command(call, "/art_tags"))
+
+
+@router.callback_query(F.data == "art_markup_btn")
+async def markup_button(call: CallbackQuery):
+    if not config.is_admin(call.from_user.id):
+        await call.answer()
+        return
+    await call.answer()
+    await markup_help(_as_command(call, "/art_markup"))
+
+
+@router.callback_query(F.data == "art_listings_btn")
+async def listings_button(call: CallbackQuery):
+    if not config.is_admin(call.from_user.id):
+        await call.answer()
+        return
+    await call.answer()
+    import art_market
+    await art_market.listing_board(_as_command(call, "/listings"))
