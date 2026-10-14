@@ -61,6 +61,17 @@ async def open_creative(call: CallbackQuery):
     except TelegramBadRequest:
         pass
 
+async def _art_channel_url(bot=None) -> str:
+    """Адрес канала с работами — для кнопки «Моя галерея»"""
+    try:
+        import art_shop
+        row = await art_shop._channel_row(bot)
+        return row[0].url if row else ""
+    except Exception as e:
+        logging.warning(f"Адрес канала картин не собрался: {e}")
+        return ""
+
+
 @router.callback_query(F.data == "creative_paintings")
 async def open_creative_paintings(call: CallbackQuery):
     await call.answer()
@@ -69,7 +80,8 @@ async def open_creative_paintings(call: CallbackQuery):
         caption_text = menu_texts.ART_MAIN_TEXTS.get(user_lang, menu_texts.ART_MAIN_TEXTS["en"])
         await call.message.edit_media(
             media=InputMediaPhoto(media=config.PAINTINGS_BANNER, caption=caption_text, parse_mode="Markdown"),
-            reply_markup=inline_kb.get_art_hub_main_menu(user_lang)
+            reply_markup=inline_kb.get_art_hub_main_menu(
+                user_lang, await _art_channel_url(call.bot))
         )
     except TelegramBadRequest:
         pass
@@ -108,17 +120,19 @@ async def open_art_calendar(call: CallbackQuery):
         pass
 
 @router.callback_query(F.data == "art_start_application_form")
-async def open_art_form_intro(call: CallbackQuery):
-    await call.answer()
-    try:
-        user_lang = await database.get_user_language(call.from_user.id)
-        caption_text = menu_texts.ART_FORM_START_TEXTS.get(user_lang, menu_texts.ART_FORM_START_TEXTS["en"])
-        await call.message.edit_media(
-            media=InputMediaPhoto(media=config.ART_BANNER, caption=caption_text, parse_mode="Markdown"),
-            reply_markup=inline_kb.get_art_form_trigger_markup(user_lang)
-        )
-    except TelegramBadRequest:
-        pass
+async def open_art_form_intro(call: CallbackQuery, state: FSMContext):
+    """Старая анкета вела к «Заявка принята!» и не сохраняла ничего.
+
+    Человеку сообщали об успехе, которого не было: ни заявки, ни
+    уведомления владелице, ни следа в базе. Теперь кнопка ведёт в
+    настоящую форму размещения — с правилами, согласиями и оплатой.
+
+    Обработчик оставлен для старых сообщений: кнопка в переписке живёт
+    дольше, чем версия бота, и нажатие на неё должно вести туда же,
+    куда ведёт свежая.
+    """
+    import art_market
+    await art_market.start(call, state)
 
 # =====================================================================
 # 👗 НАВИГАЦИЯ БЛОКА АТЕЛЬЕ И FASHION DESIGN

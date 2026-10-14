@@ -164,3 +164,52 @@ def test_changing_the_channel_forgets_the_cached_name():
     source = open("art_channel.py", encoding="utf-8").read()
     body = source[source.index("async def set_channel"):]
     assert 'set_setting("art_channel_username", "")' in body
+
+
+# --- раздел картин для читателя ----------------------------------------
+
+def test_the_gallery_button_leads_to_the_channel():
+    """Список внутри бота упирается в длину сообщения на тридцатой
+    работе, а канал не упирается ни во что."""
+    import inline_kb
+    kb = inline_kb.get_art_hub_main_menu("ru", "https://t.me/moivernissage")
+    gallery = kb.inline_keyboard[0][0]
+    assert gallery.url == "https://t.me/moivernissage"
+    assert gallery.callback_data is None
+
+
+def test_without_a_channel_the_gallery_stays_inside():
+    """Пустая ссылка хуже скромного списка."""
+    import inline_kb
+    kb = inline_kb.get_art_hub_main_menu("ru", "")
+    assert kb.inline_keyboard[0][0].callback_data == "art_my_portfolio"
+
+
+def test_the_price_estimate_is_findable_from_the_menu():
+    """Расчёт жил только за кнопкой «запросить цену» под постом — то
+    есть находился теми, кто уже и так интересуется конкретной
+    работой."""
+    import inline_kb
+    data = [b.callback_data for row in
+            inline_kb.get_art_hub_main_menu("ru", "").inline_keyboard
+            for b in row]
+    assert "val_start" in data
+
+
+def test_the_artist_form_is_the_real_one():
+    """Старая анкета доходила до «Заявка принята!» и не сохраняла
+    ничего: ни заявки, ни уведомления, ни следа в базе."""
+    import inline_kb
+    data = [b.callback_data for row in
+            inline_kb.get_art_hub_main_menu("ru", "").inline_keyboard
+            for b in row]
+    assert "mkt_start" in data
+    assert "art_start_application_form" not in data
+
+
+def test_the_old_button_still_leads_somewhere_real():
+    """Кнопка в переписке живёт дольше, чем версия бота."""
+    source = open("block2_creative.py", encoding="utf-8").read()
+    body = source[source.index("async def open_art_form_intro"):]
+    body = body[:body.index("@router", 10)]
+    assert "art_market.start" in body

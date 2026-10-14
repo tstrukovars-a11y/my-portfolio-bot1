@@ -378,16 +378,34 @@ def get_creative_menu(lang):
         [InlineKeyboardButton(text="⇦ В главное меню" if lang == "ru" else "⇦ Main Menu", callback_data="go_home")]
     ])
 
-def get_art_hub_main_menu(lang):
+def get_art_hub_main_menu(lang, channel_url: str = ""):
+    """Меню раздела картин.
+
+    «Моя галерея» ведёт прямо в канал, а не в список внутри бота.
+    Список упирается в длину сообщения на тридцатой работе, а канал не
+    упирается ни во что: там каждая работа отдельным постом, с метками,
+    поиском и кнопками «примерить» и «запросить цену».
+
+    Без заданного канала кнопка остаётся на внутреннем списке: пустая
+    ссылка хуже скромного списка.
+    """
     g = "🖼 Моя галерея" if lang == "ru" else "🖼 My Gallery"
+    v = "📐 Сколько стоит работа" if lang == "ru" else "📐 What a work costs"
     s = "💰 Подписки и цены" if lang == "ru" else "💰 Subs & Prices"
     c = "📅 Календарь выставок" if lang == "ru" else "📅 Exhibition Calendar"
     f = "📝 Подать анкету автора" if lang == "ru" else "📝 Submit Artwork Form"
+
+    gallery = (InlineKeyboardButton(text=g, url=channel_url) if channel_url
+               else InlineKeyboardButton(text=g, callback_data="art_my_portfolio"))
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=g, callback_data="art_my_portfolio")],
+        [gallery],
+        [InlineKeyboardButton(text=v, callback_data="val_start")],
         [InlineKeyboardButton(text=s, callback_data="art_subscriptions_prices")],
         [InlineKeyboardButton(text=c, callback_data="art_exhibitions_calendar")],
-        [InlineKeyboardButton(text=f, callback_data="art_start_application_form")],
+        # Ведёт в настоящую форму размещения: старая анкета доходила
+        # до «Заявка принята!» и не сохраняла ничего — человеку
+        # сообщали об успехе, которого не было.
+        [InlineKeyboardButton(text=f, callback_data="mkt_start")],
         [InlineKeyboardButton(text=label(BACK_TEXTS, lang), callback_data="menu_creative")]
     ])
 
