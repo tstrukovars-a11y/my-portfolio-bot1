@@ -645,7 +645,19 @@ def test_a_book_that_did_not_fit_is_counted(monkeypatch):
 
 def test_the_whole_shelf_fits_by_default():
     """Разбор группирует книги по общей мысли, а мысль, собранная по
-    трети полки, — не та же самая."""
+    трети полки, — не та же самая.
+
+    Число книг здесь не проверяется намеренно. Раньше стояло «29» —
+    размер полки на день написания теста, — и первое же пополнение
+    уронило тест, хотя ломаться было нечему: полка выросла, и вся она
+    по-прежнему помещалась. Сторожить надо то, ради чего тест написан:
+    что не отрезано ничего.
+    """
+    import json
+
     out, took, cut = run(tree.books_source())
     assert not cut, f"не поместились: {cut}"
-    assert len(took) == 29
+
+    shelf = json.load(open("data/books_seed.json", encoding="utf-8"))["books"]
+    assert len(took) == len(shelf), \
+        f"в разбор попало {len(took)} книг из {len(shelf)}"
