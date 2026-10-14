@@ -8,11 +8,15 @@ import digest
 
 def test_the_grid_names_every_slot():
     """Свой список названий был копией SLOT_TITLES, и новый слот в нём
-    не появлялся — в сетке дня светилось служебное «art»."""
+    не появлялся — в сетке дня светилось служебное «art».
+
+    Проверяем сам список, а не кусок файла вокруг него. Прошлая версия
+    искала первую строку «for at, slot, _ in SCHEDULE:», и когда таких
+    циклов стало два, тест упал на постороннем — хотя сетка была цела.
+    """
     source = open("digest.py", encoding="utf-8").read()
-    body = source[source.index("for at, slot, _ in SCHEDULE:"):]
-    body = body[:body.index("lines.append(\"\")")]
-    assert "SLOT_TITLES.items()" in body, "сетка снова со своим списком"
+    assert "titles = {slot: name.split(" in source, \
+        "сетка снова со своим списком названий"
     for _, slot, _ in digest.SCHEDULE:
         assert slot in digest.SLOT_TITLES, slot
 
@@ -104,3 +108,42 @@ def test_it_explains_where_to_take_the_post_number():
 def test_paintings_are_among_the_sections_it_accepts():
     import digest
     assert digest.SECTION_ALIASES.get("картины") == "art"
+
+
+# --- партнёрская ссылка проверяется, а не предлагается проверить -------
+#
+# Сломанная партнёрская ссылка ведёт себя тихо: кнопка на месте,
+# нажатия идут, заказов нет. «Посмотрите, что открывается» — работа,
+# которую не сделают.
+
+def test_the_link_is_checked_by_the_bot():
+    source = open("digest.py", encoding="utf-8").read()
+    assert "async def _check_url" in source
+    body = source[source.index('if command == "shop"'):]
+    body = body[:body.index('if command == "note"')]
+    assert "_check_url" in body
+
+
+def test_a_shop_blocking_robots_is_not_called_broken():
+    """Читай-город отвечает роботу 403. Сказать «не работает» значит
+    отправить человека чинить целое."""
+    source = open("digest.py", encoding="utf-8").read()
+    body = source[source.index("async def _check_url"):]
+    body = body[:body.index("async def _shop_templates")]
+    assert "(403, 429)" in body
+
+
+def test_a_missing_page_is_called_broken():
+    source = open("digest.py", encoding="utf-8").read()
+    body = source[source.index("async def _check_url"):]
+    body = body[:body.index("async def _shop_templates")]
+    assert "(404, 410)" in body
+
+
+def test_several_shops_are_reported_each():
+    """Магазинов у раздела несколько, и молчание про второй выглядит
+    как будто его и нет."""
+    source = open("digest.py", encoding="utf-8").read()
+    body = source[source.index('if command == "shop"'):]
+    body = body[:body.index('if command == "note"')]
+    assert "for label, template in shops" in body

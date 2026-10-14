@@ -272,6 +272,39 @@ def _search_query(title: str) -> str:
     return quote(title.replace(" — ", " ").replace("—", " ").strip(), safe="")
 
 
+async def _check_url(url: str):
+    """(куда ведёт, почему не вышло). Одно из двух всегда пусто.
+
+    Партнёрская ссылка — цепочка переходов: сеть, редирект, магазин.
+    Сломаться может любое звено, и сломанная ссылка ведёт себя тихо:
+    кнопка на месте, нажатия идут, заказов нет. Поэтому ходим по ней
+    сами и смотрим, где цепочка кончается.
+
+    Возвращаем хост, а не весь адрес: в конце цепочки он длиной в
+    экран, а ответ на вопрос «дошло ли до Литреса» — это хост.
+    """
+    try:
+        import httpx
+        from urllib.parse import urlparse
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True,
+                                     headers={"User-Agent": "Mozilla/5.0"}) as c:
+            answer = await c.get(url)
+        host = urlparse(str(answer.url)).netloc
+        # Главный вопрос — куда привела цепочка, а не какой код вернул
+        # магазин. Читай-город отвечает роботу 403, и это защита от
+        # роботов, а не сломанная ссылка: сказать «не работает» здесь
+        # значит отправить человека чинить целое.
+        if answer.status_code in (403, 429):
+            return host, ""
+        if answer.status_code in (404, 410):
+            return "", f"страницы нет ({host})"
+        if answer.status_code >= 400:
+            return "", f"магазин отвечает {answer.status_code} ({host})"
+        return host, ""
+    except Exception as e:
+        return "", f"не открылась: {type(e).__name__}"
+
+
 async def _shop_templates(section: str):
     """Все офферы раздела: [(подпись, шаблон)].
 
@@ -2407,13 +2440,30 @@ async def digest_command(message: Message, bot: Bot):
             return
 
         await database.set_setting(SHOP_SECTION_KEY + section, value)
-        label, template = await _shop_template(section)
-        sample = _shop_url(template, "Энди Гроув — Высокоэффективный менеджмент", section)
-        await message.answer(
-            f"✅ {SLOT_TITLES.get(section, section)} → "
-            f"{html.escape(label or _shop_label(sample))}\n\n"
-            f"Проверьте, что открывается:\n{html.escape(sample)}")
-        return
+        shops = await _shop_templates(section)
+        lines = [f"✅ {SLOT_TITLES.get(section, section)}: магазинов {len(shops)}", ""]
+
+        # Проверяем ссылку, а не предлагаем проверить. «Посмотрите, что
+        # открывается» — работа, которую владелица не сделает, а
+        # неработающая партнёрская ссылка сама о себе не скажет: кнопка
+        # есть, нажатия идут, заказов нет.
+        for label, template in shops:
+            sample = _shop_url(template,
+                               "Энди Гроув — Высокоэффективный менеджмент",
+                               section)
+            name = label or _shop_label(sample)
+            lines.append(f"<b>{html.escape(name)}</b>")
+            where, why = await _check_url(sample)
+            if where:
+                lines.append(f"ведёт на <code>{html.escape(where)}</code>")
+            else:
+                lines.append(f"⚠️ {html.escape(why)}")
+            lines.append(f"<code>{html.escape(sample[:200])}</code>")
+            lines.append("")
+
+        lines.append("<i>Несколько магазинов — каждый своей строкой "
+                     "в одном сообщении.</i>")
+        await message.answer("\n".join(lines))
         return
 
     if command == "note" and len(parts) > 2:
