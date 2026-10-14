@@ -91,3 +91,28 @@ def test_the_art_screen_shows_what_was_realised():
     body = body[:body.index("def _as_command")]
     assert "Реализовано" in body
     assert "art_waiting" in body
+
+
+def test_the_books_screen_shows_which_ones_lack_links():
+    """Карусель ведёт по одной книге и не показывает, сколько их
+    впереди и где лежит ссылка без партнёрского хвоста."""
+    source = open("books_seed.py", encoding="utf-8").read()
+    body = source[source.index("async def _books_screen"):]
+    body = body[:body.index("async def books_screen")]
+    assert "bk_show" in body
+
+
+def test_the_list_button_calls_the_same_command():
+    source = open("books_seed.py", encoding="utf-8").read()
+    body = source[source.index("async def show_button"):]
+    assert "links_show(" in body[:700]
+
+
+def test_links_can_be_entered_before_the_shop_templates_exist():
+    """Иначе работа упирается в настройку, которой может не быть
+    сегодня: ссылка сохранится как есть, а завернуть её можно потом
+    одной командой."""
+    source = open("books_seed.py", encoding="utf-8").read()
+    body = source[source.index("async def _ready_link"):]
+    body = body[:body.index("@router.message", body.index("async def _ready_link"))]
+    assert "return raw" in body, "без шаблона ссылка теряется"

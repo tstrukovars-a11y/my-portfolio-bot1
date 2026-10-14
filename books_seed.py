@@ -1198,6 +1198,8 @@ async def _books_screen() -> tuple:
                               callback_data="bk_new")],
         [InlineKeyboardButton(text="🔗 Проставить ссылки",
                               callback_data="bk_links")],
+        [InlineKeyboardButton(text="📋 У каких ссылок нет",
+                              callback_data="bk_show")],
         [InlineKeyboardButton(text="🖼 Загрузить обложки",
                               callback_data="bookcovers")],
         [InlineKeyboardButton(text="📥 Загрузить список из файла",
@@ -1227,6 +1229,22 @@ async def links_button(call: CallbackQuery):
     call.message.text = "/book_links"
     call.message.from_user = call.from_user
     await book_links(call.message)
+
+
+@router.callback_query(F.data == "bk_show")
+async def show_button(call: CallbackQuery):
+    """Список с пометками — чтобы видеть объём работы до начала.
+
+    Карусель ведёт по одной книге и не показывает, сколько их впереди и
+    где уже лежит ссылка без партнёрского хвоста. Список отвечает на
+    оба вопроса сразу.
+    """
+    if not config.is_admin(call.from_user.id):
+        await call.answer()
+        return
+    await call.answer()
+    call.message.from_user = call.from_user
+    await links_show(call.message)
 
 
 @router.callback_query(F.data == "bk_seed")
