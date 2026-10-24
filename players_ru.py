@@ -156,6 +156,7 @@ _RU = {
     "Lucrezia Stefanini": "Лукреция Стефанини",
     "Xiyu Wang": "Ван Сиюй",
     "Zheng Qinwen": "Чжэн Циньвэнь",
+    "Maja Chwalinska": "Мая Хвалинска",
     "Wu Yibing": "У Ибин",
     "Shang Juncheng": "Шан Цзюньчэн",
     "Zhang Zhizhen": "Чжан Чжичжэнь",
@@ -177,6 +178,19 @@ _RU = {
 _BY_SURNAME = {}
 for _en, _ru in _RU.items():
     _BY_SURNAME.setdefault(_en.split()[-1].lower(), _ru)
+
+# Тот же словарь без оглядки на регистр. Источник отдаёт имя то как
+# «Aryna Sabalenka», то заглавными — и второй вариант в словарь не
+# попадал, уходил в транслитерацию и возвращался «Сабаленкой». В одной
+# публикации выходили два написания одной женщины.
+_RU_LOWER = {_en.lower(): _ru for _en, _ru in _RU.items()}
+
+# Фамилия -> (как записано у нас, по-русски). Нужна, чтобы сверить
+# первую букву имени: «Arina Sabalenka» и «Aryna Sabalenka» — один
+# человек, а «Michael Zheng» и «Zheng Qinwen» — разные.
+_BY_SURNAME_FULL = {}
+for _en, _ru in _RU.items():
+    _BY_SURNAME_FULL.setdefault(_en.split()[-1].lower(), (_en, _ru))
 
 
 # Турниры. Крупные переводим, остальные оставляем как есть: названия
@@ -311,6 +325,10 @@ def stage(name: str) -> int:
 # лучше смеси, а любое имя правится строкой в _RU выше.
 _PAIRS = [
     ("shch", "щ"), ("sch", "ш"), ("tsch", "ч"),
+    # Польское «chw» — это «хв»: Chwalinska → Хвалинска, а не
+    # Чвалинска. Правило стоит до общего ("ch", "ч") ниже, иначе
+    # до него не дойдёт.
+    ("chw", "хв"),
     ("cie", "си"), ("ce", "се"), ("ci", "си"), ("cy", "си"),
     ("sh", "ш"), ("ch", "ч"), ("zh", "ж"), ("kh", "х"), ("gh", "г"),
     ("ph", "ф"), ("th", "т"), ("ck", "к"), ("qu", "кв"),
@@ -382,6 +400,9 @@ def ru(name: str) -> str:
         return _OVERRIDES[clean]
     if clean in _RU:
         return _RU[clean]
+    # Регистр — не признак другого человека.
+    if clean.lower() in _RU_LOWER:
+        return _RU_LOWER[clean.lower()]
 
     # По фамилии подставляем только тогда, когда имени и нет: «I. Swiatek»
     # или просто «Swiatek». С полным именем это подменяет человека —
@@ -389,10 +410,18 @@ def ru(name: str) -> str:
     words = clean.replace(".", ". ").split()
     initials_only = len(words) < 2 or all(
         len(w.rstrip(".")) <= 1 for w in words[:-1])
+    surname = words[-1].lower().rstrip(".")
     if initials_only:
-        surname = words[-1].lower().rstrip(".")
         if surname in _BY_SURNAME:
             return _BY_SURNAME[surname]
+    elif surname in _BY_SURNAME_FULL and words[0].lower() not in _SURNAME_FIRST:
+        # Полное имя принимаем по фамилии только при совпадении первой
+        # буквы. «Arina» и «Aryna» — одна Соболенко, записанная источником
+        # по-разному; «Michael» и «Zheng» — разные люди, и там буквы
+        # расходятся, так что подмена не пройдёт.
+        known_en, known_ru = _BY_SURNAME_FULL[surname]
+        if known_en.split()[0][:1].lower() == words[0][:1].lower():
+            return known_ru
     # Уже кириллица — не трогаем
     if any("а" <= ch.lower() <= "я" or ch in "ёЁ" for ch in clean):
         return clean

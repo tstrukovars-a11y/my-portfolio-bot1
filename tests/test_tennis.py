@@ -911,3 +911,48 @@ def test_the_link_is_called_plainly():
     source = open("tennis_alerts.py", encoding="utf-8").read()
     assert "Подробнее у источника" not in source
     assert "Подробнее тут" in source
+
+
+# --- одно имя — одно написание ----------------------------------------
+#
+# В публикации вышли «Сабаленка» и «Соболенко» — одна женщина под двумя
+# фамилиями. Словарь искал точное совпадение строки, а источник отдаёт
+# имя то обычным регистром, то заглавными, то с другим написанием
+# имени. Всё, что не совпало буква в букву, уходило в транслитерацию.
+
+def test_one_woman_one_surname():
+    forms = ["Aryna Sabalenka", "ARYNA SABALENKA", "aryna sabalenka",
+             "Arina Sabalenka", "A. Sabalenka", "Sabalenka"]
+    out = {players_ru.ru(f) for f in forms}
+    assert out == {"Арина Соболенко"}, f"написаний больше одного: {out}"
+
+
+def test_a_shared_surname_still_does_not_swap_people():
+    """Michael Zheng и Zheng Qinwen — разные люди с общей фамилией.
+    Защита стояла на запрете искать по фамилии при полном имени; теперь
+    ищем, но сверяем первую букву."""
+    assert "Циньвэнь" not in players_ru.ru("Michael Zheng")
+    assert "Циньвэнь" not in players_ru.ru("MICHAEL ZHENG")
+    assert players_ru.ru("Zheng Qinwen") == "Чжэн Циньвэнь"
+
+
+def test_polish_chw_is_hv_not_chv():
+    """Chwalinska — Хвалинска. Общее правило «ch → ч» на польском
+    сочетании ошибается."""
+    assert players_ru.ru("Maja Chwalinska") == "Мая Хвалинска"
+    assert "Чвалинска" not in players_ru.ru("Magda Chwalinska")
+
+
+def test_spanish_ce_stays_s():
+    """Cerundolo — Серундоло: у испанских имён «ce» читается «се»."""
+    assert players_ru.ru("Francisco Cerundolo") == "Франсиско Серундоло"
+
+
+def test_the_schedule_invites_instead_of_ordering():
+    """«Выбирайте» — приглашение, «нажмите» — указание. И про счёт после
+    матча человек раньше узнавал, только когда тот приходил."""
+    import inspect
+    src = inspect.getsource(ta.publish_schedule)
+    assert "Выбирайте матч" in src
+    assert "когда матч завершится" in src
+    assert "Нажмите на матч" not in src
