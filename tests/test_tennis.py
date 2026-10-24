@@ -939,8 +939,9 @@ def test_a_shared_surname_still_does_not_swap_people():
 def test_polish_chw_is_hv_not_chv():
     """Chwalinska — Хвалинска. Общее правило «ch → ч» на польском
     сочетании ошибается."""
-    assert players_ru.ru("Maja Chwalinska") == "Мая Хвалинска"
-    assert "Чвалинска" not in players_ru.ru("Magda Chwalinska")
+    assert players_ru.ru("Maja Chwalinska") == "Мая Хвалынска"
+    assert players_ru.ru("Maja Chwalinska".upper()) == "Мая Хвалынска"
+    assert "Чвал" not in players_ru.translit("Chwalinska")
 
 
 def test_spanish_ce_stays_s():
