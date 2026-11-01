@@ -5,6 +5,7 @@
 # RSS-лентам новостей, где браузерный заголовок обязателен.
 import html
 import logging
+import re
 from datetime import datetime, timezone
 import time
 
@@ -77,6 +78,36 @@ BIG_EVENTS = (
     "wuhan open", "guadalajara open", "united cup", "davis cup",
     "billie jean king cup",
 )
+
+
+# Шоу-корт зовут по-разному, но во всех языках это одно слово рядом с
+# «кортом»: Centre, Center, Central, Quadra Central, Stadium, Arena.
+MAIN_COURT = ("centre court", "center court", "court central",
+              "central court", "quadra central", "stadium", "arena",
+              "grandstand")
+
+# «Court 2» → «корт 2». Остальные названия оставляем как есть: за
+# «Glaubandich Court» в Вене не стоит ничего, что можно перевести.
+_COURT_NUMBER = re.compile(r"(?:court|cancha|quadra|pista)\s*(\d+)\s*$", re.I)
+
+
+def is_main_court(court: str) -> bool:
+    """Шоу-корт — тот, на который вещатель сажает комментатора"""
+    low = (court or "").strip().lower()
+    return any(key in low for key in MAIN_COURT)
+
+
+def court_ru(court: str) -> str:
+    """Название корта по-русски. Пусто — если корт неизвестен."""
+    name = (court or "").strip()
+    if not name:
+        return ""
+    if is_main_court(name):
+        return "центральный корт"
+    found = _COURT_NUMBER.search(name)
+    if found:
+        return f"корт {found.group(1)}"
+    return name
 
 
 def is_big(event) -> bool:
@@ -226,6 +257,10 @@ def _singles(data, tour: str, watched_only: bool = False):
                     "completed": bool(status.get("completed")),
                     "live": state == "in",
                     "date": match.get("date"),
+                    # Корт решает, будет ли комментарий: его кладут
+                    # сверху только на шоу-кортах, на дальних идёт
+                    # чистый сигнал — звук с корта.
+                    "court": ((match.get("venue") or {}).get("court") or ""),
                     "state": status.get("description") or "",
                 })
     return result

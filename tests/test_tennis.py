@@ -977,3 +977,42 @@ def test_namesake_is_not_found_in_the_news():
     import players_ru
     assert players_ru.first_known("Mirra Andreeva reaches the final") == "andreeva"
     assert players_ru.first_known("Erika Andreeva reaches the final") == ""
+
+
+# --- корт в строке расписания ------------------------------------------
+#
+# Комментатора вещатель сажает только на шоу-корт. На дальних идёт
+# чистый сигнал — звук с корта, мяч и судья, — и ради него теннис и
+# включают. Раньше читатель узнавал, куда попал, уже включив.
+
+def test_the_court_is_read_from_the_source():
+    import tennis_live
+    data = {"events": [{"name": "Erste Bank Open", "major": True,
+                        "groupings": [{"grouping": {"displayName": "Men's Singles"},
+                                       "competitions": [{
+                                           "id": "1",
+                                           "venue": {"court": "Glaubandich Court"},
+                                           "competitors": [{}, {}],
+                                           "status": {"type": {}}}]}]}]}
+    got = tennis_live._singles(data, "atp")
+    assert got[0]["court"] == "Glaubandich Court"
+
+
+def test_a_show_court_is_told_from_an_outside_one():
+    import tennis_live
+    for name in ("Centre Court", "Center Court", "Court Central",
+                 "Quadra Central", "Arthur Ashe Stadium"):
+        assert tennis_live.is_main_court(name), name
+    for name in ("Court 2", "IWB Court 1", "Glaubandich Court", ""):
+        assert not tennis_live.is_main_court(name), name
+
+
+def test_the_court_is_named_in_russian_where_there_is_a_name():
+    import tennis_live
+    assert tennis_live.court_ru("Centre Court") == "центральный корт"
+    assert tennis_live.court_ru("Court 2") == "корт 2"
+    assert tennis_live.court_ru("IWB Court 1") == "корт 1"
+    # За «Glaubandich» не стоит ничего переводимого — оставляем как есть,
+    # а не сочиняем «корт Глаубандих».
+    assert tennis_live.court_ru("Glaubandich Court") == "Glaubandich Court"
+    assert tennis_live.court_ru("") == ""
