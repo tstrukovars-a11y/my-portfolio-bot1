@@ -117,7 +117,7 @@ def test_early_morning_tomorrow_is_still_ours(monkeypatch):
         {"id": "done", "date": at(1), "completed": True, "sides": pair},
     ]
     monkeypatch.setattr(tennis_live, "_singles",
-                        lambda data, tour, big_only=False: matches)
+                        lambda data, tour, watched_only=False: matches)
     monkeypatch.setattr(tennis_live, "fetch_scoreboard",
                         lambda tour, force=False: asyncio.sleep(0, result={}))
 
@@ -294,7 +294,7 @@ def test_the_schedule_drops_undetermined_matches(monkeypatch):
          "sides": [_side("Andrey Rublev"), _side("")]},
     ]
     monkeypatch.setattr(tennis_live, "_singles",
-                        lambda data, tour, big_only=False: feed)
+                        lambda data, tour, watched_only=False: feed)
     monkeypatch.setattr(tennis_live, "fetch_scoreboard",
                         lambda tour, force=False: asyncio.sleep(0, result={}))
 
@@ -311,7 +311,7 @@ def test_the_time_check_looks_at_every_tournament():
     source = open("tennis_alerts.py", encoding="utf-8").read()
     start = source.index("async def refresh_times")
     block = source[start:start + 1400]
-    assert "big_only=False" in block, \
+    assert "watched_only=False" in block, \
         "сверка времени снова отбирает матчи по величине турнира"
 
 
@@ -957,3 +957,23 @@ def test_the_schedule_invites_instead_of_ordering():
     assert "Выбирайте матч" in src
     assert "когда матч завершится" in src
     assert "Нажмите на матч" not in src
+
+
+# --- однофамильцы ------------------------------------------------------
+#
+# «Erika Andreeva» проходила как первая двадцатка: сверка идёт по
+# фамилии, а «andreeva» стоит в списке ради Мирры. Из-за этого канал
+# начинал следить за турниром, который Татьяне не нужен.
+
+def test_namesake_is_not_the_top_player():
+    import players_ru
+    assert players_ru.is_top("Mirra Andreeva"), "Мирра выпала из двадцатки"
+    assert players_ru.is_top("M. Andreeva"), "инициал не должен отсекать Мирру"
+    assert not players_ru.is_top("Erika Andreeva"), "сестра засчитана как топ"
+    assert not players_ru.is_nash("Erika Andreeva"), "сестра засчитана как своя"
+
+
+def test_namesake_is_not_found_in_the_news():
+    import players_ru
+    assert players_ru.first_known("Mirra Andreeva reaches the final") == "andreeva"
+    assert players_ru.first_known("Erika Andreeva reaches the final") == ""

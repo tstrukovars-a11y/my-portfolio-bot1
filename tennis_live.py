@@ -58,14 +58,24 @@ MAX_MATCHES = 12         # длиннее списка сообщение ста
 # Уровень турнира. ESPN помечает «Шлемы» полем major, а тысячники — ничем,
 # поэтому их приходится знать по названиям. Список короткий: их всего
 # девять у мужчин и десять у женщин, и меняется он раз в несколько лет.
+#
+# Названия здесь полные, в два слова. Раньше стояли города — и «miami»
+# совпало внутри «American Tennis Open Miami», мелкого турнира, который
+# канал выдавал за мастерс. Город в названии не значит ничего: ITF-турнир
+# в Дубае зовётся так же, как чемпионат.
+#
+# Короткий список и не должен ловить всё: турнир попадает в ленту ещё и
+# по составу (has_top ниже), а на мастерсе состав топовый по определению.
+# Список — страховка на случай, если рейтинг не подтянулся.
 BIG_EVENTS = (
-    "indian wells", "bnp paribas", "miami", "monte-carlo", "monte carlo",
-    "madrid", "rome", "internazionali", "italian open",
-    "canadian", "national bank", "toronto", "montreal", "rogers cup",
-    "cincinnati", "western & southern", "shanghai", "paris masters",
-    "rolex paris", "atp finals", "wta finals", "nitto",
-    "doha", "qatar", "dubai", "beijing", "china open", "wuhan",
-    "guadalajara", "united cup", "davis cup", "billie jean king",
+    "indian wells", "bnp paribas", "miami open", "monte-carlo", "monte carlo",
+    "madrid open", "mutua madrid", "internazionali", "italian open",
+    "national bank open", "rogers cup", "canada masters",
+    "cincinnati open", "western & southern", "shanghai masters",
+    "paris masters", "rolex paris", "atp finals", "wta finals", "nitto",
+    "qatar totalenergies", "qatar open", "dubai duty free", "china open",
+    "wuhan open", "guadalajara open", "united cup", "davis cup",
+    "billie jean king cup",
 )
 
 
@@ -75,6 +85,32 @@ def is_big(event) -> bool:
         return True
     name = ((event or {}).get("name") or "").lower()
     return any(key in name for key in BIG_EVENTS)
+
+
+def has_top(event, tour: str) -> bool:
+    """Играет ли в турнире кто-то из сильнейших.
+
+    Списком названий турнир не определить: пятисотники вроде Токио, Вены
+    и Базеля в него не попадали, и канал их не видел вовсе — притом что
+    там играла первая двадцатка. Название ничего не говорит о составе,
+    а состав — говорит.
+
+    Сверяем именно по сильнейшим, а не по всему кругу своих. Свои есть
+    и в сетках, за которыми канал не следит: одна россиянка из третьей
+    сотни в Анголе — не повод вести оттуда ленту. Зато внутри турнира,
+    который уже взят, свои идут в анонс наравне с первой двадцаткой.
+    """
+    want = TOURS[tour]["singles"]
+    for grouping in (event or {}).get("groupings", []):
+        name = ((grouping.get("grouping") or {}).get("displayName") or "")
+        if name.lower() != want:
+            continue
+        for match in grouping.get("competitions", []):
+            for side in (match.get("competitors") or [])[:2]:
+                who = ((side.get("athlete") or {}).get("displayName") or "")
+                if players_ru.is_top(who):
+                    return True
+    return False
 
 
 _cache = {tour: {"at": 0.0, "data": None} for tour in TOURS}
@@ -151,16 +187,18 @@ def _score(left, right) -> str:
     return " ".join(f"{x}-{y}" for x, y in zip(a, b))
 
 
-def _singles(data, tour: str, big_only: bool = False):
+def _singles(data, tour: str, watched_only: bool = False):
     """Матчи одиночного разряда нужного тура с турниром и раундом.
 
-    big_only оставляет только «Шлемы» и тысячники: в календаре недели
-    обычно идут ещё два-три турнира поменьше, и без отбора лента канала
-    состоит из фамилий, которых никто не знает.
+    watched_only оставляет турниры, за которыми канал следит: «Шлемы» и
+    тысячники — всегда, остальные — когда там играет кто-то из первой
+    двадцатки. Без отбора лента состоит из фамилий, которых
+    никто не знает; с отбором по одному лишь названию из неё выпадали
+    Токио, Вена и Базель.
     """
     result = []
     for event in (data or {}).get("events", []):
-        if big_only and not is_big(event):
+        if watched_only and not (is_big(event) or has_top(event, tour)):
             continue
         tournament = event.get("name") or ""
         for grouping in event.get("groupings", []):

@@ -243,7 +243,7 @@ async def _today(tour: str):
 
     data = await tennis_live.fetch_scoreboard(tour)
     out = []
-    for match in tennis_live._singles(data, tour, big_only=True):
+    for match in tennis_live._singles(data, tour, watched_only=True):
         if match.get("completed") or not match.get("id"):
             continue
         # Матч без второго игрока анонсировать нечем: ни строки, ни
@@ -365,7 +365,13 @@ async def publish_schedule(bot: Bot, chat: int, thread=None) -> str:
         # Из полутора сотен матчей «Шлема» в анонс идут те, где играют свои
         # или первая двадцатка: остальные фамилии читателю ничего не
         # говорят, а кнопок под постом всё равно ограниченное число.
-        picked = [m for m in day if _notable(m)] or day
+        # Раньше здесь стоял запасной ход «или все матчи дня»: пока
+        # турниры отбирались по названию, в списке так и так были одни
+        # крупные. Теперь турнир попадает в ленту из-за состава, и этот
+        # ход выпускал бы в канал незнакомые фамилии.
+        picked = [m for m in day if _notable(m)]
+        if not picked:
+            continue
         matches = sorted(picked[:MAX_MATCHES],
                          key=lambda m: (_event(m), m.get("date") or ""))
         rest = len(picked) - len(matches)
@@ -461,8 +467,12 @@ async def _finished(tour: str, day):
     shift = await _shift()
     data = await tennis_live.fetch_scoreboard(tour)
     out = []
-    for match in tennis_live._singles(data, tour, big_only=True):
+    for match in tennis_live._singles(data, tour, watched_only=True):
         if not match.get("completed"):
+            continue
+        # Турнир попал в ленту из-за одного-двух известных имён; остальные
+        # его матчи в таблицу итогов не идут.
+        if not _notable(match):
             continue
         when = _starts(match)
         if not when or (when + shift).date() != day:
@@ -1037,8 +1047,8 @@ async def find_events(tour: str):
         return []
 
     out = []
-    for match in tennis_live._singles(data, tour, big_only=True):
-        if not match.get("id") or not _ready(match):
+    for match in tennis_live._singles(data, tour, watched_only=True):
+        if not match.get("id") or not _ready(match) or not _notable(match):
             continue
         when = _starts(match)
         if not when or (when + shift).date() != today:
@@ -1913,7 +1923,7 @@ async def refresh_times(bot: Bot = None) -> int:
             # а здесь он терял матчи, на которые уже подписались. Время у
             # них не обновлялось, отмена не замечалась — напоминание
             # молчало, хотя запись в базе была.
-            for match in tennis_live._singles(data, tour, big_only=False):
+            for match in tennis_live._singles(data, tour, watched_only=False):
                 if not match.get("id"):
                     continue
                 if _cancelled(match):
@@ -1953,7 +1963,7 @@ async def refresh_times(bot: Bot = None) -> int:
 async def _find_match(tour: str, match_id: str):
     """Матч по номеру в свежей табличке. None — если его там уже нет."""
     data = await tennis_live.fetch_scoreboard(tour)
-    for match in tennis_live._singles(data, tour, big_only=False):
+    for match in tennis_live._singles(data, tour, watched_only=False):
         if str(match.get("id")) == str(match_id):
             return match
     return None

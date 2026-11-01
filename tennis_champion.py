@@ -299,8 +299,19 @@ async def _seen() -> set:
 
 
 async def _remember(keys) -> None:
-    kept = list(await _seen() | set(keys))[-SEEN_MEMORY:]
-    await database.set_setting(SEEN_KEY, ",".join(kept))
+    """Запомнить, о каких финалах уже писали.
+
+    Раньше здесь обрезалось множество: `list(set)[-40:]`. У множества нет
+    порядка, и какие сорок ключей переживут обрезку — решал случай. Из
+    памяти мог выпасть свежий финал, и бот поздравлял с тем же титулом
+    второй раз. Теперь порядок хранится как есть, и уходит самое старое.
+    """
+    raw = await database.get_setting(SEEN_KEY) or ""
+    kept = [x for x in raw.split(",") if x]
+    for key in keys:
+        if key not in kept:
+            kept.append(key)
+    await database.set_setting(SEEN_KEY, ",".join(kept[-SEEN_MEMORY:]))
 
 
 async def finals(tour: str):
@@ -311,7 +322,7 @@ async def finals(tour: str):
         logging.warning(f"Финалы {tour}: табличка не пришла ({e})")
         return []
     out = []
-    for match in tennis_live._singles(data, tour, big_only=False):
+    for match in tennis_live._singles(data, tour, watched_only=False):
         if not match.get("id") or not match.get("completed"):
             continue
         if not is_final(match):

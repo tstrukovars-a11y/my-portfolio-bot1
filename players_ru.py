@@ -465,6 +465,34 @@ _TOP = {
 }
 
 
+# Фамилии, которые в туре носят двое, и второй — не тот, ради кого
+# ведётся лента. Мирра Андреева — первая двадцатка; Эрика её старшая
+# сестра, играет ниже, и по одной фамилии они неразличимы. Из-за этого
+# в ленту попадал турнир, за которым канал не следит.
+#
+# Проверяем имя, а не только фамилию: ключ — фамилия, значение — те
+# имена, ради которых фамилия и стоит в списках.
+_NAMESAKES = {
+    "andreeva": {"mirra"},
+}
+
+
+def _namesake_ok(name: str, key: str) -> bool:
+    """Тот ли это однофамилец. Для остальных фамилий — всегда да."""
+    want = _NAMESAKES.get(key)
+    if not want:
+        return True
+    parts = (name or "").replace(".", " ").lower().split()[:-1]
+    for part in parts:
+        if part in want:
+            return True
+        # «М. Андреева» в кнопке сокращена до инициала, и отбрасывать
+        # её из-за этого нельзя.
+        if len(part) == 1 and any(w.startswith(part) for w in want):
+            return True
+    return False
+
+
 # Имена, где фамилия стоит первой: сверять надо по первому слову.
 _SURNAME_FIRST = {"zheng", "bu", "wang", "zhang", "li", "sun", "yuan",
                   "shang", "wu", "zhu", "yan", "xu", "gao", "lin",
@@ -513,12 +541,13 @@ def add_nash(name: str):
 
 
 def is_nash(name: str) -> bool:
-    return _key(name) in _NASHI
+    key = _key(name)
+    return key in _NASHI and _namesake_ok(name, key)
 
 
 def is_top(name: str) -> bool:
     key = _key(name)
-    return key in (_LIVE_TOP or _TOP)
+    return key in (_LIVE_TOP or _TOP) and _namesake_ok(name, key)
 
 
 def short(name: str) -> str:
@@ -560,6 +589,13 @@ def first_known(text: str) -> str:
     """
     low = (text or "").lower()
     for key in sorted(_NASHI | (_LIVE_TOP or _TOP), key=len, reverse=True):
-        if re.search(rf"\b{re.escape(key)}\b", low):
-            return key
+        if not re.search(rf"\b{re.escape(key)}\b", low):
+            continue
+        # Однофамильцы: в заголовке должно стоять то имя, ради которого
+        # фамилия попала в список.
+        want = _NAMESAKES.get(key)
+        if want and not any(re.search(rf"\b{re.escape(w)}\b", low)
+                            for w in want):
+            continue
+        return key
     return ""
