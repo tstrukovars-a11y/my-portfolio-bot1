@@ -337,17 +337,24 @@ async def publish(bot: Bot, chat: int, thread=None) -> str:
     """Пост о чемпионе — с фотографией, если она нашлась"""
     seen = await _seen()
     posted, fresh = 0, []
+    # Счётчики ради ответа на команду. «Сыгранных финалов нет» говорилось
+    # и тогда, когда финал был, но о нём уже написали, — и это две разные
+    # новости для того, кто пришёл выяснять, почему поста не было.
+    found, old = 0, 0
 
     for tour in ("wta", "atp"):
         for match in await finals(tour):
+            found += 1
             key = f"{tour}:{match['id']}"
             if key in seen:
+                old += 1
                 continue
             text = await champion_text(match, tour)
             if not text:
                 continue
 
             win = next(s for s in match["sides"] if s.get("winner"))
+            lose = next((s for s in match["sides"] if not s.get("winner")), None)
             photo = PHOTO.format(id=_athlete_id(win)) if _athlete_id(win) else ""
             rows = [[InlineKeyboardButton(
                 text=f"🗓 Сетка {tennis_live.TOURS[tour]['title']}",
@@ -376,6 +383,20 @@ async def publish(bot: Bot, chat: int, thread=None) -> str:
                 continue
             fresh.append(key)
             posted += 1
+
+            # Слова финалистов — вторым сообщением, а не хвостом первого:
+            # подпись под фотографией обрывается на тысяче знаков, и
+            # цитата обрывалась бы вместе с ней.
+            try:
+                import tennis_speech
+                said = await tennis_speech.block(
+                    tour, [_name(win), _name(lose) if lose else ""])
+                if said:
+                    await bot.send_message(chat, said,
+                                           message_thread_id=thread,
+                                           disable_web_page_preview=True)
+            except Exception as e:
+                logging.warning(f"Слова финалистов не вышли: {e}")
             # Копию — тем, кто выбрал чемпионов: один пост в неделю на
             # турнир, и ради него человек и отмечал этот вид.
             try:
@@ -387,7 +408,14 @@ async def publish(bot: Bot, chat: int, thread=None) -> str:
 
     if fresh:
         await _remember(fresh)
-    return f"чемпионов: {posted}" if posted else "сыгранных финалов нет"
+    if posted:
+        return f"чемпионов: {posted}"
+    if not found:
+        return "сыгранных финалов в табло нет"
+    if old == found:
+        return f"финалов в табло: {found}, обо всех уже написано"
+    return (f"финалов в табло: {found}, новых {found - old}, "
+            f"но пост не собрался — смотрите логи")
 
 
 @router.message(F.text.startswith("/tennis_champion"))
