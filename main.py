@@ -31,6 +31,7 @@ import books_seed
 import tennis_alerts
 import tennis_champion
 import tennis_highlights
+import tg_watch
 import art_channel
 import art_market
 import banners
@@ -651,6 +652,7 @@ async def main():
     dp.include_router(tennis_alerts.router)
     dp.include_router(tennis_champion.router)
     dp.include_router(tennis_highlights.router)
+    dp.include_router(tg_watch.router)
     dp.include_router(weather.router)
     dp.include_router(book_find.router)
     dp.include_router(invite_card.router)
@@ -702,6 +704,7 @@ async def main():
     asyncio.create_task(digest.scheduler(bot))
     asyncio.create_task(tennis_alerts.alerts_scheduler(bot))
     asyncio.create_task(tennis_rank.scheduler())
+    asyncio.create_task(tg_watch.scheduler(bot))
     asyncio.create_task(checklist.scheduler(bot))
 
     # Меню собирается синхронно и в базу сходить не может, поэтому ссылку на
