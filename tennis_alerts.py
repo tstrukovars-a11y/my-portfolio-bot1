@@ -378,6 +378,9 @@ async def publish_schedule(bot: Bot, chat: int, thread=None) -> str:
 
         lines = [f"🎾 <b>{tennis_live.TOURS[tour]['title']} — сегодня</b>"]
         rows = []
+        # Есть ли в списке хоть один дальний корт: от этого зависит,
+        # нужна ли строка про звук под списком.
+        quiet = False
         # Матчи сгруппированы по турниру: без него список читается как
         # набор фамилий, а турнир — половина того, ради чего смотрят.
         current = None
@@ -404,6 +407,8 @@ async def publish_schedule(bot: Bot, chat: int, thread=None) -> str:
             # должен стоять там же.
             sound = (court
                      and not tennis_live.is_main_court(m.get("court") or ""))
+            if sound:
+                quiet = True
             lines.append(f"{clock} · {html.escape(_with_flags(m))}"
                          + (f" · <i>{html.escape(rnd)}</i>" if rnd else "")
                          + (f" · {html.escape(court)}" if court else "")
@@ -412,6 +417,13 @@ async def publish_schedule(bot: Bot, chat: int, thread=None) -> str:
                 text=f"🔔 {title[:38]}", callback_data=f"tmatch_{tour}_{m['id']}")])
 
         lines.append("")
+        # Строка под списком и пометка на самой строке матча пока стоят
+        # обе: посмотрим в канале, что из этого читается, и уже тогда
+        # решим, убирать ли одно.
+        if quiet:
+            lines.append("На кортах, кроме центрального, идёт только звук "
+                         "с корта, без комментария.")
+            lines.append("")
         skipped = len(day) - len(picked)
         if rest:
             lines.append(f"И ещё {rest} {_matches_word(rest)} с участием "
