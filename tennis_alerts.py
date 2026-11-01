@@ -378,9 +378,6 @@ async def publish_schedule(bot: Bot, chat: int, thread=None) -> str:
 
         lines = [f"🎾 <b>{tennis_live.TOURS[tour]['title']} — сегодня</b>"]
         rows = []
-        # Есть ли в списке хоть один дальний корт: от этого зависит,
-        # нужна ли строка про звук.
-        quiet = False
         # Матчи сгруппированы по турниру: без него список читается как
         # набор фамилий, а турнир — половина того, ради чего смотрят.
         current = None
@@ -402,21 +399,19 @@ async def publish_schedule(bot: Bot, chat: int, thread=None) -> str:
             # корта. Читатель решает, что ему включать, до того как
             # потратит время.
             court = tennis_live.court_ru(m.get("court") or "")
-            if court and not tennis_live.is_main_court(m.get("court") or ""):
-                quiet = True
+            # Сказано на самой строке, а не сноской под списком: человек
+            # читает строку того матча, который его занимает, и ответ
+            # должен стоять там же.
+            sound = (court
+                     and not tennis_live.is_main_court(m.get("court") or ""))
             lines.append(f"{clock} · {html.escape(_with_flags(m))}"
                          + (f" · <i>{html.escape(rnd)}</i>" if rnd else "")
-                         + (f" · {html.escape(court)}" if court else ""))
+                         + (f" · {html.escape(court)}" if court else "")
+                         + (" · только звук с корта" if sound else ""))
             rows.append([InlineKeyboardButton(
                 text=f"🔔 {title[:38]}", callback_data=f"tmatch_{tour}_{m['id']}")])
 
         lines.append("")
-        if quiet:
-            # Утверждать, что комментария не будет, мы не можем: дорожку
-            # кладёт вещатель, и у каждого свои корты. Поэтому «обычно».
-            lines.append("На дальних кортах комментария обычно нет — "
-                         "только звук с корта.")
-            lines.append("")
         skipped = len(day) - len(picked)
         if rest:
             lines.append(f"И ещё {rest} {_matches_word(rest)} с участием "
