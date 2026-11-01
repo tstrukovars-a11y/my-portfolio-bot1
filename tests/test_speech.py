@@ -83,3 +83,46 @@ def test_the_original_stays_even_without_a_translation(monkeypatch):
     monkeypatch.setattr(ts, "_ru", silent)
     out = asyncio.run(ts.block("wta", ["Diana Shnaider"]))
     assert "No regrets at all." in out
+
+
+# --- речь с церемонии --------------------------------------------------
+#
+# На сайте тура речь напечатана целиком, абзацами. По газетному обычаю
+# каждый следующий абзац открывается кавычкой, а закрывается только
+# последний — и разбор по парам кавычек на таком тексте сбивается:
+# продолжение речи попадает в «слова автора».
+
+CEREMONY = (
+    'Four of her six titles have now come on hard courts, including her '
+    'third WTA 500 crown in Tokyo today. "Firstly, I would like to '
+    'congratulate Leylah on an amazing week," Shnaider said during the '
+    'on-court presentation ceremony. "Congrats to you, your coach, your '
+    'family back home. "I also want to thank my coach, who is here with '
+    'me. It means a lot." The victory is projected to lift Shnaider back '
+    'to a career-high No. 11 in the WTA PIF Rankings, her best position '
+    'since the summer of last year, when she reached the fourth round at '
+    'Wimbledon and then won in Budapest.'
+)
+
+
+def test_the_whole_speech_comes_through_not_the_first_line():
+    said = ts.speech_of(CEREMONY, "Shnaider", ["Leylah Fernandez"])
+    assert "Firstly, I would like to congratulate Leylah" in said
+    assert "Congrats to you, your coach" in said, "второй абзац потерян"
+    assert "I also want to thank my coach" in said, \
+        "третий абзац принят за слова автора"
+
+
+def test_the_speech_stops_where_the_article_resumes():
+    said = ts.speech_of(CEREMONY, "Shnaider", ["Leylah Fernandez"])
+    assert "projected to lift" not in said, "текст заметки попал в речь"
+    assert "Wimbledon" not in said
+
+
+def test_the_comma_that_holds_the_attribution_becomes_a_full_stop():
+    said = ts.speech_of(CEREMONY, "Shnaider")
+    assert "an amazing week. Congrats" in said
+
+
+def test_nothing_for_the_one_who_was_not_quoted():
+    assert ts.speech_of(CEREMONY, "Fernandez", ["Diana Shnaider"]) == ""

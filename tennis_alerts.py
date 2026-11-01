@@ -795,8 +795,14 @@ DRAMA_PROMPT = (
 )
 
 
-async def _reason_ru(english: str, prompt: str = None) -> str:
-    """Пересказ по-русски. Пусто — значит, сказать нечего."""
+async def _reason_ru(english: str, prompt: str = None,
+                     limit: int = None, max_tokens: int = 400) -> str:
+    """Пересказ по-русски. Пусто — значит, сказать нечего.
+
+    Длину можно поднять: пересказ события укладывается в абзац, а речь
+    с церемонии — нет, и обрезанная на полуслове благодарность тренеру
+    хуже, чем её отсутствие.
+    """
     if not english.strip():
         return ""
     try:
@@ -808,7 +814,7 @@ async def _reason_ru(english: str, prompt: str = None) -> str:
         return ""
     try:
         answer = await client.messages.create(
-            model="claude-haiku-4-5-20251001", max_tokens=400,
+            model="claude-haiku-4-5-20251001", max_tokens=max_tokens,
             system=prompt or REASON_PROMPT,
             messages=[{"role": "user", "content": english[:6000]}])
         text = (answer.content[0].text or "").strip().strip('"«»')
@@ -827,7 +833,7 @@ async def _reason_ru(english: str, prompt: str = None) -> str:
     # здесь, а не ещё одной просьбой в промпте.
     lines = [re.sub(r"^\s*[-–—•*\d.)]+\s*", "", x).strip()
              for x in text.splitlines() if x.strip()]
-    return "\n".join(lines)[:REASON_LIMIT]
+    return "\n".join(lines)[:limit or REASON_LIMIT]
 
 
 def _event_kind(match) -> str:
