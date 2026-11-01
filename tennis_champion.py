@@ -400,10 +400,12 @@ async def publish(bot: Bot, chat: int, thread=None) -> str:
                 import tennis_speech
                 said = await tennis_speech.block(
                     tour, [_name(win), _name(lose) if lose else ""])
+                surname = tennis_speech._surname(_name(win))
                 link = ""
                 if tour == "wta":
-                    link = await tennis_speech.report_url(
-                        tennis_speech._surname(_name(win)))
+                    link = await tennis_speech.report_url(surname)
+                if not link:
+                    link = await tennis_speech.news_link(tour, surname)
                 if said or link:
                     tail = f"\n\n{link}" if link else ""
                     await bot.send_message(chat, (said or REPORT) + tail,

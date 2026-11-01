@@ -191,6 +191,22 @@ async def report_url(surname: str) -> str:
     return ""
 
 
+async def news_link(tour: str, surname: str) -> str:
+    """Адрес заметки ESPN про игрока — запасной источник карточки.
+
+    У ATP свой сайт закрыт: на любой запрос приходит 403. Зато у ESPN
+    есть и заметка о финале, и картинка к ней, размеченная для показа.
+    Карточка выйдет скромнее, чем у тура, но с фотографией матча, а не
+    со студийным портретом.
+    """
+    import tennis_alerts
+    low = surname.lower()
+    for headline, description, link, _id in await tennis_alerts._news(tour):
+        if link and low in f"{headline} {description}".lower():
+            return link
+    return ""
+
+
 async def _wta_report(surname: str) -> str:
     """Текст свежей заметки WTA про этого игрока. Пусто — если нет."""
     url = await report_url(surname)
