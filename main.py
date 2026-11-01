@@ -30,6 +30,7 @@ import travel_spots
 import books_seed
 import tennis_alerts
 import tennis_champion
+import tennis_highlights
 import art_channel
 import art_market
 import banners
@@ -649,6 +650,7 @@ async def main():
     dp.include_router(books_seed.router)
     dp.include_router(tennis_alerts.router)
     dp.include_router(tennis_champion.router)
+    dp.include_router(tennis_highlights.router)
     dp.include_router(weather.router)
     dp.include_router(book_find.router)
     dp.include_router(invite_card.router)

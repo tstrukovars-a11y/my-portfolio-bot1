@@ -2071,6 +2071,26 @@ async def _events_to_channel(bot: Bot) -> None:
         logging.warning(f"События в канал не ушли: {e}")
 
 
+async def _highlights_to_channel(bot: Bot) -> None:
+    """Официальные нарезки матчей, если канал задан.
+
+    Живого матча в открытом доступе нет, а нарезка есть — и это
+    единственное видео, которое можно дать читателю, ничего не нарушая.
+    Ночью придерживаем, как и события: нарезка подождёт до утра, а
+    уведомление в три часа ночи — нет.
+    """
+    try:
+        import digest
+        import tennis_highlights
+        if await digest.night_hold():
+            return
+        chat, thread = await digest._target()
+        if chat:
+            await tennis_highlights.publish(bot, chat, thread)
+    except Exception as e:
+        logging.warning(f"Нарезки в канал не ушли: {e}")
+
+
 async def _champion_to_channel(bot: Bot) -> None:
     """Пост о победителе турнира, если канал задан"""
     try:
@@ -2110,6 +2130,11 @@ async def alerts_scheduler(bot: Bot):
             # а пост о них тянет рейтинг и карточку из Википедии.
             if ticks % 15 == 7:
                 await _champion_to_channel(bot)
+            # Нарезки — раз в сорок минут: тур выкладывает их пачкой
+            # через час-другой после конца игрового дня, и чаще
+            # смотреть ленту незачем.
+            if ticks % 20 == 11:
+                await _highlights_to_channel(bot)
             ticks += 1
 
             lead = await _lead()
