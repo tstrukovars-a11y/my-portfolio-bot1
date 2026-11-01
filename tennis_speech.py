@@ -164,14 +164,16 @@ async def _page(url: str) -> str:
     return text
 
 
-async def _wta_report(surname: str) -> str:
-    """Текст свежей заметки WTA про этого игрока. Пусто — если нет."""
-    listing = await _page(WTA_NEWS)
-    if not listing:
-        return ""
-    # Адреса остаются в тексте страницы после снятия разметки не всегда,
-    # поэтому список берём из самой разметки — отдельным запросом её не
-    # тянем, она уже в кэше в виде текста. Проще поискать ссылки заново.
+async def report_url(surname: str) -> str:
+    """Адрес свежей заметки WTA про этого игрока. Пусто — если нет.
+
+    Адрес нужен не только ради текста. Телеграм, получив ссылку,
+    рисует превью по разметке страницы: заголовок и og:image — ту самую
+    фотографию, которую издание само пометило как «эту можно
+    показывать». Для чемпионки это снимок с тарелкой в руках, и взять
+    его больше негде: съёмка агентская, и перепост был бы чужой
+    картинкой под своим постом.
+    """
     try:
         import httpx
         async with httpx.AsyncClient(timeout=25, follow_redirects=True,
@@ -185,8 +187,14 @@ async def _wta_report(surname: str) -> str:
     low = surname.lower()
     for path in re.findall(r'href="(/news/\d+/[a-z0-9-]+)"', html_text):
         if low in path:
-            return await _page(WTA_SITE + path)
+            return WTA_SITE + path
     return ""
+
+
+async def _wta_report(surname: str) -> str:
+    """Текст свежей заметки WTA про этого игрока. Пусто — если нет."""
+    url = await report_url(surname)
+    return await _page(url) if url else ""
 
 
 def speech_of(text: str, surname: str, others=()) -> str:

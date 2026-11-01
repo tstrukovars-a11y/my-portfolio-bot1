@@ -53,6 +53,7 @@ WIKI_UA = ("AkcentBot/1.0 "
            "(+https://github.com/tstrukovars-a11y/my-portfolio-bot1)")
 
 HEAD = "🏆 <b>Чемпион</b>"
+REPORT = "📰 <b>Репортаж с финала</b>"
 WISH = "Поздравляем — и новых побед."
 
 
@@ -384,17 +385,30 @@ async def publish(bot: Bot, chat: int, thread=None) -> str:
             fresh.append(key)
             posted += 1
 
-            # Слова финалистов — вторым сообщением, а не хвостом первого:
-            # подпись под фотографией обрывается на тысяче знаков, и
+            # Слова финалистов и ссылка на репортаж — вторым сообщением.
+            # Подпись под фотографией обрывается на тысяче знаков, и
             # цитата обрывалась бы вместе с ней.
+            #
+            # Превью здесь включено намеренно. По ссылке телеграм рисует
+            # карточку по разметке страницы, а в ней og:image — снимок,
+            # который издание само пометило как пригодный для показа.
+            # Для чемпионки это фотография с трофеем в руках, и взять её
+            # больше негде: съёмка агентская, перепост был бы чужой
+            # картинкой под своим постом. Карточка же ведёт к источнику
+            # и подписана его именем.
             try:
                 import tennis_speech
                 said = await tennis_speech.block(
                     tour, [_name(win), _name(lose) if lose else ""])
-                if said:
-                    await bot.send_message(chat, said,
+                link = ""
+                if tour == "wta":
+                    link = await tennis_speech.report_url(
+                        tennis_speech._surname(_name(win)))
+                if said or link:
+                    tail = f"\n\n{link}" if link else ""
+                    await bot.send_message(chat, (said or REPORT) + tail,
                                            message_thread_id=thread,
-                                           disable_web_page_preview=True)
+                                           disable_web_page_preview=not link)
             except Exception as e:
                 logging.warning(f"Слова финалистов не вышли: {e}")
             # Копию — тем, кто выбрал чемпионов: один пост в неделю на
