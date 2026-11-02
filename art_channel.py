@@ -183,7 +183,8 @@ async def attach_buttons(bot: Bot, message: Message, work_id: int,
     цену спросить не у кого, а понять это по тишине невозможно.
     """
     username = await database.get_setting("bot_username")
-    rows = try_row(work_id, username or "")
+    rows = try_row(work_id, username or "",
+                   await database.get_setting(SITE_KEY) or "")
     if not rows:
         logging.warning("Канал картин: имя бота не известно — кнопок не будет")
         return False
@@ -318,7 +319,14 @@ def _width_kb(work_id: int):
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def try_row(work_id: int, username: str):
+# Страница художника: биография, выставки, документы, весь каталог.
+# Под постом она отвечает на вопрос, который подписчик не задаёт вслух, —
+# «а кто это вообще». Адрес в настройке, а не в коде: сайт переедет на
+# свой домен, и менять его придётся одной командой, без выкладки.
+SITE_KEY = "art_site_url"
+
+
+def try_row(work_id: int, username: str, site: str = ""):
     """Кнопки под постом в канале.
 
     Цены на посте нет намеренно. Прайс живёт отдельно, у автора: цена,
@@ -329,12 +337,16 @@ def try_row(work_id: int, username: str):
     if not username:
         return None
     base = f"https://t.me/{username.lstrip('@')}?start="
-    return [
+    rows = [
         [InlineKeyboardButton(text="🖼 Примерить у себя",
                               url=f"{base}try-{work_id}")],
         [InlineKeyboardButton(text="💬 Запросить цену",
                               url=f"{base}ask-{work_id}")],
     ]
+    if site:
+        rows.append([InlineKeyboardButton(text="🌐 Об авторе и выставки",
+                                          url=site)])
+    return rows
 
 
 @router.message(F.text.regexp(r"^/start\s+ask-"))
@@ -709,6 +721,39 @@ TAG_HELP = (
 )
 
 
+@router.message(F.text.regexp(r"^/art_site"))
+async def art_site(message: Message):
+    """Адрес страницы художника для кнопки под постом"""
+    if not config.is_admin(message.from_user.id):
+        return
+    parts = (message.text or "").split(maxsplit=1)
+    current = await database.get_setting(SITE_KEY) or ""
+
+    if len(parts) < 2:
+        shown = f"<code>{html.escape(current)}</code>" if current else "не задан"
+        await message.answer(
+            f"🌐 <b>Сайт художника</b>\n\n{shown}\n\n"
+            "Задать: <code>/art_site https://…</code>\n"
+            "Снять: <code>/art_site нет</code>\n\n"
+            "Кнопка встаёт третьей под новыми постами. У старых она "
+            "появится, когда пост поправят в канале.")
+        return
+
+    value = parts[1].strip()
+    if value.lower() in ("нет", "off", "-"):
+        await database.set_setting(SITE_KEY, "")
+        await message.answer("✅ Кнопка сайта снята")
+        return
+    if not value.startswith("https://"):
+        await message.answer("❌ Нужен адрес, начиная с https://")
+        return
+    await database.set_setting(SITE_KEY, value)
+    await message.answer(
+        f"✅ Сайт: <code>{html.escape(value)}</code>\n\n"
+        "Кнопка встанет под новыми постами. Чтобы она появилась у "
+        "старого — откройте пост в канале, поставьте точку и сохраните.")
+
+
 @router.message(F.text.regexp(r"^/art_tags"))
 async def tags_help(message: Message):
     if not config.is_admin(message.from_user.id):
@@ -769,7 +814,8 @@ async def publish_to_journal(bot: Bot, work_id: int) -> str:
     username = await database.get_setting("bot_username")
     rows = []
     if username and not sold:
-        rows = try_row(work_id, username)
+        rows = try_row(work_id, username,
+                       await database.get_setting(SITE_KEY) or "")
     club = await digest._club_row("art", bot)
     if club:
         rows.append(club)

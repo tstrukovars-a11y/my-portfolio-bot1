@@ -535,3 +535,18 @@ def test_the_listing_reaches_the_owner():
     source = open("art_market.py", encoding="utf-8").read()
     body = source[source.index("async def send("):]
     assert "config.ADMIN_ID" in body[:2000]
+
+
+def test_the_site_button_appears_only_when_the_address_is_set():
+    """Третья кнопка ведёт на страницу художника. Пустая настройка —
+    кнопки нет: ссылка в никуда хуже её отсутствия."""
+    import art_channel as ac
+    rows = ac.try_row(7, "mybot")
+    assert len(rows) == 2, "кнопка сайта появилась без адреса"
+
+    rows = ac.try_row(7, "mybot", "https://example.com/artist")
+    assert len(rows) == 3
+    assert rows[2][0].url == "https://example.com/artist"
+    # Прежние кнопки на месте и в том же порядке.
+    assert "try-7" in rows[0][0].url
+    assert "ask-7" in rows[1][0].url
