@@ -169,6 +169,19 @@ NO_RIGHTS = (
 )
 
 
+def _same_markup(current, rows) -> bool:
+    """Те же кнопки, что уже стоят под постом?
+
+    Сравниваем по подписи и адресу: телеграм на попытку поставить то же
+    самое отвечает ошибкой, и без сверки каждая правка поста в канале
+    кончалась бы записью в журнале.
+    """
+    was = [(b.text, b.url) for row in
+           ((current.inline_keyboard if current else []) or []) for b in row]
+    now = [(b.text, b.url) for row in (rows or []) for b in row]
+    return was == now
+
+
 async def attach_buttons(bot: Bot, message: Message, work_id: int,
                          title: str) -> bool:
     """Повесить кнопки под пост, который написан рукой.
@@ -188,6 +201,8 @@ async def attach_buttons(bot: Bot, message: Message, work_id: int,
     if not rows:
         logging.warning("Канал картин: имя бота не известно — кнопок не будет")
         return False
+    if _same_markup(message.reply_markup, rows):
+        return True
     try:
         await bot.edit_message_reply_markup(
             chat_id=message.chat.id, message_id=message.message_id,
@@ -273,9 +288,16 @@ async def fix_post(message: Message, bot: Bot = None):
     await database.art_set(work_id, **fields)
     logging.info(f"🎨 Канал картин: поправлена работа #{work_id}")
 
-    # Правка — второй шанс для кнопок: если в первый раз у бота не было
-    # права, владелица его выдала и поправила пост именно затем.
-    if bot is not None and not message.reply_markup:
+    # Правка — второй шанс для кнопок. Раньше здесь стояло условие «если
+    # кнопок нет вовсе», и оно закрывало единственную дорогу к уже
+    # вышедшим постам: набор кнопок меняется — добавилась ссылка на
+    # страницу художника, — а у поста с двумя старыми кнопками третья не
+    # появлялась никогда.
+    #
+    # Теперь кнопки пересобираются и сверяются с теми, что стоят. Те же
+    # самые — ничего не трогаем, телеграм на такую правку отвечает
+    # ошибкой.
+    if bot is not None:
         await attach_buttons(bot, message, work_id, data["title"])
 
 

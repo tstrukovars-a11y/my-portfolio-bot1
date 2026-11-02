@@ -369,10 +369,24 @@ def test_an_edit_is_a_second_chance_for_the_buttons():
 
 
 def test_buttons_are_not_redrawn_when_already_there():
-    """Иначе каждая правка текста дёргала бы Telegram впустую."""
+    """Иначе каждая правка текста дёргала бы Telegram впустую.
+
+    Раньше это держалось условием «правим, только если кнопок нет
+    вовсе». Условие заодно закрывало дорогу к старым постам: набор
+    кнопок меняется, а у вышедшего поста новая не появлялась никогда.
+    Теперь кнопки пересобираются и сверяются с теми, что стоят.
+    """
+    import art_channel as ac
+    from aiogram.types import InlineKeyboardMarkup
+
+    rows = ac.try_row(7, "mybot")
+    same = InlineKeyboardMarkup(inline_keyboard=rows)
+    assert ac._same_markup(same, rows), "лишняя правка поста в канале"
+
     source = open("art_channel.py", encoding="utf-8").read()
-    body = source[source.index("async def fix_post"):]
-    assert "not message.reply_markup" in body[:body.index("# ---", 10)]
+    body = source[source.index("async def attach_buttons"):]
+    assert "_same_markup" in body[:body.index("@router")], \
+        "attach_buttons больше не сверяет кнопки — Telegram будет ругаться"
 
 
 # --- из витрины в журнал -----------------------------------------------
@@ -550,3 +564,19 @@ def test_the_site_button_appears_only_when_the_address_is_set():
     # Прежние кнопки на месте и в том же порядке.
     assert "try-7" in rows[0][0].url
     assert "ask-7" in rows[1][0].url
+
+
+def test_an_old_post_picks_up_a_new_button():
+    """Набор кнопок меняется. Пока правка трогала только посты совсем
+    без кнопок, у вышедших раньше третья не появлялась никогда."""
+    import art_channel as ac
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+    two = InlineKeyboardMarkup(inline_keyboard=ac.try_row(7, "mybot"))
+    three = ac.try_row(7, "mybot", "https://example.com/artist")
+
+    assert ac._same_markup(two, ac.try_row(7, "mybot")), \
+        "одинаковые кнопки приняты за разные — лишняя правка поста"
+    assert not ac._same_markup(two, three), \
+        "новая кнопка не замечена, старый пост её не получит"
+    assert ac._same_markup(None, None)
