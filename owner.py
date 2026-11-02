@@ -51,6 +51,7 @@ def _rows(pairs) -> list:
 
 def menu_kb() -> InlineKeyboardMarkup:
     rows = _rows([
+        ("📋 Что выйдет сегодня", "own_today"),
         ("📣 Опубликовать сейчас", "own_pub"),
         ("🎾 Теннис", "own_tennis"),
         ("📂 Материалы: править и удалять", "admin_content"),
@@ -113,6 +114,79 @@ async def open_menu(call: CallbackQuery):
         return
     await call.answer()
     await call.message.answer(HOME, reply_markup=menu_kb())
+
+
+TODAY_HEAD = ("📋 <b>Что выйдет сегодня</b>\n\n"
+              "Нажмите на строку — откроется сам материал: текст, "
+              "фотография, правка, удаление.")
+
+
+async def _today_lines():
+    """[(подпись кнопки, callback)] и текст экрана.
+
+    Выбор делается ровно так же, как при публикации: очередь раздела,
+    первый, кто собирается и проходит проверку готовности. Иначе экран
+    показывал бы одно, а в канал уходило другое.
+    """
+    import database
+    import digest
+
+    lines, buttons, taken = [], [], set()
+    for at, slot, _ in digest.SCHEDULE:
+        title = digest.SLOT_TITLES.get(slot, slot)
+        section = digest.SLOT_SECTION.get(slot)
+
+        if slot == "art":
+            work = await database.art_next_unannounced()
+            name = (work or {}).get("title")
+            lines.append(f"{at} — {title}: "
+                         + (html.escape(str(name)) if name
+                            else "<i>все работы показаны</i>"))
+            continue
+
+        if not section:
+            # Утро, итоги, расписание, задача и спортивный факт собираются
+            # в момент выхода: показывать заранее нечего.
+            lines.append(f"{at} — {title} <i>(по факту дня)</i>")
+            continue
+
+        picked = None
+        for candidate in await database.next_candidates(section, limit=40):
+            if (section, candidate) in taken:
+                continue
+            built = await digest._build(section, candidate)
+            if not built or digest.readiness(section, built):
+                continue
+            taken.add((section, candidate))
+            picked = (candidate, (built[0] or "")[:46])
+            break
+
+        if not picked:
+            lines.append(f"{at} — {title}: <i>нечего</i>")
+            continue
+        item_id, name = picked
+        lines.append(f"{at} — {title}: {html.escape(name)}")
+        buttons.append((f"{at} · {name[:34]}", f"ce_open_{section}_{item_id}"))
+
+    return lines, buttons
+
+
+@router.callback_query(F.data == "own_today")
+async def open_today(call: CallbackQuery):
+    if not await _allowed(call):
+        return
+    await call.answer("Собираю…")
+    try:
+        lines, buttons = await _today_lines()
+    except Exception as e:
+        logging.error(f"Управление: что выйдет сегодня — {e}")
+        await call.message.answer(f"Не собралось: {html.escape(str(e))}")
+        return
+    rows = _rows(buttons)
+    rows.append([InlineKeyboardButton(text="⇦ Назад", callback_data="own_menu")])
+    await call.message.answer(
+        TODAY_HEAD + "\n\n" + "\n".join(lines),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
 
 
 @router.callback_query(F.data == "own_pub")
