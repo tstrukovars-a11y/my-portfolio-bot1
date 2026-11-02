@@ -442,19 +442,38 @@ def test_genetics_post_offers_the_explainer(settings, monkeypatch):
     rows = run(digest._genetics_rows(None))
     marks = [b.callback_data for row in rows for b in row
              if b.callback_data]
-    assert "learn_open" in marks
+    assert "learn_g" in marks
 
 
 def test_genetics_and_news_offer_the_very_same_button(settings, monkeypatch):
-    """Две кнопки с одной подписью и разным содержимым означали, что
-    половину разборов читатель не находил никогда."""
+    """Подпись одна, а открывается то, о чём человек только что читал.
+
+    Когда-то под новостями и под генетикой стояли две кнопки с
+    одинаковой подписью и разным содержимым, и половину разборов
+    читатель не находил никогда. Их свели в одну — и пришедший из поста
+    про мутацию стал попадать в список, где между генетикой лежат
+    экономика и книги. Подпись осталась общей, адрес стал своим.
+    """
     import tree
     monkeypatch.setattr(tree, "all_trees",
                         lambda *a, **kw: _ready([("e", "t1", "Ставка")]))
     gen = run(digest._gen_row())
     eco = run(digest._eco_row())
     assert gen[0].text == eco[0].text == digest.LEARN_LABEL
-    assert gen[0].callback_data == eco[0].callback_data == "learn_open"
+    assert gen[0].callback_data == "learn_g", "под генами открылось не про гены"
+    assert eco[0].callback_data == "learn_open"
+
+
+def test_a_single_kind_list_still_leads_to_the_others(settings):
+    """Разборы соседних разделов не спрятаны: из списка одного вида
+    есть выход в общий. Иначе вернулась бы та самая беда, ради которой
+    кнопки когда-то и свели в одну."""
+    import tree
+    data = {"trees": {"t1": {"title": "Носительство"}}}
+    marks = [b.callback_data
+             for row in tree._list_kb("g", data, False).inline_keyboard
+             for b in row]
+    assert "learn_open" in marks
 
 
 def test_no_published_tree_means_no_explainer_button(settings, monkeypatch):

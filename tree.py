@@ -627,6 +627,13 @@ def _list_kb(kind: str, data: dict, draft: bool) -> InlineKeyboardMarkup:
     rows = [[InlineKeyboardButton(text=body.get("title", tree_id)[:60],
                                   callback_data=f"{prefix}{tree_id}_start")]
             for tree_id, body in (data.get("trees") or {}).items()]
+    # Выход в общий список. Он здесь затем же, зачем когда-то свели три
+    # кнопки в одну: человек, пришедший из поста про гены, должен иметь
+    # возможность узнать, что разборы есть и про другое. Разница в том,
+    # что теперь это второй шаг, а не первый.
+    if not draft:
+        rows.append([InlineKeyboardButton(text="🌳 Другие разборы",
+                                          callback_data="learn_open")])
     rows.append([InlineKeyboardButton(text="⇦", callback_data="go_home")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -781,6 +788,23 @@ async def open_tree(call: CallbackQuery):
     """
     await call.answer()
     await show_list(call.message, ALL)
+
+
+@router.callback_query(F.data.startswith("learn_"))
+async def open_kind(call: CallbackQuery):
+    """Разбор одного вида: под постом про гены — про гены.
+
+    Общий список остаётся на месте и открывается кнопкой «Другие
+    разборы» внутри. Читатель раздела получает свою тему сразу, а не
+    выбирает её среди экономики и книг; соседние темы при этом никуда
+    не спрятаны.
+    """
+    await call.answer()
+    kind = call.data[len("learn_"):]
+    if kind not in KINDS:
+        await show_list(call.message, ALL)
+        return
+    await show_list(call.message, kind)
 
 
 @router.callback_query(F.data.startswith("tre_"))
