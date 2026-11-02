@@ -169,6 +169,7 @@ async def db_screen(call: CallbackQuery):
 
 def _admin_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎛 Управление содержимым", callback_data="own_menu")],
         [InlineKeyboardButton(text="💰 Доход", callback_data="admin_income")],
         [InlineKeyboardButton(text="🗄 База данных", callback_data="admin_db")],
         [InlineKeyboardButton(text="🗓 План публикаций", callback_data="admin_plan")],
