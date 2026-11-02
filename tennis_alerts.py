@@ -2092,10 +2092,18 @@ async def _highlights_to_channel(bot: Bot) -> None:
 
 
 async def _champion_to_channel(bot: Bot) -> None:
-    """Пост о победителе турнира, если канал задан"""
+    """Пост о победителе турнира, если канал задан.
+
+    Ночью придерживаем, как события и нарезки. Финалы в Азии и
+    Австралии заканчиваются глубокой ночью по часам канала, и
+    поздравление уходило в три часа — будило и терялось. Победа за ночь
+    не протухнет: пост выйдет первым обходом после утреннего выпуска.
+    """
     try:
         import digest
         import tennis_champion
+        if await digest.night_hold():
+            return
         chat, thread = await digest._target()
         if chat:
             await tennis_champion.publish(bot, chat, thread)

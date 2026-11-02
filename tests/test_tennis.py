@@ -1016,3 +1016,24 @@ def test_the_court_is_named_in_russian_where_there_is_a_name():
     # а не сочиняем «корт Глаубандих».
     assert tennis_live.court_ru("Glaubandich Court") == "Glaubandich Court"
     assert tennis_live.court_ru("") == ""
+
+
+# --- ночная тишина ------------------------------------------------------
+#
+# Уведомления посыпались среди ночи: наблюдатель за чужими каналами и
+# пост о чемпионе ночного удержания не знали. Финалы в Азии кончаются
+# глубокой ночью по часам канала, а организаторы постят когда им удобно.
+
+def test_everything_that_speaks_at_night_holds_until_morning():
+    places = {
+        "tennis_alerts.py": ("_events_to_channel", "_champion_to_channel",
+                             "_highlights_to_channel"),
+        "tg_watch.py": ("async def scheduler",),
+    }
+    for path, heads in places.items():
+        source = open(path, encoding="utf-8").read()
+        for head in heads:
+            start = source.index(head)
+            block = source[start:start + 1200]
+            assert "night_hold" in block, \
+                f"{path}: {head} шлёт ночью без удержания"
