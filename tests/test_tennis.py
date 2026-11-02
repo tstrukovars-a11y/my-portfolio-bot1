@@ -1037,3 +1037,13 @@ def test_everything_that_speaks_at_night_holds_until_morning():
             block = source[start:start + 1200]
             assert "night_hold" in block, \
                 f"{path}: {head} шлёт ночью без удержания"
+
+
+def test_the_german_tatjana_is_written_properly():
+    """«Tatjana Maria» транслитерация выдавала как «Татяна Мариа»: по-
+    немецки имя пишется через j, а звучит как обычная Татьяна."""
+    import players_ru
+    assert players_ru.ru("Tatjana Maria") == "Татьяна Мария"
+    assert players_ru.ru("T. Maria") == "Татьяна Мария"
+    # Соседка по словарю от этого не пострадала.
+    assert players_ru.ru("Maria Sakkari") == "Мария Саккари"
