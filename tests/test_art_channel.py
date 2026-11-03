@@ -590,3 +590,18 @@ def test_a_hand_published_work_leaves_the_queue():
     block = source[start:start + 1200]
     assert "announced_at" in block, \
         "показанная вручную работа останется в очереди"
+
+
+def test_the_channel_button_does_not_dump_the_main_menu():
+    """Под ответом на кнопку из канала вываливалось приветствие с
+    выбором языка и всё главное меню. Причина — SkipHandler в конце:
+    ход уходил общему /start, а тот начинается с очистки состояния и
+    стирал ожидание фотографии стены. Человек присылал стену, а бот уже
+    не помнил, зачем."""
+    source = open("art_channel.py", encoding="utf-8").read()
+    for head in ('async def start_try', 'async def start_ask'):
+        start = source.index(head)
+        block = source[start:source.index("@router", start + 10)]
+        tail = block.rstrip().splitlines()[-1].strip()
+        assert tail != "raise SkipHandler", \
+            f"{head}: ход снова уходит общему /start"

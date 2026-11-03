@@ -422,7 +422,11 @@ async def start_ask(message: Message, bot: Bot):
     # стоит и почему» у него уже возник, и отвечать на него надо
     # сейчас, а не когда он остынет.
     await _value_screen(message, work)
-    raise SkipHandler
+    try:
+        await database.log_action(message.from_user.id, "from_ask",
+                                  await database.get_user_language(message.from_user.id))
+    except Exception:
+        pass
 
 
 async def _value_screen(message: Message, work: dict) -> None:
@@ -541,9 +545,14 @@ async def value_result(call: CallbackQuery, state: FSMContext):
 async def start_try(message: Message, state: FSMContext):
     """Пришёл из канала примерять работу.
 
-    Роутер зарегистрирован раньше общего /start, поэтому в конце
-    обязательно передаём ход дальше: человек здесь может быть впервые,
-    и без приветствия он останется один на один с просьбой про стену.
+    Ход дальше не передаём. Раньше в конце стоял SkipHandler — чтобы
+    новичка заодно поприветствовал общий /start. Выходило две беды
+    сразу: поверх ответа вываливалось меню выбора языка и всё главное
+    меню, а главное — общий /start начинается с очистки состояния, и
+    он стирал то самое ожидание фотографии стены, которое здесь только
+    что выставлено. Человек присылал стену, а бот уже не помнил, зачем.
+
+    Новичок не теряется: под просьбой стоит кнопка в главное меню.
     """
     raw = (message.text or "").split("try-", 1)[1].strip()
     if not raw.isdigit():
@@ -559,8 +568,14 @@ async def start_try(message: Message, state: FSMContext):
         work["photo_file_id"],
         caption=f"<b>{html.escape(work['title'])}</b>"
                 + (f"\n{html.escape(work['size'])}" if work.get("size") else ""))
-    await message.answer(ASK_WALL)
-    raise SkipHandler
+    await message.answer(ASK_WALL, reply_markup=InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(
+            text="⇦ В главное меню", callback_data="go_home")]]))
+    try:
+        await database.log_action(message.from_user.id, "from_try",
+                                  await database.get_user_language(message.from_user.id))
+    except Exception:
+        pass
 
 
 @router.callback_query(F.data.startswith("try_open_"))
