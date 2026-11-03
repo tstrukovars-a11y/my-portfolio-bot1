@@ -1047,3 +1047,35 @@ def test_the_german_tatjana_is_written_properly():
     assert players_ru.ru("T. Maria") == "Татьяна Мария"
     # Соседка по словарю от этого не пострадала.
     assert players_ru.ru("Maria Sakkari") == "Мария Саккари"
+
+
+# --- напоминание о матче -----------------------------------------------
+#
+# Корт и звук стояли только в расписании. Выходило, что самое нужное
+# человек видел за сутки, а за двадцать минут до начала получал голую
+# ссылку.
+
+def test_the_reminder_tells_which_court_and_whether_there_is_commentary(monkeypatch):
+    import asyncio
+    import tennis_live
+    feed = [{"id": "77", "court": "Court 2"},
+            {"id": "78", "court": "Centre Court"}]
+    monkeypatch.setattr(tennis_live, "_singles",
+                        lambda data, tour, watched_only=False: feed)
+    monkeypatch.setattr(tennis_live, "fetch_scoreboard",
+                        lambda tour, force=False: asyncio.sleep(0, result={}))
+
+    assert asyncio.run(ta._court_note("atp", "77")) == "корт 2 · только звук с корта"
+    # На центральном про звук молчим: дорожку кладёт вещатель.
+    assert asyncio.run(ta._court_note("atp", "78")) == "центральный корт"
+    assert asyncio.run(ta._court_note("atp", "нет такого")) == ""
+
+
+def test_the_official_highlights_sit_beside_the_other_places():
+    """Добавлено к чужим площадкам, а не вместо них: прямой трансляции
+    нарезка не заменяет, зато работает всегда."""
+    import tennis_live
+    urls = [b.url for row in ta._watch_rows("atp") for b in row]
+    assert tennis_live.BOLSHE_URL in urls, "«Больше» пропала"
+    assert tennis_live.PRIME_SPORT_URL in urls, "«Прайм» пропал"
+    assert tennis_live.TOURS["atp"]["highlights"] in urls, "хайлайтов нет"

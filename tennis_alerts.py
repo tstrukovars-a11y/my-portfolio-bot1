@@ -329,6 +329,33 @@ def _watch_link(tour: str) -> str:
     return tennis_live.TOURS[tour]["schedule"]
 
 
+async def _court_note(tour: str, match_id: str) -> str:
+    """«корт 2 · только звук с корта» для напоминания о матче.
+
+    В расписании это уже стоит, а в напоминании не стояло — и выходило,
+    что самое нужное человек видел за сутки до матча, а за двадцать
+    минут до начала получал голую ссылку. Корт в базе не храним: он
+    меняется по ходу дня, и запомненный при подписке был бы вчерашним.
+    """
+    if not match_id:
+        return ""
+    try:
+        data = await tennis_live.fetch_scoreboard(tour)
+        for match in tennis_live._singles(data, tour):
+            if str(match.get("id")) != str(match_id):
+                continue
+            raw = match.get("court") or ""
+            court = tennis_live.court_ru(raw)
+            if not court:
+                return ""
+            if tennis_live.is_main_court(raw):
+                return court
+            return f"{court} · только звук с корта"
+    except Exception as e:
+        logging.info(f"Корт для напоминания не узнали: {e}")
+    return ""
+
+
 def _watch_rows(tour: str):
     """Куда идти смотреть. Порядок неслучайный: сначала свои площадки —
     они на русском, без подписки и без региональных замков, — потом живой
@@ -342,6 +369,11 @@ def _watch_rows(tour: str):
                               url=_watch_link(tour))],
         [InlineKeyboardButton(text=f"🗓 Сетка {tennis_live.TOURS[tour]['title']}",
                               url=tennis_live.TOURS[tour]["draws"])],
+        # Официальная нарезка — для того, кто не успел к началу. Стоит
+        # рядом с чужими площадками, а не вместо них: прямой трансляции
+        # она не заменяет, зато работает всегда и ни у кого не отнята.
+        [InlineKeyboardButton(text=f"🎬 Хайлайты {tennis_live.TOURS[tour]['title']}",
+                              url=tennis_live.TOURS[tour]["highlights"])],
     ]
 
 
@@ -2149,8 +2181,10 @@ async def alerts_scheduler(bot: Bot):
             for user_id, match_id, tour, title in await database.due_alerts(lead):
                 head = ("Начинается" if lead <= 0
                         else f"Начнётся через {lead} {_minutes_word(lead)}")
-                text = (f"🎾 <b>{html.escape(title or 'Матч')}</b>\n\n"
-                        f"{head}. Где смотреть:")
+                note = await _court_note(tour, match_id)
+                text = (f"🎾 <b>{html.escape(title or 'Матч')}</b>\n"
+                        + (f"<i>{html.escape(note)}</i>\n" if note else "")
+                        + f"\n{head}. Где смотреть:")
                 markup = InlineKeyboardMarkup(inline_keyboard=_watch_rows(tour))
                 try:
                     await bot.send_message(user_id, text,

@@ -681,11 +681,19 @@ async def show_list(message: Message, kind: str = "g", draft: bool = False,
         text, markup = ALL_TEXT, _all_kb(items, draft)
     else:
         data = await tree("draft" if draft else "live", kind)
-        if not data:
-            await message.answer("Разбор пока не собран.")
-            return
-        text = LIST_TEXT.format(title=KINDS[kind]["title"])
-        markup = _list_kb(kind, data, draft)
+        if not data or not (data.get("trees") or {}):
+            # Разбора этого вида ещё нет. Кнопка под постом уже нажата,
+            # и ответить «не собран» — это тупик: человек пришёл с
+            # вопросом, а получил отказ. Показываем, что есть: соседний
+            # разбор лучше пустого экрана.
+            items = await all_trees(draft)
+            if not items:
+                await message.answer("Разбор пока не собран.")
+                return
+            text, markup = ALL_TEXT, _all_kb(items, draft)
+        else:
+            text = LIST_TEXT.format(title=KINDS[kind]["title"])
+            markup = _list_kb(kind, data, draft)
     if replace:
         try:
             await message.edit_text(text, reply_markup=markup)
