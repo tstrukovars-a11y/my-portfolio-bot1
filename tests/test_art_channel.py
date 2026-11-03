@@ -580,3 +580,13 @@ def test_an_old_post_picks_up_a_new_button():
     assert not ac._same_markup(two, three), \
         "новая кнопка не замечена, старый пост её не получит"
     assert ac._same_markup(None, None)
+
+
+def test_a_hand_published_work_leaves_the_queue():
+    """Ручная выкладка публиковала пост и не трогала отметку — работа
+    оставалась в очереди и выходила второй раз, уже сама."""
+    source = open("art_channel.py", encoding="utf-8").read()
+    start = source.index('r"^/art_post"')
+    block = source[start:start + 1200]
+    assert "announced_at" in block, \
+        "показанная вручную работа останется в очереди"

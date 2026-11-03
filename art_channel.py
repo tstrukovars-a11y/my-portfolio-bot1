@@ -947,7 +947,20 @@ async def post_command(message: Message, bot: Bot):
             "Слать туда всё подряд значит превратить журнал в ленту "
             "товаров, а читают его не за этим.</i>")
         return
-    await message.answer(f"🖼 {await publish_to_journal(bot, int(parts[1]))}")
+
+    work_id = int(parts[1])
+    result = await publish_to_journal(bot, work_id)
+    # Показанную работу надо отметить показанной — иначе она останется в
+    # очереди и выйдет второй раз, уже сама, в 17:30. Так и было: ручная
+    # выкладка публиковала пост и не трогала отметку.
+    if not result.startswith(("ошибка", "канал", "работы")):
+        from datetime import datetime, timezone
+        await database.art_set(
+            work_id,
+            announced_at=datetime.now(timezone.utc).replace(tzinfo=None))
+        left = await database.art_waiting()
+        result = f"{result} · в очереди ещё {left}"
+    await message.answer(f"🖼 {result}")
 
 
 @router.message(F.text.regexp(r"^/art_sold"))
