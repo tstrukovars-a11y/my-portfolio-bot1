@@ -218,6 +218,71 @@ def _panel_kb(event) -> InlineKeyboardMarkup:
     ])
 
 
+@router.message(F.text == "/drcheck")
+async def self_check(message: Message):
+    """Проверка окружения ПЕРЕД репетицией.
+
+    Смысл один: узнать про сломанное за десять секунд, а не на восьмом
+    шаге прогона. Главное здесь — шрифт: локально он берётся из системы
+    macOS, а на Render такого пути нет, и фамилии выходят квадратиками.
+    Увидеть это можно только на картинке, нарисованной ТАМ.
+    """
+    if not config.is_admin(message.from_user.id):
+        return
+
+    lines = ["🔧 <b>Проверка перед репетицией</b>", ""]
+
+    try:
+        import PIL
+        lines.append(f"✅ Pillow {PIL.__version__}")
+    except ImportError:
+        lines.append("❌ Pillow не установлен — картинок не будет")
+        await message.answer("\n".join(lines))
+        return
+
+    import os
+    import draw_image
+    found = next((str(path) for path in draw_image.FONT_CANDIDATES
+                  if os.path.exists(path)), None)
+    if found:
+        lines.append(f"✅ Шрифт: <code>{html.escape(found)}</code>")
+    else:
+        lines.append("⚠️ Шрифт с кириллицей НЕ НАЙДЕН — фамилии на сетке "
+                     "выйдут квадратиками. Положите DejaVuSans.ttf в "
+                     "data/fonts/")
+
+    try:
+        import rally
+        url = rally.game_url()
+        lines.append(f"✅ Игра: <code>{html.escape(url)}</code>" if url
+                     else "❌ Игра недоступна: нет внешнего адреса https")
+    except Exception as e:
+        lines.append(f"❌ Игра: {html.escape(str(e))}")
+
+    chat = await database.get_setting("digest_chat")
+    lines.append(f"{'✅' if chat else '⚠️'} Общий канал: "
+                 f"<code>{chat or 'не задан'}</code>")
+
+    lines.append("")
+    lines.append("<i>Ниже — пробная сетка. Смотрите на фамилии: если "
+                 "вместо букв квадратики, шрифта нет.</i>")
+    await message.answer("\n".join(lines))
+
+    try:
+        rounds = [[101, 102, 103, None], [101, 103, 102, None]]
+        names = {101: "Щербакова", 102: "Жабин", 103: "Афанасьев"}
+        png = draw_image.render(rounds, names, {101: 42, 103: 17},
+                                title="Проверка шрифта")
+        from aiogram.types import BufferedInputFile
+        await message.answer_document(
+            BufferedInputFile(png, filename="proverka.png"),
+            caption="Фамилии нарочно с «щ», «ж» и «ф» — на них ломается "
+                    "чаще всего.")
+    except Exception as e:
+        await message.answer(f"❌ Картинка не нарисовалась: "
+                             f"<code>{html.escape(str(e))}</code>")
+
+
 @router.message(F.text == "/draws")
 async def draws_command(message: Message):
     if not config.is_admin(message.from_user.id):
