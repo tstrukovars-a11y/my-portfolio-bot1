@@ -256,3 +256,47 @@ def test_the_rules_fit_a_telegram_message():
     """В подпись к фотографии они не влезут — там тысяча символов, —
     поэтому и идут отдельным сообщением. Но и в него надо уложиться."""
     assert len(draws.RULES_DEFAULT) < 4096
+
+
+# ---------------------------------------------------------------------
+# Свой канал у конкурса
+# ---------------------------------------------------------------------
+#
+# Ради безопасной репетиции. Настройка digest_chat одна на весь бот, и
+# менять её ради теста опасно: забыли вернуть — утренний выпуск ушёл в
+# закрытый канал.
+
+
+def _run(coro):
+    import asyncio
+    return asyncio.run(coro)
+
+
+def test_a_contest_channel_beats_the_global_one():
+    chat, thread = _run(draws.event_channel({"channel_id": -1009999}))
+    assert chat == -1009999
+    assert thread is None
+
+
+def test_without_its_own_channel_the_digest_one_is_used(monkeypatch):
+    import asyncio
+    import digest
+    monkeypatch.setattr(digest, "_target",
+                        lambda: asyncio.sleep(0, result=(-100123, 7)))
+    chat, thread = _run(draws.event_channel({"channel_id": None}))
+    assert (chat, thread) == (-100123, 7)
+
+
+def test_publishing_never_reaches_for_the_global_channel_directly():
+    """Если где-то снова позвать digest._target() напрямую, тестовый
+    конкурс уедет в «Акцент» — ровно то, от чего это и заведено."""
+    import inspect
+    for fn in (draws.launch, draws.finish_send):
+        body = inspect.getsource(fn)
+        assert "digest._target" not in body, fn.__name__
+        assert "event_channel" in body, fn.__name__
+
+
+def test_the_channel_button_is_owner_only():
+    import public
+    assert not public.allowed("drchan_1")

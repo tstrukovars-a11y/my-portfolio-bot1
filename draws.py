@@ -49,6 +49,7 @@ class Draw(StatesGroup):
     meet_photo = State()     # фото места вручения
     meet_text = State()      # где и во сколько
     final_photo = State()    # фотография, которой завершаем
+    channel = State()        # свой канал конкурса (для репетиции)
     rules = State()          # правила конкурса целиком
     schedule = State()       # расписание матчей одним сообщением
     talking = State()        # владелица отвечает призёру
@@ -193,6 +194,8 @@ def _panel_kb(event) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🖼 Призы за места",
                               callback_data=f"drprizes_{eid}")],
+        [InlineKeyboardButton(text="📢 Канал конкурса",
+                              callback_data=f"drchan_{eid}")],
         [InlineKeyboardButton(text="📋 Правила",
                               callback_data=f"drrules_{eid}")],
         [InlineKeyboardButton(text="📅 Расписание матчей",
@@ -308,6 +311,58 @@ async def draw_new_save(message: Message, state: FSMContext):
         f"<i>Напечатайте её кодом и раздайте на входе — зритель нажимает "
         f"и сразу оказывается в конкурсе.</i>",
         reply_markup=_panel_kb(event), parse_mode="HTML")
+
+
+async def event_channel(event):
+    """Куда писать этому конкурсу: (чат, ветка).
+
+    Свой канал у конкурса главнее общей настройки. Это и есть
+    безопасный тестовый прогон: репетиция идёт в закрытом канале, а
+    «Акцент» живёт своей жизнью и ничего не замечает.
+    """
+    if event and event.get("channel_id"):
+        return event["channel_id"], None
+    import digest
+    return await digest._target()
+
+
+@router.callback_query(F.data.startswith("drchan_"))
+async def channel_ask(call: CallbackQuery, state: FSMContext):
+    if not config.is_admin(call.from_user.id):
+        await call.answer()
+        return
+    await call.answer()
+    await state.set_state(Draw.channel)
+    await state.update_data(event_id=int(call.data.split("_")[1]))
+    await call.message.answer(
+        "📢 Пришлите номер канала для этого конкурса — вида "
+        "<code>-1001234567890</code>.\n\n"
+        "<i>Для репетиции заведите закрытый канал, добавьте бота "
+        "администратором и пришлите его номер. «Акцент» при этом не "
+        "затрагивается. Чтобы вернуться к общему каналу, пришлите "
+        "«сброс».</i>")
+
+
+@router.message(Draw.channel)
+async def channel_save(message: Message, state: FSMContext):
+    raw = (message.text or "").strip()
+    data = await state.get_data()
+    if raw.lower() in ("сброс", "-", "общий"):
+        await state.clear()
+        await database.draw_event_update(data["event_id"], channel_id=None)
+        await message.answer("✅ Конкурс вернулся в общий канал.")
+        return
+    try:
+        channel_id = int(raw)
+    except ValueError:
+        await message.answer("Нужен номер вида -1001234567890.")
+        return
+    await state.clear()
+    await database.draw_event_update(data["event_id"], channel_id=channel_id)
+    event = await database.draw_event(event_id=data["event_id"])
+    await message.answer(
+        f"✅ Этот конкурс будет публиковаться в <code>{channel_id}</code>.",
+        reply_markup=_panel_kb(event) if event else None)
 
 
 async def _qr_link(slug: str) -> str:
@@ -767,8 +822,7 @@ async def launch(call: CallbackQuery):
             show_alert=True)
         return
 
-    import digest
-    chat, thread = await digest._target()
+    chat, thread = await event_channel(event)
     if not chat:
         await call.answer("Канал не задан: /digest chat -100…", show_alert=True)
         return
@@ -1056,8 +1110,7 @@ async def finish_send(message: Message, state: FSMContext, bot: Bot):
         "следующий конкурс скоро.")
     posted = False
     try:
-        import digest
-        chat, thread = await digest._target()
+        chat, thread = await event_channel(event)
         if chat:
             await bot.send_photo(chat, message.photo[-1].file_id,
                                  caption=channel_body,

@@ -467,6 +467,15 @@ async def init_db():
             PRIMARY KEY (event_id, place)
         )""")
 
+        # Свой канал у конкурса. Нужен ради тестового прогона: настройка
+        # digest_chat одна на весь бот, и менять её ради репетиции
+        # опасно — забыли вернуть, и утренний выпуск ушёл в закрытый
+        # канал. Здесь же тестовый конкурс живёт в своём месте, а
+        # «Акцент» не трогается вовсе. Пусто — значит канал дайджеста.
+        await conn.execute(
+            f"ALTER TABLE {SCHEMA}.draw_events "
+            f"ADD COLUMN IF NOT EXISTS channel_id BIGINT")
+
         # Переписка с победителем. Не общая поддержка, а разговор внутри
         # конкретного конкурса: «куда подойти», «я уже тут», «спасибо».
         # Храним, чтобы владелица видела нить, а не отдельные выкрики.
@@ -1943,7 +1952,8 @@ async def draw_event_update(event_id: int, **fields) -> bool:
     # первому вхождению в исходнике. Второй такой же набор отобрал бы
     # у него якорь — что однажды уже и случилось.
     editable = {"title", "event_date", "prizes", "rules", "status",
-                "meet_at", "meet_place", "meet_photo", "final_photo"}
+                "meet_at", "meet_place", "meet_photo", "final_photo",
+                "channel_id"}
     fields = {k: v for k, v in fields.items() if k in editable}
     if not fields:
         return False
