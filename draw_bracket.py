@@ -135,19 +135,80 @@ def round_name(remaining: int) -> str:
         remaining, f"1/{remaining // 2} финала")
 
 
+def loser(pair, winner):
+    """Второй из пары. None, если пара неполная."""
+    a, b = pair
+    if a is None or b is None:
+        return None
+    return b if winner == a else a
+
+
+def last_round_no(size: int) -> int:
+    """Номер последнего круга. Финал и матч за третье место идут в ОДНОМ
+    окне, поэтому последний круг держит четыре места, а не два: иначе
+    вечер растягивался бы на лишний круг ради одной бронзы."""
+    return rounds_left(size)
+
+
+def step(slots: list, round_no: int, size: int, scores: dict,
+         seeds: dict = None):
+    """Следующий круг либо итоговые места.
+
+    Возвращает (места следующего круга, призовые места). Одно из двух
+    всегда пустое: круг либо продолжается, либо закончился.
+
+    Полуфинал отдаёт ЧЕТЫРЕ места, а не два: победители становятся
+    финалистами, проигравшие — парой за третье место, и оба матча
+    играются в одном окне.
+    """
+    last = last_round_no(size)
+    current = pairs(slots)
+
+    # Последний круг: пара финала и пара за третье место
+    if round_no >= last:
+        if len(slots) == 2:
+            return [], places(slots, None, scores, seeds)
+        if len(slots) >= 4:
+            return [], places(slots[:2], (slots[2], slots[3]), scores, seeds)
+        return [], []
+
+    winners = [advance(p, scores, seeds) for p in current]
+
+    # Полуфинал — следом последний круг, значит добавляем проигравших
+    if round_no == last - 1 and len(winners) == 2:
+        beaten = [loser(p, w) for p, w in zip(current, winners)]
+        return winners + beaten, []
+
+    return winners, []
+
+
 def places(final_slots: list, third_place, scores: dict,
            seeds: dict = None) -> list:
-    """Итоговые три места.
+    """Итоговые места по порядку: первое, второе, третье, четвёртое.
 
-    Третье берётся отдельным матчем проигравших в полуфинале — иначе
-    бронзу пришлось бы присуждать «по счёту в полуфинале», а это сравнение
-    результатов, полученных против разных соперников.
+    Третье берётся матчем проигравших в полуфинале, который идёт в одном
+    окне с финалом. Иначе бронзу пришлось бы присуждать «по счёту в
+    полуфинале», а это сравнение результатов против разных соперников.
+
+    ЧЕТВЁРТОЕ ВОЗВРАЩАЕТСЯ ТОЖЕ, хотя в объявлении его нет. Человек
+    дошёл до последнего круга и проиграл один матч — ему полагается
+    утешительный приз, брелок или наклейки. Объявлять четвёртое место
+    незачем: это звучит как «почти», а вот пригласить за призом лично —
+    совсем другое дело. Сколько мест попадает в объявление, решает
+    draw_events.prizes.
     """
     if len(final_slots) != 2:
         return []
     champion = advance((final_slots[0], final_slots[1]), scores, seeds)
-    runner_up = final_slots[1] if champion == final_slots[0] else final_slots[0]
+    runner_up = loser((final_slots[0], final_slots[1]), champion)
     out = [champion, runner_up]
     if third_place:
-        out.append(advance(third_place, scores, seeds))
+        third = advance(third_place, scores, seeds)
+        out.append(third)
+        out.append(loser(third_place, third))
     return [x for x in out if x is not None]
+
+
+def announced(all_places: list, prizes: int = 3):
+    """(кого объявляем, кого зовём за призом молча)"""
+    return all_places[:prizes], all_places[prizes:]

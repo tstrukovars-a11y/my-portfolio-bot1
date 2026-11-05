@@ -135,10 +135,27 @@ def test_round_names_are_russian_and_plain():
 # ---------------------------------------------------------------------
 
 
-def test_three_places_come_out_of_the_final_and_the_third_place_match():
+def test_four_places_come_out_of_the_final_and_the_third_place_match():
+    """Четвёртое возвращается тоже: человек дошёл до последнего круга и
+    проиграл один матч — ему полагается утешительный приз."""
     got = b.places(["a", "c"], ("d", "e"),
                    {"a": 40, "c": 10, "d": 5, "e": 25})
-    assert got == ["a", "c", "e"]
+    assert got == ["a", "c", "e", "d"]
+
+
+def test_only_the_top_three_are_announced():
+    """Четвёртое место не объявляется: это звучит как «почти». За
+    призом зовём лично."""
+    loud, quiet = b.announced(["a", "c", "e", "d"], prizes=3)
+    assert loud == ["a", "c", "e"]
+    assert quiet == ["d"]
+
+
+def test_how_many_are_announced_is_a_number_not_a_rule():
+    """Захотим объявлять пятерых — меняется одно число, а не код."""
+    loud, quiet = b.announced(["a", "c", "e", "d"], prizes=4)
+    assert quiet == []
+    assert len(loud) == 4
 
 
 def test_without_a_third_place_match_only_two_places():
@@ -154,3 +171,69 @@ def test_the_ceiling_on_players_is_sane():
     таблице, чем разводить неявки."""
     assert b.MAX_PLAYERS == 16
     assert b.rounds_left(b.MAX_PLAYERS) == 4
+
+
+# ---------------------------------------------------------------------
+# Развязка кругов
+# ---------------------------------------------------------------------
+#
+# Финал и матч за третье место идут в ОДНОМ окне: иначе вечер
+# растягивается на лишний круг ради одной бронзы. Поэтому полуфинал
+# отдаёт четыре места, а не два.
+
+
+def test_the_semifinal_hands_over_four_slots():
+    """Двое в финал, двое — за третье место."""
+    nxt, done = b.step(["a", "c", "d", "e"], round_no=1, size=4,
+                       scores={"a": 30, "c": 10, "d": 5, "e": 40})
+    assert done == []
+    assert nxt == ["a", "e", "c", "d"]
+
+
+def test_the_last_round_gives_three_places():
+    nxt, done = b.step(["a", "e", "c", "d"], round_no=2, size=4,
+                       scores={"a": 50, "e": 20, "c": 9, "d": 31})
+    assert nxt == []
+    assert done == ["a", "e", "d", "c"]
+
+
+def test_a_two_player_bracket_has_no_third_place():
+    nxt, done = b.step(["a", "c"], round_no=1, size=2,
+                       scores={"a": 10, "c": 40})
+    assert nxt == []
+    assert done == ["c", "a"]
+
+
+def test_an_early_round_just_halves():
+    slots = b.seed_slots([1, 2, 3, 4, 5, 6, 7, 8])
+    nxt, done = b.step(slots, round_no=1, size=8,
+                       scores={x: x * 10 for x in range(1, 9)})
+    assert done == []
+    assert len(nxt) == 4
+
+
+def test_an_eight_bracket_runs_exactly_three_rounds():
+    """Четвертьфинал, полуфинал, последний круг — и всё."""
+    assert b.last_round_no(8) == 3
+
+
+def test_the_loser_of_a_pair_is_the_other_one():
+    assert b.loser(("a", "c"), "a") == "c"
+    assert b.loser(("a", "c"), "c") == "a"
+    assert b.loser(("a", None), "a") is None
+
+
+def test_a_full_eight_bracket_plays_out_to_three_winners():
+    """Сквозной прогон: восемь участников, три круга, три призёра."""
+    slots = b.seed_slots([1, 2, 3, 4, 5, 6, 7, 8])
+    seeds = {i: i for i in range(1, 9)}
+    scores = {i: 100 - i for i in range(1, 9)}   # чем выше посев, тем лучше счёт
+
+    round_no, done = 1, []
+    while not done:
+        slots, done = b.step(slots, round_no, 8, scores, seeds)
+        round_no += 1
+        assert round_no < 10, "сетка не сошлась"
+
+    assert len(done) == 4
+    assert len(set(done)) == 4

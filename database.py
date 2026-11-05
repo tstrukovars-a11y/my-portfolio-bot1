@@ -424,6 +424,100 @@ async def init_db():
             PRIMARY KEY (event_id, user_id)
         )""")
 
+        # Призы за места: фотография и подпись. Фото — file_id Telegram,
+        # а не файл на диске: диск на Render не переживает деплой, а
+        # file_id живёт у Telegram и ничего не весит.
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.draw_prizes (
+            event_id INTEGER NOT NULL,
+            place SMALLINT NOT NULL,
+            photo_file_id TEXT,
+            caption TEXT,
+            PRIMARY KEY (event_id, place)
+        )""")
+
+        # Где и когда вручают. Фотография места нужна не для красоты: на
+        # большой площадке «подойдите к организатору» не находят, а
+        # снимок стойки находят сразу.
+        for statement in (
+            f"ALTER TABLE {SCHEMA}.draw_events ADD COLUMN IF NOT EXISTS meet_at TIMESTAMP",
+            f"ALTER TABLE {SCHEMA}.draw_events ADD COLUMN IF NOT EXISTS meet_place TEXT",
+            f"ALTER TABLE {SCHEMA}.draw_events ADD COLUMN IF NOT EXISTS meet_photo TEXT",
+            f"ALTER TABLE {SCHEMA}.draw_events ADD COLUMN IF NOT EXISTS final_photo TEXT",
+        ):
+            await conn.execute(statement)
+
+        # Итоговые места. Записываются, когда сетка доиграна: сама сетка
+        # потом очистится или перезапустится, а список призёров нужен и
+        # для рассылки, и для переписки, и для отчёта.
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.draw_winners (
+            event_id INTEGER NOT NULL,
+            place SMALLINT NOT NULL,
+            user_id BIGINT NOT NULL,
+            name TEXT,
+            notified BOOLEAN NOT NULL DEFAULT FALSE,
+            PRIMARY KEY (event_id, place)
+        )""")
+
+        # Переписка с победителем. Не общая поддержка, а разговор внутри
+        # конкретного конкурса: «куда подойти», «я уже тут», «спасибо».
+        # Храним, чтобы владелица видела нить, а не отдельные выкрики.
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.draw_chat (
+            id SERIAL PRIMARY KEY,
+            event_id INTEGER NOT NULL,
+            user_id BIGINT NOT NULL,
+            from_owner BOOLEAN NOT NULL DEFAULT FALSE,
+            text TEXT,
+            photo_file_id TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+
+        # Журнал попыток игры. Таблица рекордов хранит ЛУЧШИЙ результат
+        # за всё время, а кругу сетки нужен результат именно его десяти
+        # минут: иначе участник с давним рекордом проходил бы круги, не
+        # притронувшись к телефону.
+        #
+        # Сама игра об этом не знает и не должна: она просто пишет
+        # попытку, а круг потом берёт максимум за своё окно.
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.rally_attempts (
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT NOT NULL,
+            score INTEGER NOT NULL,
+            made_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )""")
+        await conn.execute(
+            f"CREATE INDEX IF NOT EXISTS rally_attempts_user_time "
+            f"ON {SCHEMA}.rally_attempts (user_id, made_at)")
+
+        # Сетка розыгрыша. На круг отводится время — без него один
+        # неявившийся останавливает весь вечер.
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.draw_brackets (
+            id SERIAL PRIMARY KEY,
+            event_id INTEGER NOT NULL,
+            size SMALLINT NOT NULL,
+            round_no SMALLINT NOT NULL DEFAULT 1,
+            round_opened_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            round_closes_at TIMESTAMP NOT NULL,
+            status TEXT NOT NULL DEFAULT 'running',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+
+        # Места сетки по кругам. user_id = NULL — пропуск круга либо
+        # место, которое ещё не определилось.
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.draw_bracket_slots (
+            bracket_id INTEGER NOT NULL,
+            round_no SMALLINT NOT NULL,
+            slot SMALLINT NOT NULL,
+            user_id BIGINT,
+            seed SMALLINT,
+            PRIMARY KEY (bracket_id, round_no, slot)
+        )""")
+
         # Факты о матче, которые нельзя восстановить задним числом.
         #
         # Живая табличка источника держит только свежие матчи: через
@@ -1606,6 +1700,355 @@ async def draw_standings(event_id: int):
         return [(r["user_id"], r["hits"], r["last_at"]) for r in rows]
     except Exception as e:
         logging.warning(f"Таблица мероприятия {event_id} не собралась: {e}")
+        return []
+
+
+async def draw_winners_set(event_id: int, ordered: list) -> bool:
+    """Записать призёров по порядку мест. ordered — [(user_id, имя), ...]."""
+    pool = await get_pool()
+    if not pool:
+        return False
+    try:
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(
+                    f"DELETE FROM {SCHEMA}.draw_winners WHERE event_id = $1",
+                    event_id)
+                for index, (user_id, name) in enumerate(ordered, start=1):
+                    await conn.execute(
+                        f"""INSERT INTO {SCHEMA}.draw_winners
+                            (event_id, place, user_id, name)
+                            VALUES ($1, $2, $3, $4)""",
+                        event_id, index, user_id, name)
+        return True
+    except Exception as e:
+        logging.error(f"Призёры {event_id} не записались: {e}")
+        return False
+
+
+async def draw_winners(event_id: int):
+    """[(место, user_id, имя, оповещён)] по возрастанию места"""
+    pool = await get_pool()
+    if not pool:
+        return []
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT place, user_id, name, notified FROM {SCHEMA}.draw_winners "
+                f"WHERE event_id = $1 ORDER BY place", event_id)
+        return [(r["place"], r["user_id"], r["name"], r["notified"])
+                for r in rows]
+    except Exception as e:
+        logging.warning(f"Призёры {event_id} не прочитались: {e}")
+        return []
+
+
+async def draw_winner_notified(event_id: int, user_id: int) -> None:
+    pool = await get_pool()
+    if not pool:
+        return
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"UPDATE {SCHEMA}.draw_winners SET notified = TRUE "
+                f"WHERE event_id = $1 AND user_id = $2", event_id, user_id)
+    except Exception as e:
+        logging.warning(f"Отметка об оповещении не легла: {e}")
+
+
+async def draw_events_list(limit: int = 10):
+    pool = await get_pool()
+    if not pool:
+        return []
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT id, slug, title, event_date, status "
+                f"FROM {SCHEMA}.draw_events ORDER BY id DESC LIMIT $1", limit)
+        return [dict(r) for r in rows]
+    except Exception as e:
+        logging.warning(f"Список мероприятий не пришёл: {e}")
+        return []
+
+
+async def draw_prize_set(event_id: int, place: int, photo_file_id: str,
+                         caption: str = None) -> bool:
+    pool = await get_pool()
+    if not pool:
+        return False
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"""INSERT INTO {SCHEMA}.draw_prizes
+                    (event_id, place, photo_file_id, caption)
+                    VALUES ($1, $2, $3, $4)
+                    ON CONFLICT (event_id, place) DO UPDATE SET
+                        photo_file_id = EXCLUDED.photo_file_id,
+                        caption = EXCLUDED.caption""",
+                event_id, int(place), photo_file_id, caption)
+        return True
+    except Exception as e:
+        logging.error(f"Приз за {place} место не сохранился: {e}")
+        return False
+
+
+async def draw_prizes(event_id: int):
+    """{место: {фото, подпись}}"""
+    pool = await get_pool()
+    if not pool:
+        return {}
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT place, photo_file_id, caption FROM {SCHEMA}.draw_prizes "
+                f"WHERE event_id = $1 ORDER BY place", event_id)
+        return {r["place"]: {"photo": r["photo_file_id"],
+                             "caption": r["caption"]} for r in rows}
+    except Exception as e:
+        logging.warning(f"Призы {event_id} не прочитались: {e}")
+        return {}
+
+
+async def draw_event_update(event_id: int, **fields) -> bool:
+    """Поменять поля мероприятия. Имена колонок — из белого списка:
+    они приходят из кода, но подставлять их в SQL без проверки нельзя."""
+    # Переменная намеренно НЕ называется allowed: под этим именем в
+    # файле уже живёт белый список полей картины, и тест ищет его по
+    # первому вхождению в исходнике. Второй такой же набор отобрал бы
+    # у него якорь — что однажды уже и случилось.
+    editable = {"title", "event_date", "prizes", "rules", "status",
+                "meet_at", "meet_place", "meet_photo", "final_photo"}
+    fields = {k: v for k, v in fields.items() if k in editable}
+    if not fields:
+        return False
+    pool = await get_pool()
+    if not pool:
+        return False
+    try:
+        names = list(fields)
+        sets = ", ".join(f"{n} = ${i + 2}" for i, n in enumerate(names))
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"UPDATE {SCHEMA}.draw_events SET {sets} WHERE id = $1",
+                event_id, *[fields[n] for n in names])
+        return True
+    except Exception as e:
+        logging.error(f"Мероприятие {event_id} не обновилось: {e}")
+        return False
+
+
+async def draw_chat_add(event_id: int, user_id: int, from_owner: bool,
+                        text: str = None, photo_file_id: str = None) -> bool:
+    pool = await get_pool()
+    if not pool:
+        return False
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"""INSERT INTO {SCHEMA}.draw_chat
+                    (event_id, user_id, from_owner, text, photo_file_id)
+                    VALUES ($1, $2, $3, $4, $5)""",
+                event_id, user_id, bool(from_owner), text, photo_file_id)
+        return True
+    except Exception as e:
+        logging.warning(f"Сообщение в переписку не легло: {e}")
+        return False
+
+
+async def draw_chat_thread(event_id: int, user_id: int, limit: int = 30):
+    """Нить переписки с одним человеком, от старых к новым."""
+    pool = await get_pool()
+    if not pool:
+        return []
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"""SELECT from_owner, text, photo_file_id, created_at
+                    FROM {SCHEMA}.draw_chat
+                    WHERE event_id = $1 AND user_id = $2
+                    ORDER BY created_at DESC LIMIT $3""",
+                event_id, user_id, int(limit))
+        return [dict(r) for r in reversed(rows)]
+    except Exception as e:
+        logging.warning(f"Нить переписки не прочиталась: {e}")
+        return []
+
+
+# ---------------------------------------------------------------------
+# Сетка розыгрыша
+# ---------------------------------------------------------------------
+
+
+async def bracket_create(event_id: int, slots: list, size: int,
+                         round_minutes: int = 10):
+    """Завести сетку и расставить первый круг.
+
+    slots — уже разложенные места (draw_bracket.seed_slots), где None
+    означает пропуск круга. Порядок важен: по нему считаются пары.
+    """
+    pool = await get_pool()
+    if not pool:
+        return None
+    try:
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                bracket_id = await conn.fetchval(
+                    f"""INSERT INTO {SCHEMA}.draw_brackets
+                        (event_id, size, round_closes_at)
+                        VALUES ($1, $2, NOW() + ($3 || ' minutes')::interval)
+                        RETURNING id""",
+                    event_id, int(size), str(int(round_minutes)))
+                for position, user_id in enumerate(slots):
+                    await conn.execute(
+                        f"""INSERT INTO {SCHEMA}.draw_bracket_slots
+                            (bracket_id, round_no, slot, user_id, seed)
+                            VALUES ($1, 1, $2, $3, $4)""",
+                        bracket_id, position, user_id,
+                        None if user_id is None else position)
+        return bracket_id
+    except Exception as e:
+        logging.error(f"Сетка для {event_id} не создалась: {e}")
+        return None
+
+
+async def bracket_get(bracket_id: int):
+    pool = await get_pool()
+    if not pool:
+        return None
+    try:
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                f"SELECT * FROM {SCHEMA}.draw_brackets WHERE id = $1", bracket_id)
+        return dict(row) if row else None
+    except Exception as e:
+        logging.warning(f"Сетка {bracket_id} не прочиталась: {e}")
+        return None
+
+
+async def bracket_slots(bracket_id: int, round_no: int):
+    """Места круга по порядку. None на месте — пропуск круга."""
+    pool = await get_pool()
+    if not pool:
+        return []
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT slot, user_id FROM {SCHEMA}.draw_bracket_slots "
+                f"WHERE bracket_id = $1 AND round_no = $2 ORDER BY slot",
+                bracket_id, int(round_no))
+        return [r["user_id"] for r in rows]
+    except Exception as e:
+        logging.warning(f"Места круга не прочитались: {e}")
+        return []
+
+
+async def bracket_round_scores(bracket_id: int):
+    """{участник: лучшая попытка за ОТКРЫТЫЙ круг}.
+
+    Берём максимум за окно круга, а не личный рекорд: иначе участник со
+    старым рекордом проходил бы, не притронувшись к телефону. Кто не
+    играл — в словаре его нет, и по правилам сетки он проигрывает тому,
+    кто играл.
+    """
+    pool = await get_pool()
+    if not pool:
+        return {}
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"""SELECT a.user_id, MAX(a.score) AS best
+                    FROM {SCHEMA}.rally_attempts a
+                    JOIN {SCHEMA}.draw_brackets b ON b.id = $1
+                    JOIN {SCHEMA}.draw_bracket_slots s
+                      ON s.bracket_id = b.id AND s.round_no = b.round_no
+                     AND s.user_id = a.user_id
+                    WHERE a.made_at >= b.round_opened_at
+                      AND a.made_at < b.round_closes_at
+                    GROUP BY a.user_id""",
+                bracket_id)
+        return {r["user_id"]: r["best"] for r in rows}
+    except Exception as e:
+        logging.warning(f"Счёт круга {bracket_id} не собрался: {e}")
+        return {}
+
+
+async def bracket_seeds(bracket_id: int):
+    """{участник: посев} — нужен, когда счёт равный или не играл никто."""
+    pool = await get_pool()
+    if not pool:
+        return {}
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT user_id, seed FROM {SCHEMA}.draw_bracket_slots "
+                f"WHERE bracket_id = $1 AND round_no = 1 "
+                f"AND user_id IS NOT NULL", bracket_id)
+        return {r["user_id"]: r["seed"] for r in rows}
+    except Exception as e:
+        logging.warning(f"Посевы {bracket_id} не прочитались: {e}")
+        return {}
+
+
+async def bracket_next_round(bracket_id: int, winners: list,
+                             round_minutes: int = 10) -> bool:
+    """Поставить следующий круг и открыть ему новое окно."""
+    pool = await get_pool()
+    if not pool:
+        return False
+    try:
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                round_no = await conn.fetchval(
+                    f"SELECT round_no + 1 FROM {SCHEMA}.draw_brackets "
+                    f"WHERE id = $1", bracket_id)
+                for position, user_id in enumerate(winners):
+                    await conn.execute(
+                        f"""INSERT INTO {SCHEMA}.draw_bracket_slots
+                            (bracket_id, round_no, slot, user_id)
+                            VALUES ($1, $2, $3, $4)
+                            ON CONFLICT (bracket_id, round_no, slot)
+                            DO UPDATE SET user_id = EXCLUDED.user_id""",
+                        bracket_id, round_no, position, user_id)
+                await conn.execute(
+                    f"""UPDATE {SCHEMA}.draw_brackets SET
+                        round_no = $2,
+                        round_opened_at = NOW(),
+                        round_closes_at = NOW() + ($3 || ' minutes')::interval
+                        WHERE id = $1""",
+                    bracket_id, round_no, str(int(round_minutes)))
+        return True
+    except Exception as e:
+        logging.error(f"Следующий круг {bracket_id} не поставился: {e}")
+        return False
+
+
+async def bracket_finish(bracket_id: int) -> None:
+    pool = await get_pool()
+    if not pool:
+        return
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"UPDATE {SCHEMA}.draw_brackets SET status = 'done' "
+                f"WHERE id = $1", bracket_id)
+    except Exception as e:
+        logging.warning(f"Сетка {bracket_id} не закрылась: {e}")
+
+
+async def brackets_due():
+    """Сетки, у которых вышло время круга. Без них один неявившийся
+    останавливал бы весь вечер."""
+    pool = await get_pool()
+    if not pool:
+        return []
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT * FROM {SCHEMA}.draw_brackets "
+                f"WHERE status = 'running' AND NOW() >= round_closes_at")
+        return [dict(r) for r in rows]
+    except Exception as e:
+        logging.warning(f"Список сеток не пришёл: {e}")
         return []
 
 
@@ -3653,6 +4096,11 @@ async def save_rally_score(user_id: int, name: str, score: int):
                         updated_at = CURRENT_TIMESTAMP
                     RETURNING best""",
                 user_id, name, score)
+            # Попытка — отдельной строкой: круг сетки берёт максимум за
+            # своё окно, а не рекорд за всё время
+            await conn.execute(
+                f"INSERT INTO {SCHEMA}.rally_attempts (user_id, score) "
+                f"VALUES ($1, $2)", user_id, score)
             place = await conn.fetchval(
                 f"SELECT COUNT(*) + 1 FROM {SCHEMA}.rally_scores WHERE best > $1",
                 best)

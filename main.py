@@ -28,6 +28,7 @@ import travel_import
 import travel_channel
 import travel_spots
 import books_seed
+import draws
 import tennis_alerts
 import tennis_h2h
 import tennis_champion
@@ -653,6 +654,7 @@ async def main():
     dp.include_router(books_seed.router)
     dp.include_router(tennis_alerts.router)
     dp.include_router(tennis_h2h.router)
+    dp.include_router(draws.router)
     dp.include_router(tennis_champion.router)
     dp.include_router(tennis_highlights.router)
     dp.include_router(tg_watch.router)
