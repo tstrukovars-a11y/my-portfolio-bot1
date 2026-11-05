@@ -201,15 +201,17 @@ async def start_bracket(bot: Bot, event_id: int) -> str:
     # Кого берём в сетку. Отборочный круг, если он был, главнее
     # прогнозов: угадать можно и не приходя, а сыграть — нет. Сетка из
     # тех, кто угадал, но ушёл домой, превращает вечер в неявки.
-    qualified = await database.draw_qualify_scores(event_id)
-    if qualified:
-        players = [uid for uid, _ in
-                   sorted(qualified.items(), key=lambda kv: -kv[1])]
-        source = "по отборочному кругу"
-    else:
-        guessed = await database.draw_all_guessed(event_id)
+    # Отдельного отборочного круга нет: ПЕРВЫЙ КРУГ СЕТКИ и есть
+    # перекличка. Пары раздаются всем, кто нажал «Участвовать», и те, кто
+    # не явился, выбывают сами — не явились оба, значит оба и выбыли.
+    # Отдельная стадия только дублировала бы это лишним ожиданием.
+    guessed = await database.draw_all_guessed(event_id)
+    if guessed:
         players = [user_id for user_id, _, _ in guessed]
-        source = "по угаданным матчам"
+        source = "из угадавших все матчи"
+    else:
+        players = await database.draw_members(event_id)
+        source = "из всех участников"
 
     if not players:
         if config.ADMIN_ID:
@@ -375,10 +377,11 @@ async def advance_brackets(bot: Bot) -> int:
         bracket_id = bracket["id"]
         slots = await database.bracket_slots(bracket_id, bracket["round_no"])
         scores = await database.bracket_round_scores(bracket_id)
+        totals = await database.bracket_round_totals(bracket_id)
         seeds = await database.bracket_seeds(bracket_id)
 
         nxt, done = draw_bracket.step(slots, bracket["round_no"],
-                                      bracket["size"], scores, seeds)
+                                      bracket["size"], scores, seeds, totals)
         event = await database.draw_event(event_id=bracket["event_id"])
 
         if done:

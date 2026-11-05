@@ -467,18 +467,6 @@ async def init_db():
             PRIMARY KEY (event_id, place)
         )""")
 
-        # Окно отборочного круга. Прежде чем строить сетку, надо понять,
-        # кто из нажавших «Участвовать» вообще здесь: половина нажимает
-        # из любопытства и больше не возвращается. Отборочный круг это
-        # и выясняет — играют все сразу, пары не нужны.
-        for statement in (
-            f"ALTER TABLE {SCHEMA}.draw_events "
-            f"ADD COLUMN IF NOT EXISTS qualify_opens_at TIMESTAMP",
-            f"ALTER TABLE {SCHEMA}.draw_events "
-            f"ADD COLUMN IF NOT EXISTS qualify_closes_at TIMESTAMP",
-        ):
-            await conn.execute(statement)
-
         # Переписка с победителем. Не общая поддержка, а разговор внутри
         # конкретного конкурса: «куда подойти», «я уже тут», «спасибо».
         # Храним, чтобы владелица видела нить, а не отдельные выкрики.
@@ -1880,36 +1868,6 @@ async def draw_events_list(limit: int = 10):
         return []
 
 
-async def draw_qualify_scores(event_id: int):
-    """{участник: лучшая попытка за отборочное окно}.
-
-    Берётся из журнала попыток по времени — игра про конкурс ничего не
-    знает и знать не должна. Кого здесь нет, тот не играл: именно это и
-    надо увидеть до того, как строить сетку.
-    """
-    pool = await get_pool()
-    if not pool:
-        return {}
-    try:
-        async with pool.acquire() as conn:
-            rows = await conn.fetch(
-                f"""SELECT a.user_id, MAX(a.score) AS best
-                    FROM {SCHEMA}.rally_attempts a
-                    JOIN {SCHEMA}.draw_events e ON e.id = $1
-                    JOIN {SCHEMA}.draw_members m
-                      ON m.event_id = e.id AND m.user_id = a.user_id
-                    WHERE e.qualify_opens_at IS NOT NULL
-                      AND a.made_at >= e.qualify_opens_at
-                      AND (e.qualify_closes_at IS NULL
-                           OR a.made_at < e.qualify_closes_at)
-                    GROUP BY a.user_id""",
-                event_id)
-        return {r["user_id"]: r["best"] for r in rows}
-    except Exception as e:
-        logging.warning(f"Отборочные результаты {event_id} не собрались: {e}")
-        return {}
-
-
 async def draw_prize_set(event_id: int, place: int, photo_file_id: str,
                          caption: str = None) -> bool:
     pool = await get_pool()
@@ -1956,8 +1914,7 @@ async def draw_event_update(event_id: int, **fields) -> bool:
     # первому вхождению в исходнике. Второй такой же набор отобрал бы
     # у него якорь — что однажды уже и случилось.
     editable = {"title", "event_date", "prizes", "rules", "status",
-                "meet_at", "meet_place", "meet_photo", "final_photo",
-                "qualify_opens_at", "qualify_closes_at"}
+                "meet_at", "meet_place", "meet_photo", "final_photo"}
     fields = {k: v for k, v in fields.items() if k in editable}
     if not fields:
         return False
@@ -2125,6 +2082,36 @@ async def bracket_round_scores(bracket_id: int):
         return {r["user_id"]: r["best"] for r in rows}
     except Exception as e:
         logging.warning(f"Счёт круга {bracket_id} не собрался: {e}")
+        return {}
+
+
+async def bracket_round_totals(bracket_id: int):
+    """{участник: СУММА всех его попыток за открытый круг}.
+
+    Нужна как тайбрейк при равном лучшем результате. Решать исход игры
+    по тому, кто раньше нажал кнопку в другом конкурсе, нечестно: человек
+    отыграл круг и проиграл бы за чужое действие. Сумма попыток — тоже
+    игра, просто другая её сторона: кто играл дольше и ровнее.
+    """
+    pool = await get_pool()
+    if not pool:
+        return {}
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"""SELECT a.user_id, SUM(a.score) AS total
+                    FROM {SCHEMA}.rally_attempts a
+                    JOIN {SCHEMA}.draw_brackets b ON b.id = $1
+                    JOIN {SCHEMA}.draw_bracket_slots s
+                      ON s.bracket_id = b.id AND s.round_no = b.round_no
+                     AND s.user_id = a.user_id
+                    WHERE a.made_at >= b.round_opened_at
+                      AND a.made_at < b.round_closes_at
+                    GROUP BY a.user_id""",
+                bracket_id)
+        return {r["user_id"]: r["total"] for r in rows}
+    except Exception as e:
+        logging.warning(f"Суммы круга {bracket_id} не собрались: {e}")
         return {}
 
 

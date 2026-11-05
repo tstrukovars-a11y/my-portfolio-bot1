@@ -162,34 +162,30 @@ def test_the_answer_window_is_a_quarter_of_an_hour():
 
 
 # ---------------------------------------------------------------------
-# Отборочный круг
+# Перекличка — это первый круг сетки
 # ---------------------------------------------------------------------
 #
-# Половина нажавших «Участвовать» делает это из любопытства и больше не
-# возвращается. Сетка из таких превращает вечер в неявки — поэтому перед
-# жеребьёвкой есть перекличка.
+# Отдельной стадии нет намеренно: пары раздаются всем, кто нажал
+# «Участвовать», и не явившиеся выбывают сами. Отдельный отборочный круг
+# только дублировал бы это лишним ожиданием.
 
 
-def test_the_qualifier_lasts_a_quarter_of_an_hour():
-    assert draws.QUALIFY_MINUTES == 15
-
-
-def test_the_qualifier_is_a_roll_call_not_a_tournament():
-    """Играют все сразу, пары не нужны: вопрос только в том, кто здесь."""
-    import inspect
-    body = inspect.getsource(draws.qualify_start)
-    assert "кто на связи" in body
-
-
-def test_the_bracket_prefers_those_who_actually_played():
-    """Угадать можно и не приходя, а сыграть — нет."""
+def test_the_bracket_starts_from_everyone_who_joined():
     import inspect
     import draws_runner
     body = inspect.getsource(draws_runner.start_bracket)
-    assert body.index("draw_qualify_scores") < body.index("draw_all_guessed")
+    assert "draw_members" in body
+
+
+def test_there_is_no_separate_qualifier_stage_left():
+    """Мёртвый код хуже удалённого: он сбивает того, кто откроет файл
+    следующим."""
+    import database
+    assert not hasattr(database, "draw_qualify_scores")
+    assert not hasattr(draws, "QUALIFY_MINUTES")
 
 
 def test_owner_control_buttons_stay_out_of_the_channel():
     import public
-    for data in ("drstatus_1", "drqual_1", "drdraw_1", "drsheet_1"):
+    for data in ("drstatus_1", "drdraw_1", "drsheet_1"):
         assert not public.allowed(data), data

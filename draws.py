@@ -164,8 +164,6 @@ def _panel_kb(event) -> InlineKeyboardMarkup:
                               callback_data=f"drstatus_{eid}")],
         [InlineKeyboardButton(text="🚀 Объявить конкурс в канале",
                               callback_data=f"drlaunch_{eid}")],
-        [InlineKeyboardButton(text="🎮 Отборочный круг",
-                              callback_data=f"drqual_{eid}")],
         [InlineKeyboardButton(text="🎲 Жеребьёвка и старт сетки",
                               callback_data=f"drdraw_{eid}")],
         [InlineKeyboardButton(text="📄 Выгрузить сетку файлом",
@@ -486,11 +484,6 @@ async def send_winners(call: CallbackQuery):
 # Что происходит сейчас
 # ---------------------------------------------------------------------
 
-# Сколько минут длится отборочный круг. Он не соревнование, а перекличка:
-# надо понять, кто из нажавших «Участвовать» действительно здесь.
-QUALIFY_MINUTES = 15
-
-
 @router.callback_query(F.data.startswith("drstatus_"))
 async def status_view(call: CallbackQuery):
     """Живая картина: кто вошёл, кто ответил, кто сыграл.
@@ -511,7 +504,6 @@ async def status_view(call: CallbackQuery):
 
     members = await database.draw_members(event_id)
     polls = await database.draw_polls_of_event(event_id)
-    played = await database.draw_qualify_scores(event_id)
     guessed = await database.draw_all_guessed(event_id)
     winners = await database.draw_winners(event_id)
 
@@ -528,18 +520,6 @@ async def status_view(call: CallbackQuery):
             lines.append("<i>Пока не отмечены все исходы, угадавших не "
                          "посчитать.</i>")
 
-    if event.get("qualify_opens_at"):
-        lines.append("")
-        lines.append(f"<b>Отборочный круг</b>")
-        lines.append(f"Сыграли: <b>{len(played)}</b> из {len(members)}")
-        if played:
-            best = sorted(played.items(), key=lambda kv: -kv[1])[:5]
-            for user_id, score in best:
-                lines.append(f"  • {score} — <code>{user_id}</code>")
-        not_played = [m for m in members if m not in played]
-        if not_played:
-            lines.append(f"Не играли: {len(not_played)}")
-
     if guessed:
         lines.append("")
         lines.append(f"Угадали все матчи: <b>{len(guessed)}</b>")
@@ -554,50 +534,6 @@ async def status_view(call: CallbackQuery):
     await call.message.answer("\n".join(lines),
                               reply_markup=_panel_kb(event),
                               parse_mode="HTML")
-
-
-@router.callback_query(F.data.startswith("drqual_"))
-async def qualify_start(call: CallbackQuery):
-    """Открыть отборочный круг и позвать всех играть."""
-    if not config.is_admin(call.from_user.id):
-        await call.answer()
-        return
-    event_id = int(call.data.split("_")[1])
-    event = await database.draw_event(event_id=event_id)
-    members = await database.draw_members(event_id)
-    if not event:
-        await call.answer("Конкурс не найден.", show_alert=True)
-        return
-    if not members:
-        await call.answer("Пока никто не нажал «Участвовать».",
-                          show_alert=True)
-        return
-
-    opens = datetime.now()
-    await database.draw_event_update(
-        event_id, qualify_opens_at=opens,
-        qualify_closes_at=opens + timedelta(minutes=QUALIFY_MINUTES))
-
-    await call.answer("Зову играть…")
-    import draws_runner
-    keyboard = draws_runner._game_kb()
-    sent = 0
-    for user_id in members:
-        try:
-            await call.bot.send_message(
-                user_id,
-                f"🎮 <b>Отборочный круг</b>\n\n"
-                f"Откройте игру и сыграйте в ближайшие {QUALIFY_MINUTES} "
-                f"минут. Чем длиннее розыгрыш, тем выше вы будете в сетке.\n\n"
-                f"<i>Это ещё не на вылет — мы просто смотрим, кто на связи.</i>",
-                reply_markup=keyboard)
-            sent += 1
-        except Exception:
-            continue
-    await call.message.answer(
-        f"🎮 Отборочный круг открыт на {QUALIFY_MINUTES} минут. "
-        f"Позвали: {sent} из {len(members)}.\n\n"
-        f"<i>Нажмите «Что происходит сейчас», чтобы видеть, кто уже сыграл.</i>")
 
 
 @router.callback_query(F.data.startswith("drdraw_"))

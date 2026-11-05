@@ -84,8 +84,8 @@ def pairs(slots: list) -> list:
     return [(slots[i], slots[i + 1]) for i in range(0, len(slots) - 1, 2)]
 
 
-def advance(pair, scores: dict, seeds: dict = None):
-    """Кто проходит дальше. scores — {участник: счёт} за этот круг.
+def advance(pair, scores: dict, seeds: dict = None, totals: dict = None):
+    """Кто проходит дальше. scores — {участник: лучший счёт} за круг.
 
     Правила разбора, по убыванию силы:
       1. пропуск круга — проходит тот, кто есть;
@@ -93,11 +93,16 @@ def advance(pair, scores: dict, seeds: dict = None):
       3. сыграл один — он и проходит, даже с единицей: явка важнее;
       4. не сыграл никто — ВЫБЫВАЮТ ОБА. Место в следующем круге
          остаётся пустым и работает там как пропуск: соперник проходит
-         без игры. Раньше здесь проходил верхний посев — я считала, что
-         пустое место развалит сетку. Это неверно: пустое место сетка
-         переваривает, а вот проход того, кто не явился, обесценивает
-         правило про явку;
-      5. счёт равный — верхний посев.
+         без игры;
+      5. счёт равный — выше СУММА попыток за круг (totals);
+      6. и она равная — верхний посев.
+
+    ПОЧЕМУ СУММА, А НЕ ПОСЕВ СРАЗУ. Посев у нас задаётся тем, кто раньше
+    ответил на прогнозы, — это совсем другое действие и другой день.
+    Человек отыграл круг и проиграл бы за то, что когда-то нажал кнопку
+    позже: обидно и несправедливо. Сумма попыток — тоже игра, просто
+    другая её сторона. Посев остаётся на самый край, когда по игре
+    неразличимо вообще ничем.
 
     Явка решает намеренно: круги короткие, и «пришёл и сыграл» — это
     ровно то, чего мы просим от участника.
@@ -117,9 +122,15 @@ def advance(pair, scores: dict, seeds: dict = None):
         return a
     if sa is None:
         return b
-    if sa == sb:
-        return _better_seed(a, b, seeds)
-    return a if sa > sb else b
+    if sa != sb:
+        return a if sa > sb else b
+
+    # Лучший результат совпал — смотрим, кто наиграл больше за круг
+    totals = totals or {}
+    ta, tb = totals.get(a, 0), totals.get(b, 0)
+    if ta != tb:
+        return a if ta > tb else b
+    return _better_seed(a, b, seeds)
 
 
 def _better_seed(a, b, seeds):
@@ -129,9 +140,10 @@ def _better_seed(a, b, seeds):
     return a if seeds.get(a, 10 ** 6) <= seeds.get(b, 10 ** 6) else b
 
 
-def next_round(slots: list, scores: dict, seeds: dict = None) -> list:
+def next_round(slots: list, scores: dict, seeds: dict = None,
+               totals: dict = None) -> list:
     """Места следующего круга из мест текущего."""
-    return [advance(p, scores, seeds) for p in pairs(slots)]
+    return [advance(p, scores, seeds, totals) for p in pairs(slots)]
 
 
 def rounds_left(size: int) -> int:
@@ -165,7 +177,7 @@ def last_round_no(size: int) -> int:
 
 
 def step(slots: list, round_no: int, size: int, scores: dict,
-         seeds: dict = None):
+         seeds: dict = None, totals: dict = None):
     """Следующий круг либо итоговые места.
 
     Возвращает (места следующего круга, призовые места). Одно из двух
@@ -181,12 +193,13 @@ def step(slots: list, round_no: int, size: int, scores: dict,
     # Последний круг: пара финала и пара за третье место
     if round_no >= last:
         if len(slots) == 2:
-            return [], places(slots, None, scores, seeds)
+            return [], places(slots, None, scores, seeds, totals)
         if len(slots) >= 4:
-            return [], places(slots[:2], (slots[2], slots[3]), scores, seeds)
+            return [], places(slots[:2], (slots[2], slots[3]), scores,
+                              seeds, totals)
         return [], []
 
-    winners = [advance(p, scores, seeds) for p in current]
+    winners = [advance(p, scores, seeds, totals) for p in current]
 
     # Полуфинал — следом последний круг, значит добавляем проигравших
     if round_no == last - 1 and len(winners) == 2:
@@ -197,7 +210,7 @@ def step(slots: list, round_no: int, size: int, scores: dict,
 
 
 def places(final_slots: list, third_place, scores: dict,
-           seeds: dict = None) -> list:
+           seeds: dict = None, totals: dict = None) -> list:
     """Итоговые места по порядку: первое, второе, третье, четвёртое.
 
     Третье берётся матчем проигравших в полуфинале, который идёт в одном
@@ -213,11 +226,11 @@ def places(final_slots: list, third_place, scores: dict,
     """
     if len(final_slots) != 2:
         return []
-    champion = advance((final_slots[0], final_slots[1]), scores, seeds)
+    champion = advance((final_slots[0], final_slots[1]), scores, seeds, totals)
     runner_up = loser((final_slots[0], final_slots[1]), champion)
     out = [champion, runner_up]
     if third_place:
-        third = advance(third_place, scores, seeds)
+        third = advance(third_place, scores, seeds, totals)
         out.append(third)
         out.append(loser(third_place, third))
     return [x for x in out if x is not None]
