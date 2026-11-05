@@ -482,6 +482,26 @@ async def publish_schedule(bot: Bot, chat: int, thread=None) -> str:
             lines.append("\n" + _pick_question(top))
             rows.append(picks)
 
+        # Время начала понадобится потом — чтобы отличить прогноз,
+        # поставленный до матча, от галочки, поставленной по результату.
+        # Сейчас оно есть, через день из таблички пропадёт.
+        for m in matches:
+            if m.get("id"):
+                await database.remember_match(
+                    m["id"], tour, _full_title(m), _starts(m))
+
+        # НОВОЕ: тот же матч дня стоит анонсировать отдельно — с личными
+        # встречами. Их у источника нет, поэтому бот просит владелицу
+        # заполнить. Просьба уходит в личку и только ей; на сам выпуск
+        # расписания она не влияет — упадёт, и пост всё равно выйдет.
+        if top:
+            try:
+                import tennis_h2h
+                await tennis_h2h.request_missing(
+                    bot, tour, top["id"], _full_title(top))
+            except Exception as e:
+                logging.warning(f"Запрос личных встреч не ушёл: {e}")
+
         # Сетка — последней строкой кнопок: список матчей на сегодня
         # отвечает «что смотреть», сетка — «кто с кем дальше».
         rows.append([InlineKeyboardButton(
@@ -658,6 +678,18 @@ RETIRED = ("retired", "withdrew", "withdrawn", "default", "walkover")
 EVENT_HEADS = {
     "retired": "🚑 <b>Снятие</b>",
     "upset": "⚡️ <b>Неожиданно</b>",
+    # НОВОЕ: громкое не обязательно плохое. Раньше распознавались только
+    # снятие и поражение фаворита — обе новости про то, что у кого-то не
+    # вышло. Матч, который шёл пять сетов, и камбэк с 0:2 громкие не
+    # меньше, а в канал не попадали.
+    #
+    # Заголовки называют факт, а не оценивают его: «Баранка» — имя
+    # сухого сета, «Пять сетов» — их число. «Разгром» и «сенсация»
+    # сюда не ставятся по тому же правилу, что и в _event_text:
+    # оценку читатель поставит сам и не ошибётся.
+    "comeback": "🔁 <b>Отыгрался с 0:2</b>",
+    "marathon": "⏱ <b>Пять сетов</b>",
+    "bagel": "🥯 <b>Баранка</b>",
 }
 
 
@@ -674,6 +706,59 @@ def _seed(side) -> str:
         return ""
     # ESPN ставит 99 тем, у кого места нет: это не 99-я ракетка.
     return str(rank) if 0 < rank < 99 else ""
+
+
+def _sets(match):
+    """Счёт по сетам как [(геймы победителя, геймы проигравшего), ...].
+
+    Порядок пар — от победителя матча, а не от первой строки таблички:
+    иначе «отыгрался с 0:2» не отличить от «вёл 2:0 и проиграл».
+    Незаконченные и пустые сеты пропускаются.
+    """
+    sides = (match.get("sides") or [])[:2]
+    if len(sides) < 2:
+        return []
+    win = next((s for s in sides if s.get("winner")), None)
+    lose = next((s for s in sides if not s.get("winner")), None)
+    if not win or not lose:
+        return []
+
+    rows = [[x.get("value") for x in (s.get("linescores") or [])]
+            for s in (win, lose)]
+    pairs = []
+    for a, b in zip(rows[0], rows[1]):
+        if a is None or b is None:
+            continue
+        pairs.append((int(a), int(b)))
+    return pairs
+
+
+def _loud_score(match) -> str:
+    """Чем примечателен счёт: «comeback», «marathon», «bagel» или ничем.
+
+    Считается ТОЛЬКО по сетам: длительности матча источник не отдаёт, и
+    придумывать её нельзя — «три часа на корте» без часов было бы ровно
+    тем выдуманным числом, которого мы избегаем.
+    """
+    pairs = _sets(match)
+    if len(pairs) < 2:
+        return ""
+
+    # Отыгрыш с 0:2 бывает только в матчах из пяти сетов: там, где
+    # играют до двух побед, проигранный первый сет — обычное дело и
+    # новостью не является.
+    if len(pairs) == 5 and pairs[0][0] < pairs[0][1] and pairs[1][0] < pairs[1][1]:
+        return "comeback"
+
+    if len(pairs) == 5:
+        return "marathon"
+
+    # Сухой сет плюс ни одного конкурентного: 6:0 6:1 громко, а 6:0 7:6
+    # уже обычный матч с одним провалом. Тай-брейк (7:6) сюда не попадёт
+    # сам — разрыв в один гейм.
+    if all(a - b >= 5 for a, b in pairs) and any(b == 0 for _, b in pairs):
+        return "bagel"
+    return ""
 
 
 def _moment(match) -> str:
@@ -922,7 +1007,11 @@ def _event_kind(match) -> str:
     if players_ru.notable(_side_name(lose)) \
             and not players_ru.notable(_side_name(win)):
         return "upset"
-    return ""
+
+    # Неожиданность важнее остального: матч может быть одновременно и
+    # сенсацией, и пятисетовым, но заголовок у поста один, и сильнее
+    # тот, что про исход.
+    return _loud_score(match)
 
 
 async def _event_text(kind: str, match, tour: str) -> str:
@@ -945,7 +1034,7 @@ async def _event_text(kind: str, match, tour: str) -> str:
     # в строке про вылет, — там он часть фразы и читается. Повторённый
     # ещё и в шапке, он превращается в подпись к подписи: глаз его
     # второй раз не берёт, а место занято.
-    head_parts = (rnd,) if kind == "upset" else (event, rnd)
+    head_parts = (event, rnd) if kind == "retired" else (rnd,)
     where = " · ".join(x for x in head_parts if x)
     if where:
         lines.append(f"<i>{html.escape(where)}</i>")
@@ -987,6 +1076,19 @@ async def _event_text(kind: str, match, tour: str) -> str:
     line = _result_line(match)
     if line:
         lines.append(line)
+
+    # Что именно здесь громкого — словами. Счёт это показывает, но
+    # читатель скользит по строке цифр и мимо «1:6 4:6 7:5 6:4 6:3»
+    # проходит, не заметив, что первые два сета проиграны.
+    said = {
+        "comeback": "Проиграл первые два сета и выиграл матч.",
+        "marathon": "Матч продлился все пять сетов.",
+        "bagel": "Сет всухую.",
+    }.get(kind)
+    if said:
+        if kind == "bagel" and sum(1 for _, b in _sets(match) if b == 0) > 1:
+            said = "Два сета всухую."
+        lines.append(said)
 
     if win and lose:
         ranking = await _ranking_line(win, lose, tour)
@@ -1331,6 +1433,15 @@ async def publish_results(bot: Bot, chat: int, thread=None) -> str:
             if event != current:
                 current = event
                 lines.append(f"<i>{html.escape(event)}</i>")
+            # Исход — в запись, пока матч ещё виден в табличке. Через
+            # день-два он из неё пропадёт, и серии прогнозов будет не из
+            # чего считать.
+            sides = (m.get("sides") or [])[:2]
+            winner_side = next((i for i, s in enumerate(sides)
+                                if s.get("winner")), None)
+            if m.get("id") and winner_side is not None and not _cancelled(m):
+                await database.record_winner(m["id"], winner_side)
+
             line = _result_line(m)
             if line:
                 lines.append(line)
@@ -1738,6 +1849,12 @@ async def take_pick(call: CallbackQuery):
     except Exception:
         pass          # разметка могла не измениться — это не ошибка
 
+    # И у остальных подписчиков этого матча: голосование живёт в личных
+    # карточках, и человек должен видеть, как расклад меняется, а не
+    # только свой голос. Своё сообщение пропускаем — оно уже поправлено.
+    await _refresh_cards(call.bot, match_id, names, counts,
+                         skip=call.message.message_id if call.message else None)
+
 
 def _votes_word(n: int) -> str:
     if 11 <= n % 100 <= 14:
@@ -1824,25 +1941,91 @@ async def toggle_match(call: CallbackQuery):
 
 async def _confirm(bot: Bot, user_id: int, tour: str, match_id: str,
                    title: str, starts) -> bool:
-    """Личное подтверждение с кнопкой «выключить». False — бот не пишет."""
+    """Личное подтверждение: статистика, прогноз, выключатель.
+
+    ЗАЧЕМ ЗДЕСЬ ГОЛОСОВАНИЕ. В канале голосуют за один матч из списка —
+    тот, что выбрал бот, а человеку интересен может быть совсем другой.
+    Подписка на матч как раз и называет интересный: здесь голос уместен,
+    и здесь же есть место под статистику, которой в канале не нашлось.
+
+    Доли на кнопках общие: проголосовал один подписчик — проценты
+    меняются у всех, кто подписан на ЭТОТ матч (см. _refresh_cards).
+    """
     shift = await _shift()
     when = (starts + shift).strftime("%H:%M") if starts else "по расписанию"
     lead = await _lead()
-    text = (f"🔔 <b>Напоминание включено</b>\n\n{html.escape(title)}\n"
-            f"Начало в {when}. {_lead_phrase(lead)}\n\n"
-            f"<i>Придёт только вам. На кнопке в канале видно лишь число — "
-            f"сколько человек собирается смотреть.</i>")
-    markup = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
-        text="🔕 Выключить напоминание",
-        callback_data=f"tmute_{tour}_{match_id}")]])
+    parts = [f"🔔 <b>Напоминание включено</b>\n\n{html.escape(title)}\n"
+             f"Начало в {when}. {_lead_phrase(lead)}"]
+
+    # Личные встречи, если владелица их заполнила. Нет — просто не
+    # упоминаем: «статистика недоступна» читателю ничего не даёт.
     try:
-        await bot.send_message(user_id, text, reply_markup=markup)
-        return True
+        import tennis_h2h
+        row = await database.h2h_get(match_id)
+        if row:
+            first, second = tennis_h2h._names(row.get("title") or title)
+            parts.append(tennis_h2h._stats_block(first, second, row))
+    except Exception as e:
+        logging.warning(f"Встречи в карточку {match_id} не попали: {e}")
+
+    parts.append("<i>Придёт только вам. На кнопке в канале видно лишь "
+                 "число — сколько человек собирается смотреть.</i>")
+
+    rows = []
+    match = await _find_match(tour, match_id)
+    picks = await _pick_row(match) if match else None
+    if picks:
+        parts.append(_pick_question(match))
+        rows.append(picks)
+    rows.append([InlineKeyboardButton(
+        text="🔕 Выключить напоминание",
+        callback_data=f"tmute_{tour}_{match_id}")])
+
+    try:
+        sent = await bot.send_message(
+            user_id, "\n\n".join(parts),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+            disable_web_page_preview=True)
     except TelegramForbiddenError:
         return False
     except Exception as e:
         logging.warning(f"Подтверждение {user_id} не ушло: {e}")
         return False
+
+    # Номер карточки — чтобы обновить в ней доли при чужом голосе
+    if picks:
+        await database.remember_card(user_id, match_id, sent.message_id)
+    return True
+
+
+async def _refresh_cards(bot: Bot, match_id: str, names, counts,
+                         skip=None) -> None:
+    """Обновить доли в личных карточках всех подписчиков матча.
+
+    Раньше проценты менялись только там, где нажали, — остальные
+    смотрели на старые. Подписчиков у ОДНОГО матча десятки, а не
+    тысячи, поэтому обойти их всех дешевле, чем кажется; паузу между
+    правками всё равно держим, чтобы не упереться в ограничение
+    Telegram.
+
+    Сбой здесь ничего не ломает: голос уже записан, а карточка
+    обновится при следующем.
+    """
+    for user_id, message_id, tour in await database.match_cards(match_id):
+        if skip and message_id == skip:
+            continue    # там, где нажали, разметку уже поправили
+        try:
+            await bot.edit_message_reply_markup(
+                chat_id=user_id, message_id=message_id,
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    _pick_labels(match_id, names, counts),
+                    [InlineKeyboardButton(
+                        text="🔕 Выключить напоминание",
+                        callback_data=f"tmute_{tour}_{match_id}")],
+                ]))
+        except Exception:
+            pass        # разметка могла не измениться — это не ошибка
+        await asyncio.sleep(0.05)
 
 
 @router.callback_query(F.data.startswith("tmute_"))

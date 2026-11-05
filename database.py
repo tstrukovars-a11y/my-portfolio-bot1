@@ -368,6 +368,98 @@ async def init_db():
             f"ALTER TABLE {SCHEMA}.match_alerts "
             f"ADD COLUMN IF NOT EXISTS result_sent BOOLEAN NOT NULL DEFAULT FALSE")
 
+        # =============================================================
+        # РОЗЫГРЫШИ НА МЕРОПРИЯТИИ
+        # =============================================================
+        #
+        # «Северная Пальмира» — день с несколькими матчами. Зритель
+        # заходит по QR, на каждом матче отвечает на один вопрос, окно
+        # ответа закрывается само, а вечером трое первых получают призы.
+        #
+        # Почему своё окно у каждого опроса, а не «до начала матча».
+        # Здесь голосуют, УЖЕ ГЛЯДЯ на корт: вопрос открывается с первым
+        # мячом и закрывается через четверть часа. Общего правила
+        # «прогноз только до матча» тут не хватает — оно про другой
+        # конкурс, ежедневный, в канале.
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.draw_events (
+            id SERIAL PRIMARY KEY,
+            slug TEXT UNIQUE NOT NULL,
+            title TEXT NOT NULL,
+            event_date DATE,
+            prizes SMALLINT NOT NULL DEFAULT 3,
+            rules TEXT,
+            status TEXT NOT NULL DEFAULT 'open',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.draw_polls (
+            id SERIAL PRIMARY KEY,
+            event_id INTEGER NOT NULL,
+            match_id TEXT,
+            question TEXT NOT NULL,
+            option_a TEXT NOT NULL,
+            option_b TEXT NOT NULL,
+            opens_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            closes_at TIMESTAMP NOT NULL,
+            correct SMALLINT,
+            closed BOOLEAN NOT NULL DEFAULT FALSE
+        )""")
+
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.draw_answers (
+            poll_id INTEGER NOT NULL,
+            user_id BIGINT NOT NULL,
+            side SMALLINT NOT NULL,
+            answered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (poll_id, user_id)
+        )""")
+
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.draw_members (
+            event_id INTEGER NOT NULL,
+            user_id BIGINT NOT NULL,
+            joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (event_id, user_id)
+        )""")
+
+        # Факты о матче, которые нельзя восстановить задним числом.
+        #
+        # Живая табличка источника держит только свежие матчи: через
+        # день-два матч из неё пропадает, и «кто там выиграл» узнать уже
+        # неоткуда. Для конкурса прогнозов это смертельно — серию не из
+        # чего считать. Поэтому исход записывается в ту минуту, когда
+        # его видно.
+        #
+        # Время начала здесь же: по нему видно, поставлен прогноз ДО
+        # матча или после. Известно оно уже при публикации расписания.
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.match_facts (
+            match_id TEXT PRIMARY KEY,
+            tour TEXT,
+            title TEXT,
+            starts_at TIMESTAMP,
+            winner_side SMALLINT,
+            decided_at TIMESTAMP
+        )""")
+
+        # Прогноз, поставленный после начала матча, прогнозом не является.
+        # Запрещать его не стали: в канале по старым постам голосуют, и
+        # это задумано. Вместо запрета — отметка, по которой конкурс
+        # такие голоса просто не считает.
+        await conn.execute(
+            f"ALTER TABLE {SCHEMA}.match_picks "
+            f"ADD COLUMN IF NOT EXISTS before_start BOOLEAN NOT NULL DEFAULT TRUE")
+
+        # Номер личной карточки матча. Нужен, чтобы при чужом голосе
+        # обновить доли у ВСЕХ подписчиков этого матча, а не только у
+        # того, кто нажал: без этого «разброс растёт на глазах» виден
+        # одному человеку, а остальные смотрят на старые проценты.
+        await conn.execute(
+            f"ALTER TABLE {SCHEMA}.match_alerts "
+            f"ADD COLUMN IF NOT EXISTS card_message_id BIGINT")
+
         # Прогнозы на матч. Кнопка в канале одна на всех, а мнение у
         # каждого своё: храним выбор по человеку, показываем — долю.
         await conn.execute(f"""
@@ -377,6 +469,26 @@ async def init_db():
             side SMALLINT NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (user_id, match_id)
+        )""")
+
+        # Личные встречи перед матчем. Заполняет владелица вручную: у
+        # источника табло их нет, а придумывать историю встреч нельзя —
+        # это ровно то выдуманное число, которого мы избегаем везде.
+        #
+        # Поля отдельными колонками, а не одним текстом: так пост
+        # собирается одинаково у всех матчей, и видно, чего не хватает.
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.match_h2h (
+            match_id TEXT PRIMARY KEY,
+            tour TEXT,
+            title TEXT,
+            meetings SMALLINT,
+            wins_first SMALLINT,
+            surfaces TEXT,
+            years TEXT,
+            note TEXT,
+            published BOOLEAN NOT NULL DEFAULT FALSE,
+            filled_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""")
 
         # 3. Таблицы для контента (рецепты и книги)
@@ -1279,20 +1391,322 @@ async def pending_matches():
         return []
 
 
+# ---------------------------------------------------------------------
+# Розыгрыши на мероприятии
+# ---------------------------------------------------------------------
+
+
+async def draw_event_create(slug: str, title: str, event_date=None,
+                            prizes: int = 3, rules: str = None):
+    """Завести мероприятие. Возвращает id либо None."""
+    pool = await get_pool()
+    if not pool:
+        return None
+    try:
+        async with pool.acquire() as conn:
+            return await conn.fetchval(
+                f"""INSERT INTO {SCHEMA}.draw_events
+                    (slug, title, event_date, prizes, rules)
+                    VALUES ($1, $2, $3, $4, $5)
+                    ON CONFLICT (slug) DO UPDATE SET
+                        title = EXCLUDED.title,
+                        event_date = EXCLUDED.event_date,
+                        prizes = EXCLUDED.prizes,
+                        rules = EXCLUDED.rules
+                    RETURNING id""",
+                slug, title, event_date, int(prizes), rules)
+    except Exception as e:
+        logging.error(f"Мероприятие {slug} не завелось: {e}")
+        return None
+
+
+async def draw_event(slug: str = None, event_id: int = None):
+    pool = await get_pool()
+    if not pool:
+        return None
+    try:
+        async with pool.acquire() as conn:
+            if event_id is not None:
+                row = await conn.fetchrow(
+                    f"SELECT * FROM {SCHEMA}.draw_events WHERE id = $1", event_id)
+            else:
+                row = await conn.fetchrow(
+                    f"SELECT * FROM {SCHEMA}.draw_events WHERE slug = $1", slug)
+        return dict(row) if row else None
+    except Exception as e:
+        logging.warning(f"Мероприятие не прочиталось: {e}")
+        return None
+
+
+async def draw_join(event_id: int, user_id: int) -> bool:
+    """Зритель вошёл по QR. Повторный вход — не ошибка."""
+    pool = await get_pool()
+    if not pool:
+        return False
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"INSERT INTO {SCHEMA}.draw_members (event_id, user_id) "
+                f"VALUES ($1, $2) ON CONFLICT DO NOTHING",
+                event_id, user_id)
+        return True
+    except Exception as e:
+        logging.warning(f"Вход на мероприятие {event_id} не записался: {e}")
+        return False
+
+
+async def draw_members(event_id: int):
+    pool = await get_pool()
+    if not pool:
+        return []
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT user_id FROM {SCHEMA}.draw_members WHERE event_id = $1",
+                event_id)
+        return [r["user_id"] for r in rows]
+    except Exception as e:
+        logging.warning(f"Участники {event_id} не прочитались: {e}")
+        return []
+
+
+async def draw_poll_open(event_id: int, question: str, option_a: str,
+                         option_b: str, closes_at, match_id: str = None):
+    """Открыть вопрос. closes_at — когда приём ответов прекращается."""
+    pool = await get_pool()
+    if not pool:
+        return None
+    try:
+        async with pool.acquire() as conn:
+            return await conn.fetchval(
+                f"""INSERT INTO {SCHEMA}.draw_polls
+                    (event_id, match_id, question, option_a, option_b, closes_at)
+                    VALUES ($1, $2, $3, $4, $5, $6) RETURNING id""",
+                event_id, match_id, question, option_a, option_b, closes_at)
+    except Exception as e:
+        logging.error(f"Вопрос не открылся: {e}")
+        return None
+
+
+async def draw_poll(poll_id: int):
+    pool = await get_pool()
+    if not pool:
+        return None
+    try:
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                f"SELECT * FROM {SCHEMA}.draw_polls WHERE id = $1", poll_id)
+        return dict(row) if row else None
+    except Exception as e:
+        logging.warning(f"Вопрос {poll_id} не прочитался: {e}")
+        return None
+
+
+async def draw_answer(poll_id: int, user_id: int, side: int) -> str:
+    """Принять ответ. Возвращает «принят», «закрыт» или «ошибка».
+
+    Окно проверяется В БАЗЕ, а не в коде: часы приложения и часы базы
+    расходятся, а спор «я успел» решается именно здесь. Переставить
+    ответ внутри окна можно — передумать, глядя на корт, это право
+    зрителя; после закрытия нельзя ничего.
+    """
+    pool = await get_pool()
+    if not pool:
+        return "ошибка"
+    try:
+        async with pool.acquire() as conn:
+            open_now = await conn.fetchval(
+                f"SELECT NOT closed AND NOW() < closes_at "
+                f"FROM {SCHEMA}.draw_polls WHERE id = $1", poll_id)
+            if open_now is None:
+                return "ошибка"
+            if not open_now:
+                return "закрыт"
+            await conn.execute(
+                f"INSERT INTO {SCHEMA}.draw_answers (poll_id, user_id, side) "
+                f"VALUES ($1, $2, $3) "
+                f"ON CONFLICT (poll_id, user_id) DO UPDATE SET "
+                f"side = EXCLUDED.side, answered_at = NOW()",
+                poll_id, user_id, int(side))
+        return "принят"
+    except Exception as e:
+        logging.error(f"Ответ на вопрос {poll_id} не записался: {e}")
+        return "ошибка"
+
+
+async def draw_poll_counts(poll_id: int):
+    pool = await get_pool()
+    if not pool:
+        return (0, 0)
+    try:
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                f"SELECT COUNT(*) FILTER (WHERE side = 0) AS a, "
+                f"COUNT(*) FILTER (WHERE side = 1) AS b "
+                f"FROM {SCHEMA}.draw_answers WHERE poll_id = $1", poll_id)
+        return (row["a"], row["b"]) if row else (0, 0)
+    except Exception as e:
+        logging.warning(f"Голоса вопроса {poll_id} не посчитались: {e}")
+        return (0, 0)
+
+
+async def draw_polls_due():
+    """Вопросы, у которых вышло время, но отметки о закрытии ещё нет."""
+    pool = await get_pool()
+    if not pool:
+        return []
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT * FROM {SCHEMA}.draw_polls "
+                f"WHERE NOT closed AND NOW() >= closes_at")
+        return [dict(r) for r in rows]
+    except Exception as e:
+        logging.warning(f"Закрывать нечего — список не пришёл: {e}")
+        return []
+
+
+async def draw_poll_close(poll_id: int, correct: int = None) -> None:
+    """Закрыть приём и, если исход известен, записать верный ответ."""
+    pool = await get_pool()
+    if not pool:
+        return
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"UPDATE {SCHEMA}.draw_polls SET closed = TRUE, "
+                f"correct = COALESCE($2, correct) WHERE id = $1",
+                poll_id, None if correct is None else int(correct))
+    except Exception as e:
+        logging.warning(f"Вопрос {poll_id} не закрылся: {e}")
+
+
+async def draw_standings(event_id: int):
+    """Таблица мероприятия: [(user_id, угадано, когда закрыл последний)].
+
+    Сортировка — по числу угаданных, а при равенстве по времени
+    последнего ответа: решился раньше — выше. Это не приз, а порядок в
+    таблице; одинаковые суммы разводит уже сетка.
+    """
+    pool = await get_pool()
+    if not pool:
+        return []
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"""SELECT a.user_id,
+                           COUNT(*) FILTER (WHERE a.side = p.correct) AS hits,
+                           MAX(a.answered_at) AS last_at
+                    FROM {SCHEMA}.draw_answers a
+                    JOIN {SCHEMA}.draw_polls p ON p.id = a.poll_id
+                    WHERE p.event_id = $1 AND p.correct IS NOT NULL
+                    GROUP BY a.user_id
+                    ORDER BY hits DESC, last_at ASC""",
+                event_id)
+        return [(r["user_id"], r["hits"], r["last_at"]) for r in rows]
+    except Exception as e:
+        logging.warning(f"Таблица мероприятия {event_id} не собралась: {e}")
+        return []
+
+
+async def remember_match(match_id: str, tour: str, title: str,
+                         starts_at) -> None:
+    """Запомнить матч и время его начала — при публикации расписания.
+
+    Исход не трогаем: он приходит позже, и повторная публикация
+    расписания не должна его стирать.
+    """
+    pool = await get_pool()
+    if not pool:
+        return
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"""INSERT INTO {SCHEMA}.match_facts
+                    (match_id, tour, title, starts_at)
+                    VALUES ($1, $2, $3, $4)
+                    ON CONFLICT (match_id) DO UPDATE SET
+                        tour = EXCLUDED.tour, title = EXCLUDED.title,
+                        starts_at = COALESCE(EXCLUDED.starts_at,
+                                             {SCHEMA}.match_facts.starts_at)""",
+                match_id, tour, title, starts_at)
+    except Exception as e:
+        logging.warning(f"Матч {match_id} не запомнился: {e}")
+
+
+async def record_winner(match_id: str, winner_side: int) -> None:
+    """Записать исход — один раз, в минуту, когда он виден.
+
+    Переписывать уже записанное не даём: итоги выходят каждое утро, и
+    повторный проход по вчерашнему дню не должен менять историю, на
+    которой считаются серии.
+    """
+    pool = await get_pool()
+    if not pool:
+        return
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"""INSERT INTO {SCHEMA}.match_facts
+                    (match_id, winner_side, decided_at)
+                    VALUES ($1, $2, NOW())
+                    ON CONFLICT (match_id) DO UPDATE SET
+                        winner_side = COALESCE({SCHEMA}.match_facts.winner_side,
+                                               EXCLUDED.winner_side),
+                        decided_at = COALESCE({SCHEMA}.match_facts.decided_at,
+                                              EXCLUDED.decided_at)""",
+                match_id, int(winner_side))
+    except Exception as e:
+        logging.warning(f"Исход {match_id} не записался: {e}")
+
+
+async def match_fact(match_id: str):
+    """Что мы знаем о матче: время начала и исход. None — не знаем ничего."""
+    pool = await get_pool()
+    if not pool:
+        return None
+    try:
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                f"SELECT match_id, tour, title, starts_at, winner_side, "
+                f"decided_at FROM {SCHEMA}.match_facts WHERE match_id = $1",
+                match_id)
+        return dict(row) if row else None
+    except Exception as e:
+        logging.warning(f"Факты о матче {match_id} не прочитались: {e}")
+        return None
+
+
 async def save_pick(match_id: str, user_id: int, side: int):
     """Прогноз читателя. Передумал — засчитываем последний ответ.
 
     Возвращает (голоса за первого, голоса за второго) либо None, если
     записать не вышло: молча «сохранено» говорить нельзя.
+
+    ОТМЕТКА «ДО НАЧАЛА». Голос, поставленный после первого мяча, в
+    конкурсе не считается — иначе можно дождаться результата и поставить
+    галочку на победителя. Голосовать при этом никто не мешает: в канале
+    по старым постам голосуют, и так задумано. Переставленный после
+    начала голос отметку теряет — то есть выбывает из зачёта, а не
+    подменяет собой прежний.
     """
     try:
         pool = await get_pool()
         async with pool.acquire() as conn:
+            # Время начала знаем из расписания. Не знаем — считаем, что
+            # прогноз честный: наказывать за наш же пробел нельзя.
+            before = await conn.fetchval(
+                f"SELECT starts_at IS NULL OR NOW() < starts_at "
+                f"FROM {SCHEMA}.match_facts WHERE match_id = $1", match_id)
+            if before is None:
+                before = True
             await conn.execute(
-                f"INSERT INTO {SCHEMA}.match_picks (user_id, match_id, side) "
-                "VALUES ($1, $2, $3) "
-                "ON CONFLICT (user_id, match_id) DO UPDATE SET side = $3",
-                user_id, match_id, int(side))
+                f"INSERT INTO {SCHEMA}.match_picks "
+                f"(user_id, match_id, side, before_start) "
+                "VALUES ($1, $2, $3, $4) "
+                "ON CONFLICT (user_id, match_id) DO UPDATE SET "
+                "side = $3, before_start = $4",
+                user_id, match_id, int(side), bool(before))
             row = await conn.fetchrow(
                 f"SELECT COUNT(*) FILTER (WHERE side = 0) AS a, "
                 f"COUNT(*) FILTER (WHERE side = 1) AS b "
@@ -1301,6 +1715,104 @@ async def save_pick(match_id: str, user_id: int, side: int):
     except Exception as e:
         logging.error(f"Прогноз не сохранился: {e}")
         return None
+
+
+async def remember_card(user_id: int, match_id: str, message_id: int) -> None:
+    """Запомнить личную карточку матча, чтобы потом обновить в ней доли."""
+    pool = await get_pool()
+    if not pool:
+        return
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"UPDATE {SCHEMA}.match_alerts SET card_message_id = $1 "
+                f"WHERE user_id = $2 AND match_id = $3",
+                message_id, user_id, match_id)
+    except Exception as e:
+        logging.warning(f"Карточка {user_id}/{match_id} не запомнилась: {e}")
+
+
+async def match_cards(match_id: str):
+    """[(user_id, message_id, tour)] — личные карточки этого матча.
+
+    Тур возвращается вместе с ними: кнопка «выключить напоминание»
+    собирается из него, а в обработчике голоса тура нет — там только
+    номер матча.
+    """
+    pool = await get_pool()
+    if not pool:
+        return []
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT user_id, card_message_id, tour "
+                f"FROM {SCHEMA}.match_alerts "
+                f"WHERE match_id = $1 AND card_message_id IS NOT NULL",
+                match_id)
+        return [(r["user_id"], r["card_message_id"], r["tour"]) for r in rows]
+    except Exception as e:
+        logging.warning(f"Карточки матча {match_id} не прочитались: {e}")
+        return []
+
+
+# ---------------------------------------------------------------------
+# Личные встречи
+# ---------------------------------------------------------------------
+
+
+async def h2h_get(match_id: str):
+    """Заполненная статистика или None"""
+    pool = await get_pool()
+    if not pool:
+        return None
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            f"SELECT match_id, tour, title, meetings, wins_first, surfaces, "
+            f"years, note, published FROM {SCHEMA}.match_h2h WHERE match_id = $1",
+            match_id)
+    return dict(row) if row else None
+
+
+async def h2h_save(match_id: str, tour: str, title: str, meetings: int,
+                   wins_first: int, surfaces: str, years: str,
+                   note: str = None) -> bool:
+    """Сохранить присланное. Повторное заполнение переписывает старое и
+    снимает отметку о публикации: исправили — значит, публиковать заново."""
+    pool = await get_pool()
+    if not pool:
+        return False
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"""INSERT INTO {SCHEMA}.match_h2h
+                    (match_id, tour, title, meetings, wins_first, surfaces,
+                     years, note, published, filled_at)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, FALSE, NOW())
+                    ON CONFLICT (match_id) DO UPDATE SET
+                        tour = EXCLUDED.tour, title = EXCLUDED.title,
+                        meetings = EXCLUDED.meetings,
+                        wins_first = EXCLUDED.wins_first,
+                        surfaces = EXCLUDED.surfaces, years = EXCLUDED.years,
+                        note = EXCLUDED.note, published = FALSE,
+                        filled_at = NOW()""",
+                match_id, tour, title, meetings, wins_first, surfaces, years, note)
+        return True
+    except Exception as e:
+        logging.error(f"Личные встречи {match_id} не сохранились: {e}")
+        return False
+
+
+async def h2h_mark_published(match_id: str) -> None:
+    pool = await get_pool()
+    if not pool:
+        return
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"UPDATE {SCHEMA}.match_h2h SET published = TRUE WHERE match_id = $1",
+                match_id)
+    except Exception as e:
+        logging.warning(f"Отметка о публикации {match_id} не легла: {e}")
 
 
 async def pick_counts(match_id: str):

@@ -1,0 +1,340 @@
+#  tennis_h2h.py
+#  Личные встречи перед матчем: бот спрашивает — владелица отвечает.
+#
+#  ЗАЧЕМ ВРУЧНУЮ. Источник табло отдаёт расписание и счёт, но не историю
+#  встреч: ни кто кого обыгрывал, ни на каком покрытии, ни в каком году.
+#  Своей истории у нас тоже нет — таблица рейтинга хранит место, имя и
+#  страну, и больше ничего. Значит, остаются два пути: выдумать или
+#  спросить у человека. Выдумывать запрещено тем же правилом, по
+#  которому отложено движение по рейтингу и по которому в books_seed.py
+#  нельзя генерировать книги.
+#
+#  ПОЧЕМУ ПО ПОЛЯМ, А НЕ ОДНИМ ТЕКСТОМ. Отдельные колонки дают два
+#  свойства, которых у свободного текста нет: пост собирается одинаково
+#  у каждого матча, и видно, чего именно не хватает. Платим за это
+#  четырьмя вопросами вместо одного сообщения.
+#
+#  ВЕСЬ ДИАЛОГ — ТОЛЬКО В ЛИЧКЕ И ТОЛЬКО У ВЛАДЕЛИЦЫ. Кнопки этого
+#  модуля сознательно НЕ внесены в public.PUBLIC_OK: под постом в канале
+#  им делать нечего, и если такая кнопка там однажды окажется, граница
+#  её не пропустит.
+
+import html
+import logging
+
+from aiogram import Bot, F, Router
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import (CallbackQuery, InlineKeyboardButton,
+                           InlineKeyboardMarkup, Message)
+
+import config
+import database
+
+router = Router()
+
+
+class Filling(StatesGroup):
+    meetings = State()
+    wins_first = State()
+    surfaces = State()
+    years = State()
+    note = State()
+
+
+# Сколько встреч считаем правдоподобным. Не защита от злого умысла —
+# защита от опечатки: «44» вместо «4» уехало бы в канал как факт.
+MAX_MEETINGS = 60
+
+SKIP = ("-", "–", "—", "нет", "пропустить", "далее")
+
+
+def _skipped(text: str) -> bool:
+    return (text or "").strip().lower() in SKIP
+
+
+def _names(title: str):
+    """«Рублёв — Алькарас» -> («Рублёв», «Алькарас»)"""
+    for dash in (" — ", " - ", " – "):
+        if dash in title:
+            left, right = title.split(dash, 1)
+            return left.strip(), right.strip()
+    return title.strip(), ""
+
+
+# ---------------------------------------------------------------------
+# Запрос владелице
+# ---------------------------------------------------------------------
+
+def _ask_markup(tour: str, match_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✍️ Заполнить",
+                              callback_data=f"h2hfill_{tour}_{match_id}")],
+        [InlineKeyboardButton(text="🔄 Обновить",
+                              callback_data=f"h2hgo_{tour}_{match_id}")],
+    ])
+
+
+async def request_missing(bot: Bot, tour: str, match_id: str,
+                          title: str) -> bool:
+    """Написать владелице, что статистики по матчу нет.
+
+    Молчим, если она уже заполнена: повторная просьба по тому же матчу
+    превращает бота в надоеду, а список дел — в шум, который перестают
+    читать.
+    """
+    if not config.ADMIN_ID:
+        return False
+    if await database.h2h_get(match_id):
+        return False
+
+    try:
+        await bot.send_message(
+            config.ADMIN_ID,
+            f"📊 <b>Статистики по этому матчу нет</b>\n\n"
+            f"{html.escape(title)}\n\n"
+            f"Заполните личные встречи — и матч можно анонсировать. "
+            f"Если встреч не было, так и укажите: «0» в первом вопросе.",
+            reply_markup=_ask_markup(tour, match_id))
+        return True
+    except Exception as e:
+        logging.warning(f"Запрос статистики {match_id} не ушёл: {e}")
+        return False
+
+
+# ---------------------------------------------------------------------
+# Диалог
+# ---------------------------------------------------------------------
+
+@router.callback_query(F.data.startswith("h2hfill_"))
+async def start_filling(call: CallbackQuery, state: FSMContext):
+    if not config.is_admin(call.from_user.id):
+        await call.answer()
+        return
+    try:
+        _, tour, match_id = call.data.split("_", 2)
+    except ValueError:
+        await call.answer()
+        return
+    await call.answer()
+
+    title = (call.message.text or "").split("\n\n")[1] if call.message.text else ""
+    first, second = _names(title)
+    await state.set_state(Filling.meetings)
+    await state.update_data(tour=tour, match_id=match_id, title=title,
+                            first=first, second=second)
+    await call.message.answer(
+        f"1/4. Сколько раз они играли между собой?\n\n"
+        f"<i>Число. Если встреч не было — 0.</i>")
+
+
+@router.message(Filling.meetings)
+async def take_meetings(message: Message, state: FSMContext):
+    try:
+        meetings = int((message.text or "").strip())
+        if meetings < 0 or meetings > MAX_MEETINGS:
+            raise ValueError
+    except ValueError:
+        await message.answer(
+            f"Нужно число от 0 до {MAX_MEETINGS}. Сколько раз играли?")
+        return
+
+    data = await state.update_data(meetings=meetings)
+
+    # Нисколько — остальные три вопроса бессмысленны: не на каком
+    # покрытии и не в какие годы они не играли.
+    if meetings == 0:
+        await state.clear()
+        ok = await database.h2h_save(
+            data["match_id"], data["tour"], data["title"],
+            0, 0, None, None, None)
+        await _show_summary(message, data, ok, meetings=0, wins_first=0,
+                            surfaces=None, years=None, note=None)
+        return
+
+    first = data.get("first") or "первый"
+    await state.set_state(Filling.wins_first)
+    await message.answer(
+        f"2/4. Сколько из этих {meetings} выиграл: {html.escape(first)}?\n\n"
+        f"<i>Второе число посчитаю сам.</i>")
+
+
+@router.message(Filling.wins_first)
+async def take_wins(message: Message, state: FSMContext):
+    data = await state.get_data()
+    meetings = data.get("meetings") or 0
+    try:
+        wins = int((message.text or "").strip())
+        if wins < 0 or wins > meetings:
+            raise ValueError
+    except ValueError:
+        await message.answer(
+            f"Нужно число от 0 до {meetings} — больше встреч, чем было, "
+            f"выиграть нельзя. Сколько?")
+        return
+
+    await state.update_data(wins_first=wins)
+    await state.set_state(Filling.surfaces)
+    await message.answer(
+        "3/4. На каких покрытиях играли?\n\n"
+        "<i>Через запятую: хард, грунт. Пропустить — поставьте прочерк.</i>")
+
+
+@router.message(Filling.surfaces)
+async def take_surfaces(message: Message, state: FSMContext):
+    text = (message.text or "").strip()
+    await state.update_data(surfaces=None if _skipped(text) else text[:120])
+    await state.set_state(Filling.years)
+    await message.answer(
+        "4/4. В каких годах?\n\n"
+        "<i>Через запятую: 2023, 2024. Пропустить — прочерк.</i>")
+
+
+@router.message(Filling.years)
+async def take_years(message: Message, state: FSMContext):
+    text = (message.text or "").strip()
+    await state.update_data(years=None if _skipped(text) else text[:120])
+    await state.set_state(Filling.note)
+    await message.answer(
+        "Хотите добавить строчку своими словами? Она встанет в конце поста.\n\n"
+        "<i>Не нужно — поставьте прочерк.</i>")
+
+
+@router.message(Filling.note)
+async def take_note(message: Message, state: FSMContext):
+    text = (message.text or "").strip()
+    note = None if _skipped(text) else text[:400]
+    data = await state.get_data()
+    await state.clear()
+
+    ok = await database.h2h_save(
+        data["match_id"], data["tour"], data["title"],
+        data.get("meetings") or 0, data.get("wins_first") or 0,
+        data.get("surfaces"), data.get("years"), note)
+
+    await _show_summary(message, data, ok,
+                        meetings=data.get("meetings") or 0,
+                        wins_first=data.get("wins_first") or 0,
+                        surfaces=data.get("surfaces"),
+                        years=data.get("years"), note=note)
+
+
+async def _show_summary(message: Message, data, ok: bool, **fields) -> None:
+    """Показать, что получилось, до публикации.
+
+    Исправлять дешевле, чем отзывать: пост в канале уже прочитали, а
+    эту карточку видит только владелица.
+    """
+    if not ok:
+        await message.answer("⚠ Не сохранилось. Нажмите «Заполнить» ещё раз.")
+        return
+
+    body = _stats_block(data.get("first"), data.get("second"), fields)
+    await message.answer(
+        f"Вот что получилось:\n\n{body}\n\nПубликуем?",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text="📤 Опубликовать",
+                callback_data=f"h2hgo_{data['tour']}_{data['match_id']}")],
+            [InlineKeyboardButton(
+                text="✍️ Заполнить заново",
+                callback_data=f"h2hfill_{data['tour']}_{data['match_id']}")],
+        ]))
+
+
+# ---------------------------------------------------------------------
+# Текст поста
+# ---------------------------------------------------------------------
+
+def _stats_block(first: str, second: str, f) -> str:
+    """Готовый кусок про личные встречи.
+
+    Имена ставятся ПОСЛЕ двоеточия, а не в середину фразы: склонять
+    фамилии автоматически нельзя, и «ведёт Алькарас» на месте «ведёт
+    Медведев» превратилось бы в «ведёт Медведев» там, где нужно
+    «ведёт Медведева». Та же оговорка уже стоит в _pick_verdict.
+    """
+    meetings = f.get("meetings") or 0
+    if not meetings:
+        return "Играют между собой впервые."
+
+    wins_first = f.get("wins_first") or 0
+    wins_second = meetings - wins_first
+
+    lines = [f"Личные встречи: {meetings}"]
+    score = f"Счёт — {wins_first}:{wins_second}"
+    if wins_first != wins_second:
+        ahead = first if wins_first > wins_second else second
+        if ahead:
+            score += f", впереди: {html.escape(ahead)}"
+    else:
+        score += ", поровну"
+    lines.append(score)
+
+    if f.get("surfaces"):
+        lines.append(f"Покрытия: {html.escape(f['surfaces'])}")
+    if f.get("years"):
+        lines.append(f"Годы: {html.escape(f['years'])}")
+    if f.get("note"):
+        lines.append("")
+        lines.append(html.escape(f["note"]))
+    return "\n".join(lines)
+
+
+def preview_text(row) -> str:
+    """Пост «Перед матчем» целиком"""
+    title = row.get("title") or "матч"
+    first, second = _names(title)
+    block = _stats_block(first, second, row)
+    return (f"📊 <b>Перед матчем</b>\n\n"
+            f"<b>{html.escape(title)}</b>\n\n"
+            f"{block}")
+
+
+# ---------------------------------------------------------------------
+# Публикация
+# ---------------------------------------------------------------------
+
+async def publish(bot: Bot, chat: int, tour: str, match_id: str,
+                  thread=None) -> str:
+    """Выпустить анонс. Возвращает строку отчёта для владелицы."""
+    row = await database.h2h_get(match_id)
+    if not row:
+        return "статистики всё ещё нет"
+    if row.get("published"):
+        return "этот матч уже анонсирован"
+
+    try:
+        await bot.send_message(chat, preview_text(row),
+                               message_thread_id=thread,
+                               disable_web_page_preview=True)
+    except Exception as e:
+        logging.error(f"Анонс {match_id} не вышел: {e}")
+        return f"не вышло: {e}"
+
+    await database.h2h_mark_published(match_id)
+    return "опубликовано"
+
+
+@router.callback_query(F.data.startswith("h2hgo_"))
+async def publish_now(call: CallbackQuery):
+    if not config.is_admin(call.from_user.id):
+        await call.answer()
+        return
+    try:
+        _, tour, match_id = call.data.split("_", 2)
+    except ValueError:
+        await call.answer()
+        return
+
+    # Канал — тот же, куда выходит дайджест: он задаётся настройкой, а не
+    # константой, и расходиться с остальными постами здесь незачем.
+    import digest
+    chat, thread = await digest._target()
+    if not chat:
+        await call.answer("Канал не задан.", show_alert=True)
+        return
+
+    await call.answer("Публикую…")
+    result = await publish(call.bot, chat, tour, match_id, thread)
+    await call.message.answer(f"📊 {result}")

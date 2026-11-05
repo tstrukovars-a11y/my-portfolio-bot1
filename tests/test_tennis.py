@@ -898,13 +898,18 @@ def test_the_surprise_header_is_a_word_not_a_noun():
     assert ta.EVENT_HEADS["upset"].count("Неожиданно") == 1
 
 
-def test_the_tournament_is_named_once_in_a_surprise():
+def test_the_tournament_is_named_once_in_every_result_post():
     """Повторённый в шапке и внизу, он превращается в подпись к
-    подписи: глаз его второй раз не берёт, а место занято."""
+    подписи: глаз его второй раз не берёт, а место занято.
+
+    Правило было написано для «Неожиданно», но держится на той же
+    строке «покидает турнир» — а её печатают и камбэк, и пять сетов,
+    и баранка. Поэтому шапка называет турнир только у снятия: там
+    этой строки нет."""
     source = open("tennis_alerts.py", encoding="utf-8").read()
     body = source[source.index("async def _event_text"):]
     body = body[:body.index("def _side_name_ru")]
-    assert 'head_parts = (rnd,) if kind == "upset"' in body
+    assert 'head_parts = (event, rnd) if kind == "retired" else (rnd,)' in body
 
 
 def test_the_link_is_called_plainly():
@@ -1079,3 +1084,174 @@ def test_the_official_highlights_sit_beside_the_other_places():
     assert tennis_live.BOLSHE_URL in urls, "«Больше» пропала"
     assert tennis_live.PRIME_SPORT_URL in urls, "«Прайм» пропал"
     assert tennis_live.TOURS["atp"]["highlights"] in urls, "хайлайтов нет"
+
+
+# =====================================================================
+# ГРОМКОЕ НЕ ОБЯЗАТЕЛЬНО ПЛОХОЕ
+# =====================================================================
+#
+# Раньше событий было два, и оба про неудачу: снятие и поражение
+# фаворита. Пятисетовый матч и отыгрыш с 0:2 в канал не попадали вовсе.
+# Распознаётся это только по сетам — длительности матча источник не
+# отдаёт, и выдумывать её нельзя.
+
+
+def _with_sets(match, pairs):
+    """Счёт по сетам парами (победитель, проигравший)."""
+    sides = match["sides"]
+    win = next(s for s in sides if s.get("winner"))
+    lose = next(s for s in sides if not s.get("winner"))
+    win["linescores"] = [{"value": float(a)} for a, _ in pairs]
+    lose["linescores"] = [{"value": float(b)} for _, b in pairs]
+    return match
+
+
+def test_comeback_from_two_sets_down_is_an_event():
+    m = _with_sets(_played("Andrey Rublev", "Carlos Alcaraz",
+                           winner="Andrey Rublev"),
+                   [(4, 6), (3, 6), (6, 4), (7, 5), (6, 3)])
+    assert ta._event_kind(m) == "comeback"
+
+
+def test_five_sets_without_a_comeback_is_a_marathon():
+    m = _with_sets(_played("Andrey Rublev", "Carlos Alcaraz",
+                           winner="Andrey Rublev"),
+                   [(6, 4), (3, 6), (6, 4), (4, 6), (6, 3)])
+    assert ta._event_kind(m) == "marathon"
+
+
+def test_losing_the_first_set_in_three_is_not_a_comeback():
+    """Иначе «громким» станет каждый второй матч."""
+    m = _with_sets(_played("Andrey Rublev", "Carlos Alcaraz",
+                           winner="Andrey Rublev"),
+                   [(4, 6), (6, 3), (6, 4)])
+    assert ta._event_kind(m) == ""
+
+
+def test_a_bagel_is_an_event():
+    m = _with_sets(_played("Andrey Rublev", "Carlos Alcaraz",
+                           winner="Andrey Rublev"),
+                   [(6, 0), (6, 1)])
+    assert ta._event_kind(m) == "bagel"
+
+
+def test_a_tiebreak_set_is_not_a_bagel():
+    """7:6 — разрыв в один гейм, какой бы сухой ни была вторая партия."""
+    m = _with_sets(_played("Andrey Rublev", "Carlos Alcaraz",
+                           winner="Andrey Rublev"),
+                   [(6, 0), (7, 6)])
+    assert ta._event_kind(m) == ""
+
+
+def test_an_ordinary_win_stays_silent():
+    m = _with_sets(_played("Andrey Rublev", "Carlos Alcaraz",
+                           winner="Andrey Rublev"),
+                   [(6, 4), (6, 3)])
+    assert ta._event_kind(m) == ""
+
+
+def test_an_upset_outranks_a_loud_score():
+    """Матч бывает и сенсацией, и пятисетовым. Заголовок один, и сильнее
+    тот, что про исход."""
+    m = _with_sets(_played("Aryna Sabalenka", "Totally Unknown Player",
+                           winner="Totally Unknown Player"),
+                   [(4, 6), (3, 6), (6, 4), (7, 5), (6, 3)])
+    assert ta._event_kind(m) == "upset"
+
+
+def test_two_unknowns_stay_silent_even_in_five_sets():
+    m = _with_sets(_played("Totally Unknown Player", "Another Unknown One",
+                           winner="Another Unknown One"),
+                   [(4, 6), (3, 6), (6, 4), (7, 5), (6, 3)])
+    assert ta._event_kind(m) == ""
+
+
+def test_retirement_still_wins_over_everything():
+    m = _with_sets(_played("Daniil Medvedev", "Totally Unknown Player",
+                           winner="Totally Unknown Player", state="Retired"),
+                   [(6, 0), (6, 0)])
+    assert ta._event_kind(m) == "retired"
+
+
+def test_every_loud_kind_has_a_heading():
+    """Без заголовка пост вышел бы с чужой шапкой «Неожиданно»."""
+    for kind in ("comeback", "marathon", "bagel"):
+        assert kind in ta.EVENT_HEADS
+
+
+# =====================================================================
+# ГОЛОСОВАНИЕ В ЛИЧНОЙ КАРТОЧКЕ МАТЧА
+# =====================================================================
+#
+# В канале голосуют за один матч из списка — тот, что выбрал бот. Матч,
+# на который человек подписался, может быть совсем другим, и голос
+# уместен именно там. А раз карточки личные, доли надо обновлять у всех
+# подписчиков матча, а не только у того, кто нажал.
+
+
+class _FakeBot:
+    """Запоминает правки разметки вместо их отправки"""
+
+    def __init__(self):
+        self.edits = []
+
+    async def edit_message_reply_markup(self, chat_id, message_id, reply_markup):
+        self.edits.append((chat_id, message_id, reply_markup))
+
+
+def _run_refresh(monkeypatch, cards, skip=None):
+    """Прогнать обновление карточек на поддельном боте.
+
+    Паузу между правками убираем, но ОРИГИНАЛЬНЫМ sleep: ta.asyncio —
+    это сам модуль asyncio, и лямбда, зовущая внутри asyncio.sleep,
+    позвала бы саму себя. На этом весь прогон тестов уходил в
+    бесконечную рекурсию и падал по сигналу.
+    """
+    import asyncio
+    real_sleep = asyncio.sleep
+    monkeypatch.setattr(ta.database, "match_cards",
+                        lambda match_id: real_sleep(0, result=cards))
+    monkeypatch.setattr(ta.asyncio, "sleep",
+                        lambda *a, **k: real_sleep(0))
+    bot = _FakeBot()
+    # Голосов берём с запасом над PICK_MIN: ниже порога доли на кнопках
+    # не печатаются совсем, и проверять было бы нечего.
+    votes = [ta.PICK_MIN * 3, ta.PICK_MIN]
+    asyncio.run(ta._refresh_cards(bot, "m1", ["Рублёв", "Алькарас"],
+                                  votes, skip=skip))
+    return bot
+
+
+def test_every_subscriber_card_is_refreshed(monkeypatch):
+    bot = _run_refresh(monkeypatch, [(10, 100, "atp"), (11, 101, "atp")])
+    assert [chat for chat, _, _ in bot.edits] == [10, 11]
+
+
+def test_the_card_where_the_vote_was_cast_is_skipped(monkeypatch):
+    """Там разметку уже поправили на месте — второй правкой Telegram
+    ответит «ничего не изменилось»."""
+    bot = _run_refresh(monkeypatch, [(10, 100, "atp"), (11, 101, "atp")],
+                       skip=100)
+    assert [chat for chat, _, _ in bot.edits] == [11]
+
+
+def test_the_mute_button_keeps_its_tour(monkeypatch):
+    """В обработчике голоса тура нет — он берётся из подписки. Без него
+    кнопка выключения перестала бы разбираться."""
+    bot = _run_refresh(monkeypatch, [(10, 100, "wta")])
+    rows = bot.edits[0][2].inline_keyboard
+    assert rows[-1][0].callback_data == "tmute_wta_m1"
+
+
+def test_refreshed_cards_show_the_shares(monkeypatch):
+    """Три к одному — значит 75 и 25 процентов на кнопках."""
+    bot = _run_refresh(monkeypatch, [(10, 100, "atp")])
+    labels = [b.text for b in bot.edits[0][2].inline_keyboard[0]]
+    assert any("75%" in x for x in labels)
+    assert any("25%" in x for x in labels)
+
+
+def test_a_card_without_a_number_is_not_refreshed(monkeypatch):
+    """Карточки без голосования номер не запоминают — обновлять нечего."""
+    bot = _run_refresh(monkeypatch, [])
+    assert bot.edits == []
