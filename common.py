@@ -4,6 +4,8 @@ from aiogram.types import (Message, CallbackQuery, InputMediaPhoto,
 from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramBadRequest
 
+import logging
+
 import config
 import database  # Импортируем нашу БД
 import inline_kb
@@ -25,6 +27,47 @@ async def is_subscriber(bot: Bot, user_id: int) -> bool:
         return member.status not in ("left", "kicked")
     except Exception:
         return False
+
+
+_username_cache = {}
+
+
+async def bot_username(bot: Bot = None) -> str:
+    """Имя бота для глубоких ссылок. Пустая строка — если узнать негде.
+
+    Имя кладётся в настройку при запуске (main.py спрашивает get_me).
+    Но если в ту секунду не ответила база, настройка осталась пустой, и
+    ВСЕ ссылки из канала молча перестают строиться до перезапуска —
+    кнопки есть, ведут в никуда.
+
+    Поэтому спрашиваем ещё и на месте: бот знает своё имя всегда, это
+    один вызов к Telegram. Ответ держим в памяти, чтобы не дёргать его
+    на каждую кнопку.
+    """
+    cached = _username_cache.get("name")
+    if cached:
+        return cached
+
+    name = (await database.get_setting("bot_username") or "").lstrip("@")
+    if not name and bot is not None:
+        try:
+            me = await bot.get_me()
+            name = (me.username or "").lstrip("@")
+            if name:
+                await database.set_setting("bot_username", name)
+                logging.info(f"Имя бота доспрошено на месте: @{name}")
+        except Exception as e:
+            logging.warning(f"Имя бота не определилось: {e}")
+
+    if name:
+        _username_cache["name"] = name
+    return name
+
+
+async def deep_link(payload: str, bot: Bot = None) -> str:
+    """Ссылка, открывающая бота с параметром. Пусто — имя неизвестно."""
+    name = await bot_username(bot)
+    return f"https://t.me/{name}?start={payload}" if name else ""
 
 
 async def check_channel_subscriptions(bot: Bot, user_id: int) -> bool:

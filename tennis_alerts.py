@@ -1775,12 +1775,15 @@ NO_CHAT = ("Чтобы получать напоминания, откройте
            "иначе я не смогу вам написать.")
 
 
-async def _deep_link(payload: str) -> str:
-    """Ссылка, открывающая бота с параметром. Пусто — имя бота не задано."""
-    username = await database.get_setting("bot_username")
-    if not username:
-        return ""
-    return f"https://t.me/{username.lstrip('@')}?start={payload}"
+async def _deep_link(payload: str, bot=None) -> str:
+    """Ссылка, открывающая бота с параметром.
+
+    Имя спрашивается у Telegram, если в настройке пусто: бот знает его
+    всегда, и терять из-за одной неудачной записи в базу все кнопки из
+    канала было бы глупо.
+    """
+    import common
+    return await common.deep_link(payload, bot)
 
 
 async def _open_bot(call: CallbackQuery, payload: str, fallback: str) -> None:
@@ -1791,7 +1794,7 @@ async def _open_bot(call: CallbackQuery, payload: str, fallback: str) -> None:
     разрешает ответить на нажатие ссылкой на самого себя: человек одним
     касанием попадает в бота, и /start приходит уже с параметром.
     """
-    url = await _deep_link(payload)
+    url = await _deep_link(payload, call.bot)
     if url:
         await call.answer(url=url)
     else:
@@ -1941,7 +1944,7 @@ async def toggle_match(call: CallbackQuery):
             # там теперь не только напоминание: статистика встреч и
             # голосование за исход. Ради него и уводим — одним касанием,
             # прямо на карточку.
-            url = await _deep_link(f"tm-{tour}-{match_id}")
+            url = await _deep_link(f"tm-{tour}-{match_id}", call.bot)
             if url:
                 await call.answer(url=url)
             else:

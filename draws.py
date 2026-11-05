@@ -368,7 +368,7 @@ async def draw_new_save(message: Message, state: FSMContext):
         await message.answer("⚠ Не сохранилось. Попробуйте ещё раз.")
         return
 
-    link = await _qr_link(slug)
+    link = await _qr_link(slug, message.bot)
     event = await database.draw_event(event_id=event_id)
     await message.answer(
         f"✅ Конкурс создан.\n\n"
@@ -430,11 +430,10 @@ async def channel_save(message: Message, state: FSMContext):
         reply_markup=_panel_kb(event) if event else None)
 
 
-async def _qr_link(slug: str) -> str:
-    username = await database.get_setting("bot_username")
-    if not username:
-        return "имя бота не задано — /setup"
-    return f"https://t.me/{username.lstrip('@')}?start=draw-{slug}"
+async def _qr_link(slug: str, bot=None) -> str:
+    import common
+    return (await common.deep_link(f"draw-{slug}", bot)
+            or "имя бота не определилось — перезапустите бота")
 
 
 # ---------------------------------------------------------------------
@@ -996,10 +995,10 @@ async def join(call: CallbackQuery):
     except Exception:
         # Бот не может писать первым. Открываем его нажатием, а номер
         # конкурса передаём параметром — участие доедет само.
-        username = await database.get_setting("bot_username")
-        if username:
-            await call.answer(
-                url=f"https://t.me/{username.lstrip('@')}?start=draw-{event['slug']}")
+        import common
+        url = await common.deep_link(f"draw-{event['slug']}", call.bot)
+        if url:
+            await call.answer(url=url)
         else:
             await call.answer(
                 "Откройте бота и нажмите «Старт», потом нажмите сюда снова.",
