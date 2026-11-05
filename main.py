@@ -29,6 +29,7 @@ import travel_channel
 import travel_spots
 import books_seed
 import draws
+import draws_runner
 import tennis_alerts
 import tennis_h2h
 import tennis_champion
@@ -655,6 +656,7 @@ async def main():
     dp.include_router(tennis_alerts.router)
     dp.include_router(tennis_h2h.router)
     dp.include_router(draws.router)
+    dp.include_router(draws_runner.router)
     dp.include_router(tennis_champion.router)
     dp.include_router(tennis_highlights.router)
     dp.include_router(tg_watch.router)
@@ -709,6 +711,7 @@ async def main():
     # Публикация в канал: запускаем после создания бота — раньше объекта ещё нет
     asyncio.create_task(digest.scheduler(bot))
     asyncio.create_task(tennis_alerts.alerts_scheduler(bot))
+    asyncio.create_task(draws_runner.scheduler(bot))
     asyncio.create_task(tennis_rank.scheduler())
     asyncio.create_task(tg_watch.scheduler(bot))
     asyncio.create_task(checklist.scheduler(bot))

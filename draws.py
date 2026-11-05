@@ -23,7 +23,7 @@
 
 import html
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
@@ -49,7 +49,8 @@ class Draw(StatesGroup):
     meet_photo = State()     # фото места вручения
     meet_text = State()      # где и во сколько
     final_photo = State()    # фотография, которой завершаем
-    talking = State()        # владелица пишет призёру
+    schedule = State()       # расписание матчей одним сообщением
+    talking = State()        # владелица отвечает призёру
     replying = State()       # призёр пишет владелице
 
 
@@ -63,6 +64,56 @@ _TRANSLIT = {
     "ф": "f", "х": "h", "ц": "c", "ч": "ch", "ш": "sh", "щ": "sch",
     "ъ": "", "ы": "y", "ь": "", "э": "e", "ю": "yu", "я": "ya",
 }
+
+
+# Сколько минут принимаются ответы после начала матча. Зритель смотрит
+# на корт и отвечает по ходу — отсюда и окно, а не «до начала».
+POLL_MINUTES = 15
+
+# Разделители между фамилиями в расписании. Люди пишут по-разному, и
+# заставлять набирать именно длинное тире — верный способ получить
+# «строка не разобралась» на половине списка.
+_DASHES = ("—", "–", "-", " vs ", " VS ")
+
+
+def parse_schedule(text: str, day=None):
+    """Строки «18:00 Окунев — Кураков» -> [(время, первый, второй)].
+
+    Возвращает (разобранное, нераспознанные строки). Нераспознанные
+    показываем владелице как есть: молча проглотить строку расписания
+    хуже, чем сказать «вот эту я не поняла».
+    """
+    day = day or datetime.now().date()
+    good, bad = [], []
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        parts = line.split(None, 1)
+        if len(parts) < 2:
+            bad.append(line)
+            continue
+        clock, rest = parts[0].replace(".", ":"), parts[1]
+        try:
+            hour, minute = (int(x) for x in clock.split(":", 1))
+            when = datetime.combine(day, datetime.min.time()).replace(
+                hour=hour, minute=minute)
+        except (ValueError, TypeError):
+            bad.append(line)
+            continue
+
+        pair = None
+        for dash in _DASHES:
+            if dash in rest:
+                left, right = rest.split(dash, 1)
+                if left.strip() and right.strip():
+                    pair = (left.strip()[:40], right.strip()[:40])
+                break
+        if not pair:
+            bad.append(line)
+            continue
+        good.append((when, pair[0], pair[1]))
+    return good, bad
 
 
 def _slug(title: str) -> str:
@@ -107,13 +158,15 @@ def _panel_kb(event) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🖼 Призы за места",
                               callback_data=f"drprizes_{eid}")],
+        [InlineKeyboardButton(text="📅 Расписание матчей",
+                              callback_data=f"drsched_{eid}")],
+        [InlineKeyboardButton(text="🚀 Объявить конкурс в канале",
+                              callback_data=f"drlaunch_{eid}")],
         [InlineKeyboardButton(text="📍 Место и время вручения",
                               callback_data=f"drmeet_{eid}")],
         [InlineKeyboardButton(text="📨 Разослать призёрам",
                               callback_data=f"drsend_{eid}")],
-        [InlineKeyboardButton(text="💬 Переписка с призёрами",
-                              callback_data=f"drchat_{eid}")],
-        [InlineKeyboardButton(text="🏁 Завершить фотографией",
+        [InlineKeyboardButton(text="🏁 Завершить и объявить итоги",
                               callback_data=f"drfinish_{eid}")],
         [InlineKeyboardButton(text="🔙 К списку", callback_data="draws_list")],
     ])
@@ -421,27 +474,186 @@ async def send_winners(call: CallbackQuery):
 # 5. Переписка
 # ---------------------------------------------------------------------
 
-@router.callback_query(F.data.startswith("drchat_"))
-async def chat_menu(call: CallbackQuery):
+# ---------------------------------------------------------------------
+# Расписание матчей
+# ---------------------------------------------------------------------
+
+@router.callback_query(F.data.startswith("drsched_"))
+async def schedule_ask(call: CallbackQuery, state: FSMContext):
     if not config.is_admin(call.from_user.id):
         await call.answer()
         return
     await call.answer()
     event_id = int(call.data.split("_")[1])
-    winners = await database.draw_winners(event_id)
-    if not winners:
-        await call.message.answer("Призёров пока нет.")
-        return
-    rows = [[InlineKeyboardButton(
-        text=f"{_place_word(place)} · {(name or user_id)}",
-        callback_data=f"drtalk_{event_id}_{user_id}")]
-        for place, user_id, name, _ in winners]
-    rows.append([InlineKeyboardButton(text="🔙 Назад",
-                                      callback_data=f"drevent_{event_id}")])
+    await state.set_state(Draw.schedule)
+    await state.update_data(event_id=event_id)
+
+    existing = await database.draw_polls_of_event(event_id)
+    head = (f"Сейчас заведено матчей: {len(existing)}.\n\n"
+            if existing else "")
     await call.message.answer(
-        "💬 <b>Переписка с призёрами</b>\n\nВыберите, кому написать.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
-        parse_mode="HTML")
+        f"📅 <b>Расписание матчей</b>\n\n{head}"
+        f"Пришлите список одним сообщением, по строке на матч:\n\n"
+        f"<code>18:00 Окунев — Кураков\n"
+        f"19:30 Новиков — Кабочкин\n"
+        f"21:00 Хали́лов — Бланк</code>\n\n"
+        f"<i>Вопрос по каждому матчу уйдёт участникам в минуту начала, "
+        f"ответы принимаются {POLL_MINUTES} минут. Разделитель между "
+        f"фамилиями любой: тире, дефис или «vs».</i>")
+
+
+@router.message(Draw.schedule)
+async def schedule_save(message: Message, state: FSMContext):
+    data = await state.get_data()
+    event_id = data["event_id"]
+    good, bad = parse_schedule(message.text or "")
+
+    if not good:
+        await message.answer(
+            "Ни одной строки разобрать не вышло. Формат: время, пробел, "
+            "две фамилии через тире.")
+        return
+
+    await state.clear()
+    created = 0
+    for when, first, second in good:
+        poll_id = await database.draw_poll_open(
+            event_id,
+            question=f"Кто выиграет: {first} — {second}?",
+            option_a=first, option_b=second,
+            closes_at=when + timedelta(minutes=POLL_MINUTES),
+            opens_at=when)
+        if poll_id:
+            created += 1
+
+    lines = [f"✅ Заведено матчей: {created}."]
+    if bad:
+        lines.append("")
+        lines.append("<b>Не разобрала эти строки:</b>")
+        lines += [f"<code>{html.escape(x)}</code>" for x in bad[:8]]
+    event = await database.draw_event(event_id=event_id)
+    await message.answer("\n".join(lines),
+                         reply_markup=_panel_kb(event) if event else None,
+                         parse_mode="HTML")
+
+
+# ---------------------------------------------------------------------
+# Запуск: объявление в канале
+# ---------------------------------------------------------------------
+
+@router.callback_query(F.data.startswith("drlaunch_"))
+async def launch(call: CallbackQuery):
+    """Одно нажатие — и конкурс объявлен в канале.
+
+    Фотография приза берётся из настроек, кнопка «Участвовать» ведёт
+    не на страницу, а прямо в бота: нажавший попадает в список
+    участников, и именно ему потом придут вопросы.
+    """
+    if not config.is_admin(call.from_user.id):
+        await call.answer()
+        return
+    event_id = int(call.data.split("_")[1])
+    event = await database.draw_event(event_id=event_id)
+    if not event:
+        await call.answer("Конкурс не найден.", show_alert=True)
+        return
+
+    polls = await database.draw_polls_of_event(event_id)
+    if not polls:
+        await call.answer(
+            "Сначала заведите расписание матчей — иначе участникам нечего "
+            "будет присылать.", show_alert=True)
+        return
+
+    import digest
+    chat, thread = await digest._target()
+    if not chat:
+        await call.answer("Канал не задан: /digest chat -100…", show_alert=True)
+        return
+
+    prizes = await database.draw_prizes(event_id)
+    lines = [f"⚡️ <b>Внимание, конкурс</b>", "",
+             f"<b>{html.escape(event['title'])}</b>", ""]
+    lines.append(f"Сегодня {len(polls)} "
+                 f"{'матч' if len(polls) == 1 else 'матча' if len(polls) < 5 else 'матчей'}. "
+                 f"Перед каждым пришлём вопрос: кто победит. "
+                 f"Отвечать можно {POLL_MINUTES} минут после начала — "
+                 f"прямо глядя на корт.")
+    if prizes:
+        lines.append("")
+        lines.append("<b>Призы:</b>")
+        for place in sorted(prizes):
+            caption = prizes[place].get("caption") or "приз"
+            if place <= (event.get("prizes") or DEFAULT_PRIZES):
+                lines.append(f"{_place_word(place)} — {html.escape(caption)}")
+    lines.append("")
+    lines.append("<i>Нажмите «Участвовать» — вопросы придут вам в личные "
+                 "сообщения. В канале никто не увидит ни ваших ответов, "
+                 "ни того, что вы участвуете.</i>")
+
+    body = "\n".join(lines)
+    markup = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
+        text="🎾 Участвовать", callback_data=f"drjoin_{event_id}")]])
+
+    first_photo = next((prizes[p]["photo"] for p in sorted(prizes)
+                        if prizes[p].get("photo")), None)
+    try:
+        if first_photo:
+            await call.bot.send_photo(chat, first_photo, caption=body,
+                                      message_thread_id=thread,
+                                      reply_markup=markup)
+        else:
+            await call.bot.send_message(chat, body, message_thread_id=thread,
+                                        reply_markup=markup)
+    except Exception as e:
+        await call.answer(f"Не вышло: {e}", show_alert=True)
+        return
+
+    await call.answer("Объявлено")
+    await call.message.answer(
+        "🚀 Конкурс объявлен в канале. Вопросы уйдут участникам сами, "
+        "по времени из расписания.")
+
+
+@router.callback_query(F.data.startswith("drjoin_"))
+async def join(call: CallbackQuery):
+    """«Участвовать» под постом канала.
+
+    ЕДИНСТВЕННАЯ кнопка этого модуля, которой МОЖНО работать в канале
+    (см. public.PUBLIC_OK). Поэтому ответ строго личный: в канале не
+    должно быть видно ни кто участвует, ни сколько их.
+    """
+    try:
+        event_id = int(call.data.split("_")[1])
+    except (IndexError, ValueError):
+        await call.answer()
+        return
+
+    event = await database.draw_event(event_id=event_id)
+    if not event or event.get("status") != "open":
+        await call.answer("Этот конкурс уже закрыт.", show_alert=True)
+        return
+
+    await database.draw_join(event_id, call.from_user.id)
+    try:
+        await call.bot.send_message(
+            call.from_user.id,
+            f"🎾 <b>Вы в конкурсе</b>\n\n{html.escape(event['title'])}\n\n"
+            f"Перед каждым матчем пришлю вопрос: кто победит. Отвечать "
+            f"можно {POLL_MINUTES} минут после начала — глядя на корт.\n\n"
+            f"<i>Угадаете все матчи — попадёте в сетку розыгрыша призов.</i>")
+        await call.answer("Вы в конкурсе — подробности в личке")
+    except Exception:
+        # Бот не может писать первым. Открываем его нажатием, а номер
+        # конкурса передаём параметром — участие доедет само.
+        username = await database.get_setting("bot_username")
+        if username:
+            await call.answer(
+                url=f"https://t.me/{username.lstrip('@')}?start=draw-{event['slug']}")
+        else:
+            await call.answer(
+                "Откройте бота и нажмите «Старт», потом нажмите сюда снова.",
+                show_alert=True)
 
 
 @router.callback_query(F.data.startswith("drtalk_"))
@@ -605,6 +817,24 @@ async def finish_send(message: Message, state: FSMContext, bot: Bot):
         lines += ["", html.escape(caption)]
     body = "\n".join(lines)
 
+    # В КАНАЛ — тоже. Конкурс объявляли там, и итоги должны вернуться
+    # туда же: иначе читатель, который не участвовал, так и не узнает,
+    # чем всё кончилось, — а ради него половина этого и затевалась.
+    channel_body = body + (
+        "\n\nСпасибо всем, кто играл. Следите за матчами — "
+        "следующий конкурс скоро.")
+    posted = False
+    try:
+        import digest
+        chat, thread = await digest._target()
+        if chat:
+            await bot.send_photo(chat, message.photo[-1].file_id,
+                                 caption=channel_body,
+                                 message_thread_id=thread)
+            posted = True
+    except Exception as e:
+        logging.warning(f"Итоги конкурса в канал не вышли: {e}")
+
     members = await database.draw_members(event_id)
     sent = 0
     for user_id in members:
@@ -615,7 +845,9 @@ async def finish_send(message: Message, state: FSMContext, bot: Bot):
         except Exception:
             continue
     await message.answer(
-        f"✅ Конкурс завершён. Итоги получили {sent} из {len(members)}.")
+        f"✅ Конкурс завершён. Итоги получили {sent} из {len(members)}."
+        + ("\nВ канале опубликовано." if posted
+           else "\n⚠ В канал не вышло — проверьте /digest chat."))
 
 
 @router.message(Draw.final_photo)

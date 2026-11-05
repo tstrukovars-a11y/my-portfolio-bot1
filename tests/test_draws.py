@@ -69,12 +69,93 @@ def test_owner_buttons_never_work_under_a_channel_post():
     граница обязана её остановить."""
     import public
     for data in ("drnew", "draws_list", "drevent_1", "drprizes_1",
-                 "drprize_1_2", "drmeet_1", "drsend_1", "drchat_1",
-                 "drtalk_1_42", "drstop_1", "drfinish_1"):
+                 "drprize_1_2", "drmeet_1", "drsend_1", "drsched_1",
+                 "drlaunch_1", "drtalk_1_42", "drstop_1", "drfinish_1"):
         assert not public.allowed(data), data
+
+
+def test_only_the_join_button_works_in_the_channel():
+    """«Участвовать» висит под постом канала — ей можно. И только ей."""
+    import public
+    assert public.allowed("drjoin_1")
 
 
 def test_the_winner_reply_button_is_also_private():
     """Её нажимает призёр, но тоже в личке — под постом ей не место."""
     import public
     assert not public.allowed("drreply_1")
+
+
+# ---------------------------------------------------------------------
+# Расписание матчей
+# ---------------------------------------------------------------------
+#
+# Заводится одним сообщением: по строке на матч. Вопрос по каждому
+# уходит участникам в минуту начала, а не заранее — зритель отвечает,
+# глядя на корт.
+
+from datetime import date
+
+
+DAY = date(2026, 11, 7)
+
+
+def test_a_simple_line_is_parsed():
+    good, bad = draws.parse_schedule("18:00 Окунев — Кураков", DAY)
+    assert bad == []
+    when, first, second = good[0]
+    assert (when.hour, when.minute) == (18, 0)
+    assert (first, second) == ("Окунев", "Кураков")
+
+
+def test_several_lines_become_several_matches():
+    good, _ = draws.parse_schedule(
+        "18:00 Окунев — Кураков\n19:30 Новиков — Кабочкин", DAY)
+    assert len(good) == 2
+    assert good[1][0].hour == 19 and good[1][0].minute == 30
+
+
+def test_any_dash_works():
+    """Заставлять набирать длинное тире — верный способ получить
+    «не разобралось» на половине списка."""
+    for dash in ("—", "–", "-", "vs"):
+        good, bad = draws.parse_schedule(f"18:00 Окунев {dash} Кураков", DAY)
+        assert len(good) == 1, dash
+        assert bad == [], dash
+
+
+def test_a_dot_in_the_time_is_accepted():
+    good, _ = draws.parse_schedule("18.45 Окунев — Кураков", DAY)
+    assert good[0][0].minute == 45
+
+
+def test_blank_lines_are_skipped_silently():
+    good, bad = draws.parse_schedule(
+        "\n18:00 Окунев — Кураков\n\n\n", DAY)
+    assert len(good) == 1 and bad == []
+
+
+def test_a_broken_line_is_reported_not_swallowed():
+    """Молча проглотить строку расписания хуже, чем сказать «вот эту я
+    не поняла»: матч бы просто не состоялся в конкурсе."""
+    good, bad = draws.parse_schedule(
+        "18:00 Окунев — Кураков\nкогда-нибудь вечером", DAY)
+    assert len(good) == 1
+    assert bad == ["когда-нибудь вечером"]
+
+
+def test_a_line_without_a_second_name_is_rejected():
+    good, bad = draws.parse_schedule("18:00 Окунев —", DAY)
+    assert good == []
+    assert len(bad) == 1
+
+
+def test_a_bad_clock_is_rejected():
+    good, bad = draws.parse_schedule("25:99 Окунев — Кураков", DAY)
+    assert good == []
+    assert len(bad) == 1
+
+
+def test_the_answer_window_is_a_quarter_of_an_hour():
+    """Зритель отвечает по ходу матча, а не до него."""
+    assert draws.POLL_MINUTES == 15

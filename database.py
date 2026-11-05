@@ -447,6 +447,13 @@ async def init_db():
         ):
             await conn.execute(statement)
 
+        # Опрос ещё не разослан / уже разослан. Расписание заводится
+        # заранее, а вопрос уходит в минуту начала матча — без отметки
+        # планировщик рассылал бы его каждый свой проход.
+        await conn.execute(
+            f"ALTER TABLE {SCHEMA}.draw_polls "
+            f"ADD COLUMN IF NOT EXISTS sent BOOLEAN NOT NULL DEFAULT FALSE")
+
         # Итоговые места. Записываются, когда сетка доиграна: сама сетка
         # потом очистится или перезапустится, а список призёров нужен и
         # для рассылки, и для переписки, и для отчёта.
@@ -1565,8 +1572,14 @@ async def draw_members(event_id: int):
 
 
 async def draw_poll_open(event_id: int, question: str, option_a: str,
-                         option_b: str, closes_at, match_id: str = None):
-    """Открыть вопрос. closes_at — когда приём ответов прекращается."""
+                         option_b: str, closes_at, match_id: str = None,
+                         opens_at=None):
+    """Завести вопрос.
+
+    opens_at — минута начала матча: до неё вопрос никому не уходит.
+    Расписание заводится заранее, целым списком, а рассылает его
+    планировщик по времени.
+    """
     pool = await get_pool()
     if not pool:
         return None
@@ -1574,9 +1587,12 @@ async def draw_poll_open(event_id: int, question: str, option_a: str,
         async with pool.acquire() as conn:
             return await conn.fetchval(
                 f"""INSERT INTO {SCHEMA}.draw_polls
-                    (event_id, match_id, question, option_a, option_b, closes_at)
-                    VALUES ($1, $2, $3, $4, $5, $6) RETURNING id""",
-                event_id, match_id, question, option_a, option_b, closes_at)
+                    (event_id, match_id, question, option_a, option_b,
+                     closes_at, opens_at)
+                    VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, NOW()))
+                    RETURNING id""",
+                event_id, match_id, question, option_a, option_b,
+                closes_at, opens_at)
     except Exception as e:
         logging.error(f"Вопрос не открылся: {e}")
         return None
@@ -1626,6 +1642,87 @@ async def draw_answer(poll_id: int, user_id: int, side: int) -> str:
     except Exception as e:
         logging.error(f"Ответ на вопрос {poll_id} не записался: {e}")
         return "ошибка"
+
+
+async def draw_polls_to_send():
+    """Опросы, которым пора уходить участникам: время пришло, не разосланы."""
+    pool = await get_pool()
+    if not pool:
+        return []
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"""SELECT p.*, e.title AS event_title
+                    FROM {SCHEMA}.draw_polls p
+                    JOIN {SCHEMA}.draw_events e ON e.id = p.event_id
+                    WHERE NOT p.sent AND NOW() >= p.opens_at
+                      AND e.status = 'open'
+                    ORDER BY p.opens_at""")
+        return [dict(r) for r in rows]
+    except Exception as e:
+        logging.warning(f"Список опросов к рассылке не пришёл: {e}")
+        return []
+
+
+async def draw_poll_mark_sent(poll_id: int) -> None:
+    pool = await get_pool()
+    if not pool:
+        return
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"UPDATE {SCHEMA}.draw_polls SET sent = TRUE WHERE id = $1",
+                poll_id)
+    except Exception as e:
+        logging.warning(f"Опрос {poll_id} не отмечен разосланным: {e}")
+
+
+async def draw_polls_of_event(event_id: int):
+    pool = await get_pool()
+    if not pool:
+        return []
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT * FROM {SCHEMA}.draw_polls WHERE event_id = $1 "
+                f"ORDER BY opens_at", event_id)
+        return [dict(r) for r in rows]
+    except Exception as e:
+        logging.warning(f"Опросы мероприятия {event_id} не прочитались: {e}")
+        return []
+
+
+async def draw_all_guessed(event_id: int):
+    """Кто угадал ВСЕ разобранные вопросы. [(user_id, сколько, когда)].
+
+    Считаем только вопросы с известным исходом: пока владелица не
+    отметила победителя матча, вопрос в зачёт не идёт.
+    """
+    pool = await get_pool()
+    if not pool:
+        return []
+    try:
+        async with pool.acquire() as conn:
+            total = await conn.fetchval(
+                f"SELECT COUNT(*) FROM {SCHEMA}.draw_polls "
+                f"WHERE event_id = $1 AND correct IS NOT NULL", event_id)
+            if not total:
+                return []
+            rows = await conn.fetch(
+                f"""SELECT a.user_id,
+                           COUNT(*) FILTER (WHERE a.side = p.correct) AS hits,
+                           MAX(a.answered_at) AS last_at
+                    FROM {SCHEMA}.draw_answers a
+                    JOIN {SCHEMA}.draw_polls p ON p.id = a.poll_id
+                    WHERE p.event_id = $1 AND p.correct IS NOT NULL
+                    GROUP BY a.user_id
+                    HAVING COUNT(*) FILTER (WHERE a.side = p.correct) = $2
+                    ORDER BY last_at ASC""",
+                event_id, total)
+        return [(r["user_id"], r["hits"], r["last_at"]) for r in rows]
+    except Exception as e:
+        logging.warning(f"Угадавшие всё ({event_id}) не посчитались: {e}")
+        return []
 
 
 async def draw_poll_counts(poll_id: int):
