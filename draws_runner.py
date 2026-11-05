@@ -232,15 +232,59 @@ async def start_bracket(bot: Bot, event_id: int) -> str:
     return f"сетка на {size} запущена"
 
 
+async def _bracket_picture(bot: Bot, bracket_id: int, bracket, event):
+    """Картинка сетки со всеми кругами, что уже известны.
+
+    Присылается каждому участнику вместе с его парой: человек узнаёт
+    себя по знаку — цвету и фигуре, — а не по фотографии. Фотографию
+    профиля он ставил для друзей, а не для общей рассылки.
+    """
+    rounds, names = [], {}
+    for round_no in range(1, (bracket["round_no"] or 1) + 1):
+        slots = await database.bracket_slots(bracket_id, round_no)
+        if not slots:
+            continue
+        rounds.append(slots)
+        for user_id in slots:
+            if user_id is not None and user_id not in names:
+                names[user_id] = await _name_of(bot, user_id)
+
+    scores = await database.bracket_round_scores(bracket_id)
+    try:
+        import draw_image
+        return draw_image.render(
+            rounds, names, scores,
+            title=f"{event['title']} — сетка"), names
+    except Exception as e:
+        logging.warning(f"Картинка сетки не нарисовалась: {e}")
+        return None, names
+
+
+def _game_kb():
+    """Кнопка с игрой. Нет внешнего адреса — нет и кнопки: нажатие,
+    которое ничего не открывает, хуже её отсутствия."""
+    import rally
+    url = rally.game_url()
+    if not url:
+        return None
+    from aiogram.types import WebAppInfo
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
+        text="🎾 Играть круг", web_app=WebAppInfo(url=url))]])
+
+
 async def _announce_round(bot: Bot, bracket_id: int, event,
                           round_no: int) -> None:
-    """Разослать участникам круга их пару и срок."""
+    """Разослать участникам круга их пару, срок и картинку сетки."""
     slots = await database.bracket_slots(bracket_id, round_no)
     bracket = await database.bracket_get(bracket_id)
     if not bracket:
         return
-    alive = [x for x in slots if x is not None]
-    stage = draw_bracket.round_name(len(alive)) if len(alive) > 1 else "Финал"
+    stage = draw_bracket.round_name(len(slots)) if len(slots) > 2 else "Финал"
+    if round_no >= draw_bracket.last_round_no(bracket["size"]) and len(slots) >= 4:
+        stage = "Финал и матч за третье место"
+
+    picture, _ = await _bracket_picture(bot, bracket_id, bracket, event)
+    keyboard = _game_kb()
 
     for first, second in draw_bracket.pairs(slots):
         for me, rival in ((first, second), (second, first)):
@@ -260,7 +304,14 @@ async def _announce_round(bot: Bot, bracket_id: int, event,
                         f"<i>Не сыграете — засчитывается поражение: круги "
                         f"короткие, иначе вечер не кончится.</i>")
             try:
-                await bot.send_message(me, body)
+                if picture:
+                    from aiogram.types import BufferedInputFile
+                    await bot.send_photo(
+                        me,
+                        BufferedInputFile(picture, filename="bracket.png"),
+                        caption=body, reply_markup=keyboard)
+                else:
+                    await bot.send_message(me, body, reply_markup=keyboard)
             except Exception:
                 continue
             await asyncio.sleep(0.05)
