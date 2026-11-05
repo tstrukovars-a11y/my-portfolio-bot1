@@ -34,7 +34,14 @@ router = Router()
 
 # Сколько минут даётся на круг игры. Короткий намеренно: круги идут после
 # матчей, и растянуть их на час — значит не дождаться никого.
-ROUND_MINUTES = 10
+# Круг играется до двух выигранных сетов, и на КАЖДЫЙ сет даётся своё
+# время. Пять минут, а не десять: три сета по десять растянули бы один
+# круг на полчаса, а кругов за вечер три или четыре.
+SET_MINUTES = 5
+SETS_TO_WIN = 2
+MAX_SETS = 3
+
+ROUND_MINUTES = SET_MINUTES
 
 # С какого числа оставшихся показывать участникам картинку сетки. Раньше
 # она только мешает: на тридцати двух именах своё ищут дольше, чем идёт
@@ -246,7 +253,7 @@ async def start_bracket(bot: Bot, event_id: int) -> str:
     size = draw_bracket.bracket_size(len(players))
     slots = draw_bracket.seed_slots(players, size)
     bracket_id = await database.bracket_create(
-        event_id, slots, size, round_minutes=ROUND_MINUTES)
+        event_id, slots, size, round_minutes=SET_MINUTES)
     if not bracket_id:
         return "сетка не создалась"
 
@@ -355,11 +362,11 @@ async def _announce_round(bot: Bot, bracket_id: int, event,
                 rival_name = await _name_of(bot, rival)
                 body = (f"🎾 <b>{stage}</b>\n\n"
                         f"Ваш соперник: {html.escape(rival_name)}\n\n"
-                        f"Откройте игру «Розыгрыш» и сыграйте в ближайшие "
-                        f"{ROUND_MINUTES} минут. Дальше проходит тот, у кого "
-                        f"длиннее розыгрыш.\n\n"
-                        f"<i>Не сыграете — засчитывается поражение: круги "
-                        f"короткие, иначе вечер не кончится.</i>")
+                        f"Играем до двух выигранных сетов. На каждый сет — "
+                        f"{SET_MINUTES} минут: откройте игру «Розыгрыш» и "
+                        f"сыграйте. Сет берёт тот, у кого длиннее розыгрыш.\n\n"
+                        f"<i>Итог сета придёт сразу обоим. Не сыграете — "
+                        f"сет засчитывается сопернику.</i>")
             try:
                 if picture:
                     from aiogram.types import BufferedInputFile
@@ -374,14 +381,91 @@ async def _announce_round(bot: Bot, bracket_id: int, event,
             await asyncio.sleep(0.05)
 
 
+async def _close_set(bot: Bot, bracket) -> bool:
+    """Подвести сет. True — круг доигран, можно двигать сетку дальше.
+
+    Сет закрывается по своему окну, и его итог СРАЗУ уходит обоим: ради
+    этого сеты и заводились. Сравнение чисел в конце круга оставляло
+    человека в неведении — счёт соперника он не видит.
+    """
+    bracket_id = bracket["id"]
+    round_no, set_no = bracket["round_no"], bracket["set_no"]
+    slots = await database.bracket_slots(bracket_id, round_no)
+    scores = await database.bracket_round_scores(bracket_id)
+    totals = await database.bracket_round_totals(bracket_id)
+    seeds = await database.bracket_seeds(bracket_id)
+
+    winners = set()
+    for pair in draw_bracket.pairs(slots):
+        taken = draw_bracket.advance(pair, scores, seeds, totals)
+        if taken is not None:
+            winners.add(taken)
+    await database.bracket_set_record(bracket_id, round_no, set_no,
+                                      scores, winners)
+
+    wins = await database.bracket_set_wins(bracket_id, round_no)
+
+    # Круг закончен, если в каждой паре кто-то взял два сета либо сеты
+    # кончились
+    undecided = []
+    for first, second in draw_bracket.pairs(slots):
+        if first is None or second is None:
+            continue
+        if max(wins.get(first, 0), wins.get(second, 0)) < SETS_TO_WIN:
+            undecided.append((first, second))
+
+    await _tell_set_result(bot, slots, scores, wins, set_no,
+                           finished=not undecided or set_no >= MAX_SETS)
+
+    if undecided and set_no < MAX_SETS:
+        await database.bracket_next_set(bracket_id, SET_MINUTES)
+        return False
+    return True
+
+
+async def _tell_set_result(bot: Bot, slots, scores, wins, set_no: int,
+                           finished: bool) -> None:
+    """Каждому — итог его сета и счёт по сетам."""
+    for first, second in draw_bracket.pairs(slots):
+        if first is None or second is None:
+            continue
+        for me, rival in ((first, second), (second, first)):
+            mine, theirs = scores.get(me), scores.get(rival)
+            head = f"Сет {set_no}"
+            if mine is None:
+                line = "вы не сыграли"
+            elif theirs is None:
+                line = f"ваш розыгрыш {mine}, соперник не сыграл"
+            else:
+                line = f"{mine} : {theirs}"
+            tail = (f"\n\nСчёт по сетам: {wins.get(me, 0)} : "
+                    f"{wins.get(rival, 0)}")
+            if not finished:
+                tail += f"\n<i>Следующий сет — {SET_MINUTES} минут.</i>"
+            try:
+                await bot.send_message(me, f"🎾 <b>{head}</b>\n{line}{tail}")
+            except Exception:
+                continue
+            await asyncio.sleep(0.05)
+
+
 async def advance_brackets(bot: Bot) -> int:
-    """Подвести круги, у которых вышло время."""
+    """Подвести сеты и круги, у которых вышло время."""
     moved = 0
     for bracket in await database.brackets_due():
         bracket_id = bracket["id"]
+        if not await _close_set(bot, bracket):
+            moved += 1
+            continue        # круг продолжается следующим сетом
+
         slots = await database.bracket_slots(bracket_id, bracket["round_no"])
-        scores = await database.bracket_round_scores(bracket_id)
-        totals = await database.bracket_round_totals(bracket_id)
+        # Для продвижения по сетке считаем не очки, а ВЗЯТЫЕ СЕТЫ. Кого
+        # в словаре нет — тот не играл вовсе, и правила отличают это от
+        # проигранных сетов.
+        scores = await database.bracket_set_wins(bracket_id,
+                                                 bracket["round_no"])
+        totals = await database.bracket_round_totals_all_sets(
+            bracket_id, bracket["round_no"])
         seeds = await database.bracket_seeds(bracket_id)
 
         nxt, done = draw_bracket.step(slots, bracket["round_no"],
@@ -405,7 +489,7 @@ async def advance_brackets(bot: Bot) -> int:
                     pass
         elif nxt:
             await database.bracket_next_round(bracket_id, nxt,
-                                              round_minutes=ROUND_MINUTES)
+                                              round_minutes=SET_MINUTES)
             if event:
                 await _send_owner_sheet(bot, bracket_id, event)
                 await _announce_round(bot, bracket_id, event,

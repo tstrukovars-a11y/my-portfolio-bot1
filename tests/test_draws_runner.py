@@ -54,10 +54,31 @@ def test_marking_the_match_winner_is_owner_only():
 # ---------------------------------------------------------------------
 
 
-def test_a_round_is_short_on_purpose():
-    """Круги идут после матчей. Растянуть их на час — значит не
-    дождаться никого."""
-    assert runner.ROUND_MINUTES == 10
+def test_a_set_is_short_on_purpose():
+    """Три сета по десять минут растянули бы один круг на полчаса, а
+    кругов за вечер три или четыре."""
+    assert runner.SET_MINUTES == 5
+    assert runner.SET_MINUTES * runner.MAX_SETS <= 15
+
+
+def test_a_round_is_best_of_three():
+    """Сеты заведены ради понятного результата: человек, который
+    отыграл, не должен гадать, прошёл он или нет."""
+    assert runner.SETS_TO_WIN == 2
+    assert runner.MAX_SETS == 3
+
+
+def test_the_set_result_goes_out_immediately():
+    """Ради этого сеты и затевались — счёт соперника человек не видит,
+    и «сравним числа в конце круга» оставляло его в неведении."""
+    import inspect
+    assert "Счёт по сетам" in inspect.getsource(runner._tell_set_result)
+
+
+def test_advancing_counts_sets_not_points():
+    import inspect
+    body = inspect.getsource(runner.advance_brackets)
+    assert "bracket_set_wins" in body
 
 
 def test_the_scheduler_ticks_every_minute():

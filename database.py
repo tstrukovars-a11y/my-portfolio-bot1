@@ -513,6 +513,28 @@ async def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""")
 
+        # Номер сета внутри круга. Круг играется до двух выигранных
+        # сетов: человек, который отыграл, не должен гадать, прошёл он
+        # или нет. «Сравним числа в конце» этого не даёт — счёт соперника
+        # ему неизвестен.
+        await conn.execute(
+            f"ALTER TABLE {SCHEMA}.draw_brackets "
+            f"ADD COLUMN IF NOT EXISTS set_no SMALLINT NOT NULL DEFAULT 1")
+
+        # Результат каждого сета — отдельно. Без него после второго сета
+        # не сказать, кто ведёт: журнал попыток знает только время, а не
+        # то, к какому сету попытка относилась.
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.draw_bracket_sets (
+            bracket_id INTEGER NOT NULL,
+            round_no SMALLINT NOT NULL,
+            set_no SMALLINT NOT NULL,
+            user_id BIGINT NOT NULL,
+            score INTEGER,
+            won BOOLEAN NOT NULL DEFAULT FALSE,
+            PRIMARY KEY (bracket_id, round_no, set_no, user_id)
+        )""")
+
         # Места сетки по кругам. user_id = NULL — пропуск круга либо
         # место, которое ещё не определилось.
         await conn.execute(f"""
@@ -2162,6 +2184,7 @@ async def bracket_next_round(bracket_id: int, winners: list,
                 await conn.execute(
                     f"""UPDATE {SCHEMA}.draw_brackets SET
                         round_no = $2,
+                        set_no = 1,
                         round_opened_at = NOW(),
                         round_closes_at = NOW() + ($3 || ' minutes')::interval
                         WHERE id = $1""",
@@ -2169,6 +2192,92 @@ async def bracket_next_round(bracket_id: int, winners: list,
         return True
     except Exception as e:
         logging.error(f"Следующий круг {bracket_id} не поставился: {e}")
+        return False
+
+
+async def bracket_set_record(bracket_id: int, round_no: int, set_no: int,
+                             scores: dict, winners: set) -> None:
+    """Записать итог сета: у кого какой счёт и кто его взял."""
+    pool = await get_pool()
+    if not pool:
+        return
+    try:
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                for user_id, score in scores.items():
+                    await conn.execute(
+                        f"""INSERT INTO {SCHEMA}.draw_bracket_sets
+                            (bracket_id, round_no, set_no, user_id, score, won)
+                            VALUES ($1, $2, $3, $4, $5, $6)
+                            ON CONFLICT (bracket_id, round_no, set_no, user_id)
+                            DO UPDATE SET score = EXCLUDED.score,
+                                          won = EXCLUDED.won""",
+                        bracket_id, int(round_no), int(set_no), user_id,
+                        score, user_id in winners)
+    except Exception as e:
+        logging.error(f"Итог сета {set_no} не записался: {e}")
+
+
+async def bracket_set_wins(bracket_id: int, round_no: int):
+    """{участник: сколько сетов взял в этом круге}.
+
+    В словаре только те, кто хотя бы раз играл: отсутствие означает
+    неявку, и правила разбора отличают её от проигранных сетов.
+    """
+    pool = await get_pool()
+    if not pool:
+        return {}
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"""SELECT user_id,
+                           COUNT(*) FILTER (WHERE won) AS wins
+                    FROM {SCHEMA}.draw_bracket_sets
+                    WHERE bracket_id = $1 AND round_no = $2
+                    GROUP BY user_id""",
+                bracket_id, int(round_no))
+        return {r["user_id"]: r["wins"] for r in rows}
+    except Exception as e:
+        logging.warning(f"Счёт по сетам не собрался: {e}")
+        return {}
+
+
+async def bracket_round_totals_all_sets(bracket_id: int, round_no: int):
+    """{участник: сумма очков за все сыгранные сеты круга} — тайбрейк."""
+    pool = await get_pool()
+    if not pool:
+        return {}
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"""SELECT user_id, COALESCE(SUM(score), 0) AS total
+                    FROM {SCHEMA}.draw_bracket_sets
+                    WHERE bracket_id = $1 AND round_no = $2
+                    GROUP BY user_id""",
+                bracket_id, int(round_no))
+        return {r["user_id"]: r["total"] for r in rows}
+    except Exception as e:
+        logging.warning(f"Суммы по сетам не собрались: {e}")
+        return {}
+
+
+async def bracket_next_set(bracket_id: int, set_minutes: int) -> bool:
+    """Открыть следующий сет того же круга."""
+    pool = await get_pool()
+    if not pool:
+        return False
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"""UPDATE {SCHEMA}.draw_brackets SET
+                    set_no = set_no + 1,
+                    round_opened_at = NOW(),
+                    round_closes_at = NOW() + ($2 || ' minutes')::interval
+                    WHERE id = $1""",
+                bracket_id, str(int(set_minutes)))
+        return True
+    except Exception as e:
+        logging.error(f"Следующий сет {bracket_id} не открылся: {e}")
         return False
 
 

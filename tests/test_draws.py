@@ -203,9 +203,18 @@ def test_the_rules_name_every_rule_the_code_actually_follows():
     """Если правило есть в коде, но не в правилах, спорить будет не о чем
     и нечем."""
     rules = draws.RULES_DEFAULT
-    for must in ("15 минут", "10 минут", "это поражение",
-                 "больше очков в сумме", "первое, второе и третье"):
+    for must in ("15 минут", "5 минут", "двух выигранных сетов",
+                 "засчитывается сопернику", "больше очков в сумме",
+                 "первое, второе и третье"):
         assert must in rules, must
+
+
+def test_the_rules_and_the_code_agree_on_set_length():
+    """Правила описывают код, код следует правилам. Разойдутся — и спор
+    на площадке будет не о теннисе."""
+    import draws_runner
+    assert f"{draws_runner.SET_MINUTES} минут" in draws.RULES_DEFAULT
+    assert f"{draws.POLL_MINUTES} минут" in draws.RULES_DEFAULT
 
 
 def test_the_rules_say_the_answer_is_final_and_so_does_the_code():
