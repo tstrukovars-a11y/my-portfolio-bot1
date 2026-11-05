@@ -189,3 +189,64 @@ def test_owner_control_buttons_stay_out_of_the_channel():
     import public
     for data in ("drstatus_1", "drdraw_1", "drsheet_1"):
         assert not public.allowed(data), data
+
+
+# ---------------------------------------------------------------------
+# Правила
+# ---------------------------------------------------------------------
+#
+# Читают их до того, как нажмут «Участвовать», — значит, они публичны и
+# выходят в канал отдельным сообщением, а не прячутся за кнопкой в боте.
+
+
+def test_the_rules_name_every_rule_the_code_actually_follows():
+    """Если правило есть в коде, но не в правилах, спорить будет не о чем
+    и нечем."""
+    rules = draws.RULES_DEFAULT
+    for must in ("15 минут", "10 минут", "выбывают оба",
+                 "больше в сумме", "Четвёртому"):
+        assert must in rules, must
+
+
+def test_the_rules_promise_privacy_because_the_code_keeps_it():
+    assert "не видно ни кто участвует" in draws.RULES_DEFAULT
+
+
+def test_the_rules_have_blanks_the_owner_must_fill():
+    """Срок, организатор и порядок вручения — без них это описание
+    механики, а не правила."""
+    for blank in ("[срок]", "[кто]", "[как и где]"):
+        assert blank in draws.RULES_DEFAULT, blank
+
+
+def test_a_contest_cannot_be_announced_with_blanks_left():
+    """Объявить конкурс с незаполненными правилами значит пообещать
+    призы, не сказав ни срока, ни кто их вручает."""
+    import inspect
+    body = inspect.getsource(draws.launch)
+    assert "[срок]" in body
+    assert "Сначала заполните в правилах" in body
+
+
+def test_the_rules_go_out_before_the_contest_post():
+    """Сначала правила, следом пост с кнопкой — иначе человек нажмёт
+    раньше, чем прочитает."""
+    import inspect
+    body = inspect.getsource(draws.launch)
+    rules_at = body.index("send_message(chat, rules_text")
+    post_at = min(body.index("send_photo(chat"), body.index("send_message(chat, body"))
+    assert rules_at < post_at
+
+
+def test_no_placeholder_is_broken_by_a_line_break():
+    """Перенос строки ВНУТРИ подстановки делает её невидимой для
+    проверки: конкурс объявился бы без указания, как вручаются призы."""
+    for blank in ("[срок]", "[кто]", "[как и где]"):
+        assert blank in draws.RULES_DEFAULT, blank
+        assert "[" not in blank.strip("[]")
+
+
+def test_the_rules_fit_a_telegram_message():
+    """В подпись к фотографии они не влезут — там тысяча символов, —
+    поэтому и идут отдельным сообщением. Но и в него надо уложиться."""
+    assert len(draws.RULES_DEFAULT) < 4096

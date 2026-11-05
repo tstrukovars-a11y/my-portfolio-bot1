@@ -49,6 +49,7 @@ class Draw(StatesGroup):
     meet_photo = State()     # фото места вручения
     meet_text = State()      # где и во сколько
     final_photo = State()    # фотография, которой завершаем
+    rules = State()          # правила конкурса целиком
     schedule = State()       # расписание матчей одним сообщением
     talking = State()        # владелица отвечает призёру
     replying = State()       # призёр пишет владелице
@@ -116,6 +117,57 @@ def parse_schedule(text: str, day=None):
     return good, bad
 
 
+# Правила по умолчанию. Публикуются в канале ОТДЕЛЬНЫМ сообщением перед
+# постом с кнопкой: человек должен прочитать их до того, как нажмёт, а не
+# после. Заставлять ради этого открывать бота неправильно — правила
+# публичны по определению.
+#
+# Три места в квадратных скобках владелица заполняет сама: срок, кто
+# проводит и как передаются призы. Без них это не правила, а описание
+# механики, и первый же спор упрётся в их отсутствие.
+RULES_DEFAULT = """📋 <b>Правила конкурса</b>
+
+<b>Кто участвует</b>
+Любой, кто нажал «Участвовать» под постом конкурса. Бесплатно, ничего
+заполнять не нужно.
+
+<b>Как играть</b>
+Перед каждым матчем дня придёт вопрос: кто победит. Ответить можно в
+течение 15 минут после начала матча — прямо глядя на корт. Внутри этого
+времени ответ можно поменять, после — нет.
+
+Ответы видны только вам. В канале не видно ни кто участвует, ни что вы
+ответили.
+
+<b>Кто попадает в розыгрыш</b>
+Те, кто угадал все матчи. Если таких не нашлось — все, кто играл.
+
+<b>Как разыгрываем призы</b>
+Призов три, а угадавших обычно больше, поэтому между ними проходит
+турнир в игре «Розыгрыш»:
+
+• пары составляет жеребьёвка, сетку пришлём картинкой;
+• на круг даётся 10 минут: открыли игру, сыграли;
+• дальше проходит тот, у кого длиннее розыгрыш;
+• не сыграли в своё время — поражение; не сыграли оба — выбывают оба;
+• счёт совпал — проходит тот, кто за круг наиграл больше в сумме.
+
+<b>Призы</b>
+Первое, второе и третье место объявляем в канале. Четвёртому тоже есть
+подарок — напишем лично. Место и время вручения каждый победитель
+получит отдельным сообщением, с фотографией места.
+
+<b>Ваш знак</b>
+У каждого участника свой цвет и фигура — по ним вы найдёте себя в сетке.
+Фотографии профиля мы не используем.
+
+<b>Сроки и организатор</b>
+Конкурс проводится [срок].
+Организатор — [кто].
+Призы вручаются [как и где].
+Вопросы — организатору в этом же боте."""
+
+
 def _slug(title: str) -> str:
     """Короткое имя для ссылки по QR.
 
@@ -158,6 +210,8 @@ def _panel_kb(event) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🖼 Призы за места",
                               callback_data=f"drprizes_{eid}")],
+        [InlineKeyboardButton(text="📋 Правила",
+                              callback_data=f"drrules_{eid}")],
         [InlineKeyboardButton(text="📅 Расписание матчей",
                               callback_data=f"drsched_{eid}")],
         [InlineKeyboardButton(text="📊 Что происходит сейчас",
@@ -481,6 +535,67 @@ async def send_winners(call: CallbackQuery):
 # ---------------------------------------------------------------------
 
 # ---------------------------------------------------------------------
+# Правила
+# ---------------------------------------------------------------------
+
+@router.callback_query(F.data.startswith("drrules_"))
+async def rules_show(call: CallbackQuery, state: FSMContext):
+    if not config.is_admin(call.from_user.id):
+        await call.answer()
+        return
+    await call.answer()
+    event_id = int(call.data.split("_")[1])
+    event = await database.draw_event(event_id=event_id)
+    if not event:
+        await call.message.answer("Конкурс не найден.")
+        return
+
+    text = event.get("rules") or RULES_DEFAULT
+    todo = [x for x in ("[срок]", "[кто]", "[как и где]") if x in text]
+    tail = ""
+    if todo:
+        tail = ("\n\n⚠️ <b>Осталось заполнить:</b> " + ", ".join(todo) +
+                "\n<i>Без этого это описание механики, а не правила: "
+                "первый же спор упрётся в их отсутствие.</i>")
+
+    await call.message.answer(
+        text + tail,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✍️ Переписать",
+                                  callback_data=f"drrulesed_{event_id}")],
+            [InlineKeyboardButton(text="🔙 Назад",
+                                  callback_data=f"drevent_{event_id}")],
+        ]), parse_mode="HTML")
+
+
+@router.callback_query(F.data.startswith("drrulesed_"))
+async def rules_edit(call: CallbackQuery, state: FSMContext):
+    if not config.is_admin(call.from_user.id):
+        await call.answer()
+        return
+    await call.answer()
+    await state.set_state(Draw.rules)
+    await state.update_data(event_id=int(call.data.split("_")[1]))
+    await call.message.answer(
+        "Пришлите правила одним сообщением — заменю целиком.\n\n"
+        "<i>Разметка та же, что в Telegram: &lt;b&gt;жирный&lt;/b&gt;.</i>")
+
+
+@router.message(Draw.rules)
+async def rules_save(message: Message, state: FSMContext):
+    text = (message.html_text or message.text or "").strip()
+    if len(text) < 50:
+        await message.answer("Слишком коротко для правил. Пришлите целиком.")
+        return
+    data = await state.get_data()
+    await state.clear()
+    await database.draw_event_update(data["event_id"], rules=text[:3500])
+    event = await database.draw_event(event_id=data["event_id"])
+    await message.answer("✅ Правила сохранены.",
+                         reply_markup=_panel_kb(event) if event else None)
+
+
+# ---------------------------------------------------------------------
 # Что происходит сейчас
 # ---------------------------------------------------------------------
 
@@ -658,10 +773,32 @@ async def launch(call: CallbackQuery):
             "будет присылать.", show_alert=True)
         return
 
+    rules_text = event.get("rules") or RULES_DEFAULT
+    blanks = [x for x in ("[срок]", "[кто]", "[как и где]") if x in rules_text]
+    if blanks:
+        # Объявить конкурс с незаполненными правилами значит пообещать
+        # призы, не сказав ни срока, ни кто их вручает. Первый же спор
+        # упрётся ровно в это.
+        await call.answer(
+            "Сначала заполните в правилах: " + ", ".join(blanks),
+            show_alert=True)
+        return
+
     import digest
     chat, thread = await digest._target()
     if not chat:
         await call.answer("Канал не задан: /digest chat -100…", show_alert=True)
+        return
+
+    # ПРАВИЛА ПЕРВЫМ СООБЩЕНИЕМ. Человек должен прочитать их до того,
+    # как нажмёт «Участвовать», а не после. Отдельным сообщением, потому
+    # что в подпись к фотографии они не влезают: у Telegram там тысяча
+    # символов, а правил вчетверо больше.
+    try:
+        await call.bot.send_message(chat, rules_text, message_thread_id=thread,
+                                    disable_web_page_preview=True)
+    except Exception as e:
+        await call.answer(f"Правила не опубликовались: {e}", show_alert=True)
         return
 
     prizes = await database.draw_prizes(event_id)
@@ -680,9 +817,9 @@ async def launch(call: CallbackQuery):
             if place <= (event.get("prizes") or DEFAULT_PRIZES):
                 lines.append(f"{_place_word(place)} — {html.escape(caption)}")
     lines.append("")
-    lines.append("<i>Нажмите «Участвовать» — вопросы придут вам в личные "
-                 "сообщения. В канале никто не увидит ни ваших ответов, "
-                 "ни того, что вы участвуете.</i>")
+    lines.append("<i>Правила — в сообщении выше. Нажмите «Участвовать» — "
+                 "вопросы придут вам в личные сообщения. В канале никто не "
+                 "увидит ни ваших ответов, ни того, что вы участвуете.</i>")
 
     body = "\n".join(lines)
     markup = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
@@ -704,8 +841,8 @@ async def launch(call: CallbackQuery):
 
     await call.answer("Объявлено")
     await call.message.answer(
-        "🚀 Конкурс объявлен в канале. Вопросы уйдут участникам сами, "
-        "по времени из расписания.")
+        "🚀 Конкурс объявлен в канале: сначала правила, следом пост с "
+        "кнопкой. Вопросы уйдут участникам сами, по времени из расписания.")
 
 
 @router.callback_query(F.data.startswith("drjoin_"))
