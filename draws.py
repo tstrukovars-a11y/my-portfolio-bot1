@@ -160,8 +160,16 @@ def _panel_kb(event) -> InlineKeyboardMarkup:
                               callback_data=f"drprizes_{eid}")],
         [InlineKeyboardButton(text="📅 Расписание матчей",
                               callback_data=f"drsched_{eid}")],
+        [InlineKeyboardButton(text="📊 Что происходит сейчас",
+                              callback_data=f"drstatus_{eid}")],
         [InlineKeyboardButton(text="🚀 Объявить конкурс в канале",
                               callback_data=f"drlaunch_{eid}")],
+        [InlineKeyboardButton(text="🎮 Отборочный круг",
+                              callback_data=f"drqual_{eid}")],
+        [InlineKeyboardButton(text="🎲 Жеребьёвка и старт сетки",
+                              callback_data=f"drdraw_{eid}")],
+        [InlineKeyboardButton(text="📄 Выгрузить сетку файлом",
+                              callback_data=f"drsheet_{eid}")],
         [InlineKeyboardButton(text="📍 Место и время вручения",
                               callback_data=f"drmeet_{eid}")],
         [InlineKeyboardButton(text="📨 Разослать призёрам",
@@ -473,6 +481,155 @@ async def send_winners(call: CallbackQuery):
 # ---------------------------------------------------------------------
 # 5. Переписка
 # ---------------------------------------------------------------------
+
+# ---------------------------------------------------------------------
+# Что происходит сейчас
+# ---------------------------------------------------------------------
+
+# Сколько минут длится отборочный круг. Он не соревнование, а перекличка:
+# надо понять, кто из нажавших «Участвовать» действительно здесь.
+QUALIFY_MINUTES = 15
+
+
+@router.callback_query(F.data.startswith("drstatus_"))
+async def status_view(call: CallbackQuery):
+    """Живая картина: кто вошёл, кто ответил, кто сыграл.
+
+    Главное здесь — ВИДНО ЛИ ОТКЛИК. Половина нажавших «Участвовать»
+    делает это из любопытства и больше не возвращается; строить на них
+    сетку значит получить вечер из неявок.
+    """
+    if not config.is_admin(call.from_user.id):
+        await call.answer()
+        return
+    await call.answer()
+    event_id = int(call.data.split("_")[1])
+    event = await database.draw_event(event_id=event_id)
+    if not event:
+        await call.message.answer("Конкурс не найден.")
+        return
+
+    members = await database.draw_members(event_id)
+    polls = await database.draw_polls_of_event(event_id)
+    played = await database.draw_qualify_scores(event_id)
+    guessed = await database.draw_all_guessed(event_id)
+    winners = await database.draw_winners(event_id)
+
+    lines = [f"📊 <b>{html.escape(event['title'])}</b>", ""]
+    lines.append(f"Нажали «Участвовать»: <b>{len(members)}</b>")
+
+    if polls:
+        answered = sum(1 for p in polls if p["sent"])
+        decided = sum(1 for p in polls if p["correct"] is not None)
+        lines.append(f"Матчей в расписании: {len(polls)}")
+        lines.append(f"Вопросов разослано: {answered}")
+        lines.append(f"Исход отмечен: {decided} из {len(polls)}")
+        if decided < len(polls):
+            lines.append("<i>Пока не отмечены все исходы, угадавших не "
+                         "посчитать.</i>")
+
+    if event.get("qualify_opens_at"):
+        lines.append("")
+        lines.append(f"<b>Отборочный круг</b>")
+        lines.append(f"Сыграли: <b>{len(played)}</b> из {len(members)}")
+        if played:
+            best = sorted(played.items(), key=lambda kv: -kv[1])[:5]
+            for user_id, score in best:
+                lines.append(f"  • {score} — <code>{user_id}</code>")
+        not_played = [m for m in members if m not in played]
+        if not_played:
+            lines.append(f"Не играли: {len(not_played)}")
+
+    if guessed:
+        lines.append("")
+        lines.append(f"Угадали все матчи: <b>{len(guessed)}</b>")
+    if winners:
+        lines.append("")
+        lines.append("<b>Призёры определены:</b>")
+        for place, _, name, notified in winners:
+            mark = "📨" if notified else "•"
+            lines.append(f"{mark} {_place_word(place)} — "
+                         f"{html.escape(name or '')}")
+
+    await call.message.answer("\n".join(lines),
+                              reply_markup=_panel_kb(event),
+                              parse_mode="HTML")
+
+
+@router.callback_query(F.data.startswith("drqual_"))
+async def qualify_start(call: CallbackQuery):
+    """Открыть отборочный круг и позвать всех играть."""
+    if not config.is_admin(call.from_user.id):
+        await call.answer()
+        return
+    event_id = int(call.data.split("_")[1])
+    event = await database.draw_event(event_id=event_id)
+    members = await database.draw_members(event_id)
+    if not event:
+        await call.answer("Конкурс не найден.", show_alert=True)
+        return
+    if not members:
+        await call.answer("Пока никто не нажал «Участвовать».",
+                          show_alert=True)
+        return
+
+    opens = datetime.now()
+    await database.draw_event_update(
+        event_id, qualify_opens_at=opens,
+        qualify_closes_at=opens + timedelta(minutes=QUALIFY_MINUTES))
+
+    await call.answer("Зову играть…")
+    import draws_runner
+    keyboard = draws_runner._game_kb()
+    sent = 0
+    for user_id in members:
+        try:
+            await call.bot.send_message(
+                user_id,
+                f"🎮 <b>Отборочный круг</b>\n\n"
+                f"Откройте игру и сыграйте в ближайшие {QUALIFY_MINUTES} "
+                f"минут. Чем длиннее розыгрыш, тем выше вы будете в сетке.\n\n"
+                f"<i>Это ещё не на вылет — мы просто смотрим, кто на связи.</i>",
+                reply_markup=keyboard)
+            sent += 1
+        except Exception:
+            continue
+    await call.message.answer(
+        f"🎮 Отборочный круг открыт на {QUALIFY_MINUTES} минут. "
+        f"Позвали: {sent} из {len(members)}.\n\n"
+        f"<i>Нажмите «Что происходит сейчас», чтобы видеть, кто уже сыграл.</i>")
+
+
+@router.callback_query(F.data.startswith("drdraw_"))
+async def draw_bracket_now(call: CallbackQuery):
+    """Жеребьёвка вручную — когда вы увидели, что партии сыграны."""
+    if not config.is_admin(call.from_user.id):
+        await call.answer()
+        return
+    event_id = int(call.data.split("_")[1])
+    await call.answer("Строю сетку…")
+    import draws_runner
+    result = await draws_runner.start_bracket(call.bot, event_id)
+    await call.message.answer(f"🎲 {result}")
+
+
+@router.callback_query(F.data.startswith("drsheet_"))
+async def sheet_now(call: CallbackQuery):
+    """Выгрузить текущую сетку файлом — по требованию, а не только при
+    смене круга."""
+    if not config.is_admin(call.from_user.id):
+        await call.answer()
+        return
+    event_id = int(call.data.split("_")[1])
+    event = await database.draw_event(event_id=event_id)
+    bracket = await database.bracket_of_event(event_id)
+    if not event or not bracket:
+        await call.answer("Сетки ещё нет.", show_alert=True)
+        return
+    await call.answer("Готовлю файл…")
+    import draws_runner
+    await draws_runner._send_owner_sheet(call.bot, bracket["id"], event)
+
 
 # ---------------------------------------------------------------------
 # Расписание матчей

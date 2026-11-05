@@ -198,16 +198,26 @@ async def start_bracket(bot: Bot, event_id: int) -> str:
         return "конкурс не найден"
     prizes = event.get("prizes") or draws.DEFAULT_PRIZES
 
-    guessed = await database.draw_all_guessed(event_id)
-    if not guessed:
+    # Кого берём в сетку. Отборочный круг, если он был, главнее
+    # прогнозов: угадать можно и не приходя, а сыграть — нет. Сетка из
+    # тех, кто угадал, но ушёл домой, превращает вечер в неявки.
+    qualified = await database.draw_qualify_scores(event_id)
+    if qualified:
+        players = [uid for uid, _ in
+                   sorted(qualified.items(), key=lambda kv: -kv[1])]
+        source = "по отборочному кругу"
+    else:
+        guessed = await database.draw_all_guessed(event_id)
+        players = [user_id for user_id, _, _ in guessed]
+        source = "по угаданным матчам"
+
+    if not players:
         if config.ADMIN_ID:
             await bot.send_message(
                 config.ADMIN_ID,
-                "Все матчи разобраны, но всё угадавших нет. "
-                "Призы остаются до следующего конкурса.")
-        return "угадавших нет"
-
-    players = [user_id for user_id, _, _ in guessed]
+                "Сетку строить не из кого: ни отборочных результатов, ни "
+                "угадавших все матчи. Призы остаются до следующего раза.")
+        return "участников нет"
 
     # Угадавших не больше, чем призов, — сетка не нужна: разыгрывать
     # нечего, места уже определены порядком ответов.
@@ -217,8 +227,9 @@ async def start_bracket(bot: Bot, event_id: int) -> str:
         if config.ADMIN_ID:
             await bot.send_message(
                 config.ADMIN_ID,
-                f"🏆 Угадавших всё: {len(players)} — это не больше числа "
-                f"призов, сетка не нужна. Призёры записаны, можно рассылать.")
+                f"🏆 Участников {source}: {len(players)} — это не больше "
+                f"числа призов, сетка не нужна. Призёры записаны, можно "
+                f"рассылать.")
         return "призёры определены без сетки"
 
     if len(players) > draw_bracket.MAX_PLAYERS:
@@ -235,7 +246,7 @@ async def start_bracket(bot: Bot, event_id: int) -> str:
 
     await _send_owner_sheet(bot, bracket_id, event)
     await _announce_round(bot, bracket_id, event, round_no=1)
-    return f"сетка на {size} запущена"
+    return f"сетка на {size} запущена ({source})"
 
 
 async def _send_owner_sheet(bot: Bot, bracket_id: int, event) -> None:

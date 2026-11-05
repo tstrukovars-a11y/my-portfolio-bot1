@@ -159,3 +159,37 @@ def test_a_bad_clock_is_rejected():
 def test_the_answer_window_is_a_quarter_of_an_hour():
     """Зритель отвечает по ходу матча, а не до него."""
     assert draws.POLL_MINUTES == 15
+
+
+# ---------------------------------------------------------------------
+# Отборочный круг
+# ---------------------------------------------------------------------
+#
+# Половина нажавших «Участвовать» делает это из любопытства и больше не
+# возвращается. Сетка из таких превращает вечер в неявки — поэтому перед
+# жеребьёвкой есть перекличка.
+
+
+def test_the_qualifier_lasts_a_quarter_of_an_hour():
+    assert draws.QUALIFY_MINUTES == 15
+
+
+def test_the_qualifier_is_a_roll_call_not_a_tournament():
+    """Играют все сразу, пары не нужны: вопрос только в том, кто здесь."""
+    import inspect
+    body = inspect.getsource(draws.qualify_start)
+    assert "кто на связи" in body
+
+
+def test_the_bracket_prefers_those_who_actually_played():
+    """Угадать можно и не приходя, а сыграть — нет."""
+    import inspect
+    import draws_runner
+    body = inspect.getsource(draws_runner.start_bracket)
+    assert body.index("draw_qualify_scores") < body.index("draw_all_guessed")
+
+
+def test_owner_control_buttons_stay_out_of_the_channel():
+    import public
+    for data in ("drstatus_1", "drqual_1", "drdraw_1", "drsheet_1"):
+        assert not public.allowed(data), data
