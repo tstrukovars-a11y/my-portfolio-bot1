@@ -1255,3 +1255,36 @@ def test_a_card_without_a_number_is_not_refreshed(monkeypatch):
     """Карточки без голосования номер не запоминают — обновлять нечего."""
     bot = _run_refresh(monkeypatch, [])
     assert bot.edits == []
+
+
+# =====================================================================
+# ПОДПИСКА УВОДИТ В ЛИЧКУ, А НЕ РАССКАЗЫВАЕТ ПРО НЕЁ
+# =====================================================================
+#
+# Раньше всплывало «напомню за полчаса», и человек сам догадывался
+# заглянуть в переписку. А там теперь не только напоминание: статистика
+# встреч и голосование за исход. Ради него и уводим — одним касанием.
+
+
+def test_subscribing_opens_the_bot_instead_of_showing_a_toast():
+    import inspect
+    body = inspect.getsource(ta.toggle_match)
+    assert "call.answer(url=url)" in body
+
+
+def test_the_card_is_not_sent_twice():
+    """Нажатие в канале сначала присылает карточку, а потом уводит по
+    ссылке — а ссылка идёт тем же путём, каким оформляется подписка.
+    Без проверки человек получал бы два одинаковых экрана подряд."""
+    import inspect
+    body = inspect.getsource(ta._handle_match_start)
+    assert "card_message" in body
+    assert body.index("card_message") < body.index("_confirm")
+
+
+def test_a_missing_bot_username_falls_back_to_the_old_toast():
+    """Ссылку строить не из чего — лучше надпись, чем нажатие, которое
+    ничего не делает."""
+    import inspect
+    body = inspect.getsource(ta.toggle_match)
+    assert "_lead_phrase(lead)" in body

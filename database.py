@@ -2444,6 +2444,26 @@ async def remember_card(user_id: int, match_id: str, message_id: int) -> None:
         logging.warning(f"Карточка {user_id}/{match_id} не запомнилась: {e}")
 
 
+async def card_message(user_id: int, match_id: str):
+    """Номер уже присланной карточки матча или None.
+
+    Нужен, чтобы не прислать её второй раз: по ссылке из канала человек
+    попадает в бота тем же путём, каким оформляется подписка, и без
+    этой проверки получал бы две одинаковые карточки подряд.
+    """
+    pool = await get_pool()
+    if not pool:
+        return None
+    try:
+        async with pool.acquire() as conn:
+            return await conn.fetchval(
+                f"SELECT card_message_id FROM {SCHEMA}.match_alerts "
+                f"WHERE user_id = $1 AND match_id = $2", user_id, match_id)
+    except Exception as e:
+        logging.warning(f"Карточка {user_id}/{match_id} не прочиталась: {e}")
+        return None
+
+
 async def match_cards(match_id: str):
     """[(user_id, message_id, tour)] — личные карточки этого матча.
 

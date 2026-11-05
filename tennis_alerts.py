@@ -1577,6 +1577,13 @@ async def _handle_match_start(message: Message, bot: Bot) -> bool:
         await message.answer("Не получилось сохранить напоминание. "
                              "Попробуйте ещё раз через минуту.")
         return True
+
+    # Карточка могла уже прийти: нажатие в канале сначала присылает её,
+    # а потом уводит сюда по ссылке. Второй такой же экран подряд
+    # выглядит сбоем, да и голосовать человек будет в первом.
+    if await database.card_message(message.from_user.id, match_id):
+        return True
+
     await _confirm(bot, message.from_user.id, tour, match_id,
                    _full_title(match), _starts(match))
     return True
@@ -1929,8 +1936,17 @@ async def toggle_match(call: CallbackQuery):
     if added:
         sent = await _confirm(call.bot, call.from_user.id, tour, match_id, full, starts)
         if sent:
-            lead = await _lead()
-            await call.answer("🔔 " + _lead_phrase(lead))
+            # ПЕРЕХОД, А НЕ НАДПИСЬ. Раньше всплывало «напомню за
+            # полчаса», и человек сам догадывался заглянуть в личку. А
+            # там теперь не только напоминание: статистика встреч и
+            # голосование за исход. Ради него и уводим — одним касанием,
+            # прямо на карточку.
+            url = await _deep_link(f"tm-{tour}-{match_id}")
+            if url:
+                await call.answer(url=url)
+            else:
+                lead = await _lead()
+                await call.answer("🔔 " + _lead_phrase(lead))
         else:
             # Бот не может написать первым: открываем его нажатием, а матч
             # передаём параметром — подписка доедет сама.
