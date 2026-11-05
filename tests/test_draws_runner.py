@@ -66,3 +66,23 @@ def test_the_scheduler_ticks_every_minute():
     import inspect
     body = inspect.getsource(runner.scheduler)
     assert "sleep(60)" in body
+
+
+# ---------------------------------------------------------------------
+# Когда показывать сетку
+# ---------------------------------------------------------------------
+
+
+def test_the_bracket_picture_waits_for_the_last_eight():
+    """На тридцати двух именах сетка нечитаема с телефона: своё имя в
+    ней ищут дольше, чем идёт круг."""
+    assert runner.SHOW_BRACKET_FROM == 8
+
+
+def test_the_owner_gets_the_bracket_as_a_file_not_a_photo():
+    """Картинку в переписке Telegram сжимает, и на печати она
+    расплывается. Документ сохраняется в исходном размере."""
+    import inspect
+    body = inspect.getsource(runner._send_owner_sheet)
+    assert "send_document" in body
+    assert "send_photo" not in body

@@ -642,6 +642,24 @@ async def join(call: CallbackQuery):
             f"Перед каждым матчем пришлю вопрос: кто победит. Отвечать "
             f"можно {POLL_MINUTES} минут после начала — глядя на корт.\n\n"
             f"<i>Угадаете все матчи — попадёте в сетку розыгрыша призов.</i>")
+        # Знак участника — сразу. По нему он найдёт себя в сетке, и
+        # искать там чужие фотографии не придётся.
+        try:
+            import draw_image
+            from aiogram.types import BufferedInputFile
+            png = draw_image.avatar(call.from_user.id, 256)
+            import io
+            buffer = io.BytesIO()
+            png.save(buffer, format="PNG")
+            await call.bot.send_photo(
+                call.from_user.id,
+                BufferedInputFile(buffer.getvalue(), filename="znak.png"),
+                caption="Это ваш знак на сегодня. По нему вы найдёте себя "
+                        "в сетке розыгрыша — он не повторяется у других "
+                        "и не меняется.")
+        except Exception as e:
+            logging.warning(f"Знак участника не ушёл: {e}")
+
         await call.answer("Вы в конкурсе — подробности в личке")
     except Exception:
         # Бот не может писать первым. Открываем его нажатием, а номер

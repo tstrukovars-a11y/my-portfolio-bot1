@@ -85,9 +85,18 @@ def test_the_only_one_who_played_wins_even_with_one_point():
     assert b.advance(("a", "c"), {"a": 1}) == "a"
 
 
-def test_nobody_played_so_the_better_seed_goes_on():
-    """Снять обоих нельзя — в следующем круге осталось бы пустое место."""
-    assert b.advance(("a", "c"), {}, seeds={"a": 3, "c": 1}) == "c"
+def test_nobody_played_so_nobody_goes_on():
+    """Оба не явились — оба выбывают. Пустое место в следующем круге
+    сетка переваривает как пропуск, а вот проход неявившегося обесценил
+    бы само правило про явку."""
+    assert b.advance(("a", "c"), {}, seeds={"a": 3, "c": 1}) is None
+
+
+def test_an_empty_slot_becomes_a_bye_for_the_next_opponent():
+    """Продолжение предыдущего: дыра не ломает сетку, а работает
+    пропуском."""
+    after_noshow = b.advance(("a", "c"), {})
+    assert b.advance((after_noshow, "d"), {"d": 10}) == "d"
 
 
 def test_an_equal_score_is_settled_by_seed():
@@ -237,3 +246,42 @@ def test_a_full_eight_bracket_plays_out_to_three_winners():
 
     assert len(done) == 4
     assert len(set(done)) == 4
+
+
+# ---------------------------------------------------------------------
+# Пара из двух пропусков
+# ---------------------------------------------------------------------
+#
+# Матч без единого участника — худшая поломка сетки: следующий круг
+# получает пустое место, и выбраться из этого он уже не может. В
+# турнирном боте на это стоит отдельная защита, и не зря.
+
+
+def test_no_empty_pair_in_any_lineup():
+    """Перебор всех составов до шестнадцати, а не выборочная проверка."""
+    for count in range(2, 17):
+        slots = b.seed_slots(list(range(1, count + 1)))
+        for pair in b.pairs(slots):
+            assert pair != (None, None), f"игроков {count}"
+
+
+def test_an_oversized_bracket_is_shrunk_instead_of_leaving_holes():
+    """Восемь мест на двоих — это три пары пустых. Размер урезаем до
+    необходимого, а не доверяем вызывающему."""
+    slots = b.seed_slots([1, 2], size=8)
+    assert len(slots) == 2
+    assert b.pairs(slots) == [(1, 2)]
+
+
+def test_an_oversized_bracket_never_leaves_an_empty_pair():
+    for count in range(2, 9):
+        for size in (8, 16):
+            slots = b.seed_slots(list(range(1, count + 1)), size=size)
+            for pair in b.pairs(slots):
+                assert pair != (None, None), f"{count} игроков в сетке {size}"
+
+
+def test_a_smaller_size_is_still_honoured():
+    """Урезаем только завышенный размер. Заниженный — осознанный выбор
+    вызывающего (отсечь лишних), и его не трогаем."""
+    assert len(b.seed_slots([1, 2, 3, 4, 5, 6], size=4)) == 4

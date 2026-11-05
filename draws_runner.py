@@ -36,6 +36,11 @@ router = Router()
 # матчей, и растянуть их на час — значит не дождаться никого.
 ROUND_MINUTES = 10
 
+# С какого числа оставшихся показывать участникам картинку сетки. Раньше
+# она только мешает: на тридцати двух именах своё ищут дольше, чем идёт
+# круг. Владелице документ уходит с самого начала — ей нужен весь расклад.
+SHOW_BRACKET_FROM = 8
+
 
 # ---------------------------------------------------------------------
 # 1. Вопрос участникам
@@ -228,8 +233,37 @@ async def start_bracket(bot: Bot, event_id: int) -> str:
     if not bracket_id:
         return "сетка не создалась"
 
+    await _send_owner_sheet(bot, bracket_id, event)
     await _announce_round(bot, bracket_id, event, round_no=1)
     return f"сетка на {size} запущена"
+
+
+async def _send_owner_sheet(bot: Bot, bracket_id: int, event) -> None:
+    """Полная сетка владелице — ФАЙЛОМ, а не картинкой в переписке.
+
+    Файл сохраняется и печатается в исходном размере; картинка в
+    переписке сжимается Telegram и на печати расплывается. Поэтому
+    участникам фото, а на стенд — документ.
+    """
+    if not config.ADMIN_ID:
+        return
+    bracket = await database.bracket_get(bracket_id)
+    if not bracket:
+        return
+    picture, _ = await _bracket_picture(bot, bracket_id, bracket, event)
+    if not picture:
+        return
+    try:
+        from aiogram.types import BufferedInputFile
+        await bot.send_document(
+            config.ADMIN_ID,
+            BufferedInputFile(picture, filename="setka.png"),
+            caption=f"📄 Сетка: {html.escape(event['title'])}\n\n"
+                    f"<i>Файлом — чтобы можно было распечатать. "
+                    f"Участникам сетка покажется, когда их останется "
+                    f"{SHOW_BRACKET_FROM}.</i>")
+    except Exception as e:
+        logging.warning(f"Документ сетки не ушёл: {e}")
 
 
 async def _bracket_picture(bot: Bot, bracket_id: int, bracket, event):
@@ -283,7 +317,13 @@ async def _announce_round(bot: Bot, bracket_id: int, event,
     if round_no >= draw_bracket.last_round_no(bracket["size"]) and len(slots) >= 4:
         stage = "Финал и матч за третье место"
 
-    picture, _ = await _bracket_picture(bot, bracket_id, bracket, event)
+    # Картинку показываем, ТОЛЬКО когда осталось восемь и меньше.
+    # На тридцати двух именах сетка нечитаема с телефона: мелкие боксы,
+    # и своё имя в них ищут дольше, чем идёт круг.
+    alive = len([x for x in slots if x is not None])
+    picture = None
+    if alive <= SHOW_BRACKET_FROM:
+        picture, _ = await _bracket_picture(bot, bracket_id, bracket, event)
     keyboard = _game_kb()
 
     for first, second in draw_bracket.pairs(slots):
@@ -349,6 +389,7 @@ async def advance_brackets(bot: Bot) -> int:
             await database.bracket_next_round(bracket_id, nxt,
                                               round_minutes=ROUND_MINUTES)
             if event:
+                await _send_owner_sheet(bot, bracket_id, event)
                 await _announce_round(bot, bracket_id, event,
                                       bracket["round_no"] + 1)
         else:
