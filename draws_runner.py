@@ -61,8 +61,8 @@ async def dispatch_polls(bot: Bot) -> int:
     for poll in await database.draw_polls_to_send():
         members = await database.draw_members(poll["event_id"])
         text = (f"🎾 <b>{html.escape(poll['question'])}</b>\n\n"
-                f"<i>Ответ принимается {draws.POLL_MINUTES} минут. "
-                f"Передумать внутри этого времени можно, после — нет.</i>")
+                f"<i>Ответить можно в течение {draws.POLL_MINUTES} минут. "
+                f"Ответ окончательный — поменять его нельзя.</i>")
         for user_id in members:
             try:
                 await bot.send_message(
@@ -92,6 +92,10 @@ async def take_answer(call: CallbackQuery):
     if result == "закрыт":
         await call.answer("Приём ответов по этому матчу закрыт.",
                           show_alert=True)
+        return
+    if result == "уже отвечено":
+        await call.answer("Вы уже ответили по этому матчу. "
+                          "По правилам ответ не меняется.", show_alert=True)
         return
     if result != "принят":
         await call.answer("Не получилось записать. Нажмите ещё раз.",

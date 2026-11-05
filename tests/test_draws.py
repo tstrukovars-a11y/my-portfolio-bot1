@@ -203,28 +203,27 @@ def test_the_rules_name_every_rule_the_code_actually_follows():
     """Если правило есть в коде, но не в правилах, спорить будет не о чем
     и нечем."""
     rules = draws.RULES_DEFAULT
-    for must in ("15 минут", "10 минут", "выбывают оба",
-                 "больше в сумме", "Четвёртому"):
+    for must in ("15 минут", "10 минут", "это поражение",
+                 "больше очков в сумме", "первое, второе и третье"):
         assert must in rules, must
 
 
-def test_the_rules_promise_privacy_because_the_code_keeps_it():
-    assert "не видно ни кто участвует" in draws.RULES_DEFAULT
-
-
-def test_the_rules_have_blanks_the_owner_must_fill():
-    """Срок, организатор и порядок вручения — без них это описание
-    механики, а не правила."""
-    for blank in ("[срок]", "[кто]", "[как и где]"):
-        assert blank in draws.RULES_DEFAULT, blank
+def test_the_rules_say_the_answer_is_final_and_so_does_the_code():
+    """Главное расхождение, которое пришлось чинить: правила говорили
+    «менять нельзя», а база разрешала переставить голос."""
+    assert "менять нельзя" in draws.RULES_DEFAULT
+    import inspect
+    import database
+    body = inspect.getsource(database.draw_answer)
+    assert "DO NOTHING" in body
+    assert "DO UPDATE" not in body
 
 
 def test_a_contest_cannot_be_announced_with_blanks_left():
-    """Объявить конкурс с незаполненными правилами значит пообещать
-    призы, не сказав ни срока, ни кто их вручает."""
+    """Если в правилах оставлена подстановка в квадратных скобках,
+    объявлять нельзя: это обещание призов без условий."""
     import inspect
     body = inspect.getsource(draws.launch)
-    assert "[срок]" in body
     assert "Сначала заполните в правилах" in body
 
 
@@ -238,12 +237,10 @@ def test_the_rules_go_out_before_the_contest_post():
     assert rules_at < post_at
 
 
-def test_no_placeholder_is_broken_by_a_line_break():
-    """Перенос строки ВНУТРИ подстановки делает её невидимой для
-    проверки: конкурс объявился бы без указания, как вручаются призы."""
-    for blank in ("[срок]", "[кто]", "[как и где]"):
-        assert blank in draws.RULES_DEFAULT, blank
-        assert "[" not in blank.strip("[]")
+def test_the_default_rules_are_ready_to_publish():
+    """В тексте владелицы подстановок не осталось — его можно объявлять
+    как есть, и проверка на скобки не должна его задерживать."""
+    assert "[" not in draws.RULES_DEFAULT
 
 
 def test_the_rules_fit_a_telegram_message():

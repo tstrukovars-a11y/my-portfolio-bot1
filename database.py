@@ -1616,9 +1616,13 @@ async def draw_answer(poll_id: int, user_id: int, side: int) -> str:
     """Принять ответ. Возвращает «принят», «закрыт» или «ошибка».
 
     Окно проверяется В БАЗЕ, а не в коде: часы приложения и часы базы
-    расходятся, а спор «я успел» решается именно здесь. Переставить
-    ответ внутри окна можно — передумать, глядя на корт, это право
-    зрителя; после закрытия нельзя ничего.
+    расходятся, а спор «я успел» решается именно здесь.
+
+    ОТВЕТ ОКОНЧАТЕЛЕН. Раньше внутри окна его можно было переставить, и
+    я считала это правом зрителя. Но в опубликованных правилах написано
+    «ответ менять нельзя», а код обязан следовать правилам, а не
+    наоборот: иначе один участник поменяет, другой не станет, и конкурс
+    развалится на спор о том, что было написано.
     """
     pool = await get_pool()
     if not pool:
@@ -1632,12 +1636,15 @@ async def draw_answer(poll_id: int, user_id: int, side: int) -> str:
                 return "ошибка"
             if not open_now:
                 return "закрыт"
-            await conn.execute(
+            status = await conn.execute(
                 f"INSERT INTO {SCHEMA}.draw_answers (poll_id, user_id, side) "
                 f"VALUES ($1, $2, $3) "
-                f"ON CONFLICT (poll_id, user_id) DO UPDATE SET "
-                f"side = EXCLUDED.side, answered_at = NOW()",
+                f"ON CONFLICT (poll_id, user_id) DO NOTHING",
                 poll_id, user_id, int(side))
+        # asyncpg возвращает «INSERT 0 1», если строка легла, и
+        # «INSERT 0 0», если такой ответ уже был
+        if status and status.endswith(" 0"):
+            return "уже отвечено"
         return "принят"
     except Exception as e:
         logging.error(f"Ответ на вопрос {poll_id} не записался: {e}")
