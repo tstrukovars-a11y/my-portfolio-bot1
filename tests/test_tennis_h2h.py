@@ -91,18 +91,19 @@ def test_html_in_the_note_is_escaped():
 # ---------------------------------------------------------------------
 
 
-def test_preview_has_a_heading_and_the_pair():
-    row = {"title": "Рублёв — Алькарас", "meetings": 4, "wins_first": 1,
-           "surfaces": "хард", "years": "2025", "note": None}
-    text = h2h.preview_text(row)
-    assert "Перед матчем" in text
-    assert "Рублёв — Алькарас" in text
-    assert "Счёт — 1:3" in text
+# ОТДЕЛЬНОГО ПОСТА «ПЕРЕД МАТЧЕМ» НЕТ, и тесты на него удалены вместе
+# с ним. Он был лишним: статистика нужна тому, кто за матчем следит, и
+# он получает её в уведомлении о подписке. Пост в канал повторял бы то
+# же самое тем, кто этот матч смотреть не собирался.
 
 
-def test_preview_works_for_a_first_ever_meeting():
-    row = {"title": "Рублёв — Алькарас", "meetings": 0, "wins_first": 0}
-    assert "впервые" in h2h.preview_text(row)
+def test_publishing_is_gone_for_good():
+    """Мёртвая кнопка хуже отсутствующей: она нажимается и молчит."""
+    assert not hasattr(h2h, "preview_text")
+    assert not hasattr(h2h, "publish")
+    import pathlib
+    source = pathlib.Path("tennis_h2h.py").read_text()
+    assert "h2hgo_" not in source, "кнопка ссылается на удалённый обработчик"
 
 
 # ---------------------------------------------------------------------
@@ -244,3 +245,30 @@ def test_the_summary_feeds_the_same_block_as_manual_stats():
     text = h2h._stats_block("Шелтон", "Крыстя", got)
     assert "Личные встречи: 1" in text
     assert "впереди: Шелтон" in text
+
+
+# ---------------------------------------------------------------------
+# Заполнять может только владелица
+# ---------------------------------------------------------------------
+
+
+def test_the_fill_button_is_added_only_for_the_owner():
+    """Кнопка не показывается читателю вовсе — это служебное действие."""
+    import inspect
+    import tennis_alerts
+    body = inspect.getsource(tennis_alerts._confirm)
+    assert "config.is_admin(user_id)" in body
+    assert body.index("config.is_admin(user_id)") < body.index("h2hfill_")
+
+
+def test_the_handler_checks_again_on_its_own():
+    """Вторая проверка в обработчике: кнопку можно нажать и по старому
+    сообщению, и из пересланного — доверять её наличию нельзя."""
+    import inspect
+    assert "config.is_admin(call.from_user.id)" in inspect.getsource(
+        h2h.start_filling)
+
+
+def test_filling_never_works_from_a_channel_post():
+    import public
+    assert not public.allowed("h2hfill_atp_1")

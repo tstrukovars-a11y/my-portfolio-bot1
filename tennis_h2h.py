@@ -144,8 +144,6 @@ def _ask_markup(tour: str, match_id: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✍️ Заполнить",
                               callback_data=f"h2hfill_{tour}_{match_id}")],
-        [InlineKeyboardButton(text="🔄 Обновить",
-                              callback_data=f"h2hgo_{tour}_{match_id}")],
     ])
 
 
@@ -453,16 +451,15 @@ async def _show_summary(message: Message, data, ok: bool, **fields) -> None:
         return
 
     body = _stats_block(data.get("first"), data.get("second"), fields)
+    # Публиковать нечего: статистика покажется в уведомлении тому, кто
+    # подпишется на этот матч. Остаётся только возможность исправить.
     await message.answer(
-        f"Вот что получилось:\n\n{body}\n\nПубликуем?",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(
-                text="📤 Опубликовать",
-                callback_data=f"h2hgo_{data['tour']}_{data['match_id']}")],
-            [InlineKeyboardButton(
+        f"✅ Записала:\n\n{body}\n\n"
+        f"<i>Покажется в уведомлении тем, кто подпишется на этот матч.</i>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(
                 text="✍️ Заполнить заново",
-                callback_data=f"h2hfill_{data['tour']}_{data['match_id']}")],
-        ]))
+                callback_data=f"h2hfill_{data['tour']}_{data['match_id']}")]]))
 
 
 # ---------------------------------------------------------------------
@@ -516,60 +513,8 @@ def _stats_block(first: str, second: str, f, partial: bool = False) -> str:
     return "\n".join(lines)
 
 
-def preview_text(row) -> str:
-    """Пост «Перед матчем» целиком"""
-    title = row.get("title") or "матч"
-    first, second = _names(title)
-    block = _stats_block(first, second, row)
-    return (f"📊 <b>Перед матчем</b>\n\n"
-            f"<b>{html.escape(title)}</b>\n\n"
-            f"{block}")
-
-
-# ---------------------------------------------------------------------
-# Публикация
-# ---------------------------------------------------------------------
-
-async def publish(bot: Bot, chat: int, tour: str, match_id: str,
-                  thread=None) -> str:
-    """Выпустить анонс. Возвращает строку отчёта для владелицы."""
-    row = await database.h2h_get(match_id)
-    if not row:
-        return "статистики всё ещё нет"
-    if row.get("published"):
-        return "этот матч уже анонсирован"
-
-    try:
-        await bot.send_message(chat, preview_text(row),
-                               message_thread_id=thread,
-                               disable_web_page_preview=True)
-    except Exception as e:
-        logging.error(f"Анонс {match_id} не вышел: {e}")
-        return f"не вышло: {e}"
-
-    await database.h2h_mark_published(match_id)
-    return "опубликовано"
-
-
-@router.callback_query(F.data.startswith("h2hgo_"))
-async def publish_now(call: CallbackQuery):
-    if not config.is_admin(call.from_user.id):
-        await call.answer()
-        return
-    try:
-        _, tour, match_id = call.data.split("_", 2)
-    except ValueError:
-        await call.answer()
-        return
-
-    # Канал — тот же, куда выходит дайджест: он задаётся настройкой, а не
-    # константой, и расходиться с остальными постами здесь незачем.
-    import digest
-    chat, thread = await digest._target()
-    if not chat:
-        await call.answer("Канал не задан.", show_alert=True)
-        return
-
-    await call.answer("Публикую…")
-    result = await publish(call.bot, chat, tour, match_id, thread)
-    await call.message.answer(f"📊 {result}")
+# ОТДЕЛЬНОГО ПОСТА «ПЕРЕД МАТЧЕМ» НЕТ, и код его публикации удалён.
+#
+# Он был лишним: статистика нужна тому, кто за матчем следит, и он уже
+# получает её в уведомлении о подписке. Пост в канал повторял бы то же
+# самое всем остальным — тем, кто этот матч смотреть не собирался.
