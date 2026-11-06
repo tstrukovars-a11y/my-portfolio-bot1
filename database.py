@@ -1769,6 +1769,31 @@ async def draw_polls_to_send():
         return []
 
 
+async def draw_poll_open_now(poll_id: int, minutes: int) -> bool:
+    """Открыть вопрос немедленно, не дожидаясь времени из расписания.
+
+    Нужно и на репетиции, и на площадке: матч начался раньше или
+    позже написанного, и ждать назначенной минуты незачем — люди уже
+    смотрят на корт.
+    """
+    pool = await get_pool()
+    if not pool:
+        return False
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"""UPDATE {SCHEMA}.draw_polls SET
+                    opens_at = NOW(),
+                    closes_at = NOW() + ($2 || ' minutes')::interval,
+                    closed = FALSE
+                    WHERE id = $1""",
+                poll_id, str(int(minutes)))
+        return True
+    except Exception as e:
+        logging.error(f"Вопрос {poll_id} не открылся: {e}")
+        return False
+
+
 async def draw_poll_mark_sent(poll_id: int) -> None:
     pool = await get_pool()
     if not pool:

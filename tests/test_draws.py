@@ -340,3 +340,53 @@ def test_both_entry_points_answer_the_same_way():
 def test_the_command_is_exactly_slash_draws():
     import inspect
     assert 'F.text == "/draws"' in inspect.getsource(draws)
+
+
+# ---------------------------------------------------------------------
+# Запуск вопроса руками
+# ---------------------------------------------------------------------
+#
+# Матч начинается раньше или позже написанного — на площадке это
+# обычное дело. Ждать назначенной минуты незачем: люди уже смотрят на
+# корт, и спрашивать надо сейчас.
+
+
+def test_every_poll_state_has_a_human_name():
+    """Чтобы не гадать по кнопкам, что с вопросом происходит."""
+    waiting = {"correct": None, "closed": False, "sent": False}
+    running = {"correct": None, "closed": False, "sent": True}
+    closed = {"correct": None, "closed": True, "sent": True}
+    decided = {"correct": 1, "closed": True, "sent": True}
+    assert "ждёт запуска" in draws._poll_state(waiting)
+    assert "идёт" in draws._poll_state(running)
+    assert "приём закрыт" in draws._poll_state(closed)
+    assert "исход отмечен" in draws._poll_state(decided)
+
+
+def test_only_unsent_polls_get_a_launch_button():
+    """Разосланный вопрос нельзя разослать второй раз — у людей
+    появились бы две одинаковые кнопки с разной судьбой."""
+    import inspect
+    body = inspect.getsource(draws.polls_menu)
+    assert 'if not poll["sent"]' in body
+
+
+def test_launching_refuses_a_poll_already_sent():
+    import inspect
+    body = inspect.getsource(draws.ask_now)
+    assert "уже разослан" in body
+
+
+def test_launching_resets_the_answer_window():
+    """Время из расписания прошло или ещё не настало — окно должно
+    отсчитываться от нажатия, а не от написанного часа."""
+    import inspect
+    body = inspect.getsource(draws.ask_now)
+    assert "draw_poll_open_now" in body
+    assert body.index("draw_poll_open_now") < body.index("send_poll")
+
+
+def test_the_launch_buttons_are_owner_only():
+    import public
+    assert not public.allowed("drpolls_1")
+    assert not public.allowed("drask_7")

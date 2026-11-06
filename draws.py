@@ -200,6 +200,8 @@ def _panel_kb(event) -> InlineKeyboardMarkup:
                               callback_data=f"drrules_{eid}")],
         [InlineKeyboardButton(text="📅 Расписание матчей",
                               callback_data=f"drsched_{eid}")],
+        [InlineKeyboardButton(text="▶️ Запустить вопрос",
+                              callback_data=f"drpolls_{eid}")],
         [InlineKeyboardButton(text="📊 Что происходит сейчас",
                               callback_data=f"drstatus_{eid}")],
         [InlineKeyboardButton(text="🚀 Объявить конкурс в канале",
@@ -704,6 +706,87 @@ async def rules_save(message: Message, state: FSMContext):
 # ---------------------------------------------------------------------
 # Что происходит сейчас
 # ---------------------------------------------------------------------
+
+def _poll_state(poll) -> str:
+    """Человеческое состояние вопроса — чтобы не гадать по кнопкам."""
+    if poll["correct"] is not None:
+        return "✅ исход отмечен"
+    if poll["closed"]:
+        return "🏁 приём закрыт"
+    if poll["sent"]:
+        return "🟢 идёт"
+    return "⏳ ждёт запуска"
+
+
+@router.callback_query(F.data.startswith("drpolls_"))
+async def polls_menu(call: CallbackQuery):
+    """Запустить вопрос руками, не дожидаясь времени из расписания.
+
+    Матч начинается раньше или позже написанного — на площадке это
+    обычное дело. Ждать назначенной минуты незачем: люди уже смотрят
+    на корт, и спрашивать надо сейчас.
+    """
+    if not config.is_admin(call.from_user.id):
+        await call.answer()
+        return
+    await call.answer()
+    event_id = int(call.data.split("_")[1])
+    polls = await database.draw_polls_of_event(event_id)
+    if not polls:
+        await call.message.answer(
+            "Сначала заведите расписание матчей — запускать нечего.")
+        return
+
+    lines = ["▶️ <b>Вопросы по матчам</b>", ""]
+    rows = []
+    for poll in polls:
+        lines.append(f"{_poll_state(poll)} · {html.escape(poll['question'])}")
+        if not poll["sent"]:
+            rows.append([InlineKeyboardButton(
+                text=f"▶️ {poll['option_a'][:14]} — {poll['option_b'][:14]}",
+                callback_data=f"drask_{poll['id']}")])
+
+    if rows:
+        lines.append("")
+        lines.append(f"<i>Запущенный вопрос уходит участникам сразу, "
+                     f"ответы принимаются {POLL_MINUTES} минут.</i>")
+    else:
+        lines.append("")
+        lines.append("<i>Все вопросы уже запущены.</i>")
+
+    rows.append([InlineKeyboardButton(text="🔙 Назад",
+                                      callback_data=f"drevent_{event_id}")])
+    await call.message.answer("\n".join(lines),
+                              reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+                              parse_mode="HTML")
+
+
+@router.callback_query(F.data.startswith("drask_"))
+async def ask_now(call: CallbackQuery):
+    if not config.is_admin(call.from_user.id):
+        await call.answer()
+        return
+    poll_id = int(call.data.split("_")[1])
+    poll = await database.draw_poll(poll_id)
+    if not poll:
+        await call.answer("Вопрос не найден.", show_alert=True)
+        return
+    if poll["sent"]:
+        await call.answer("Этот вопрос уже разослан.", show_alert=True)
+        return
+
+    await call.answer("Рассылаю…")
+    await database.draw_poll_open_now(poll_id, POLL_MINUTES)
+    poll = await database.draw_poll(poll_id)
+
+    import draws_runner
+    sent = await draws_runner.send_poll(call.bot, poll)
+    await call.message.answer(
+        f"▶️ <b>{html.escape(poll['question'])}</b>\n\n"
+        f"Ушло участникам: {sent}.\n"
+        f"Приём закроется через {POLL_MINUTES} минут, и я спрошу, "
+        f"кто выиграл.")
+
 
 @router.callback_query(F.data.startswith("drstatus_"))
 async def status_view(call: CallbackQuery):

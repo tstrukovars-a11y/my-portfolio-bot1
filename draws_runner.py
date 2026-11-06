@@ -62,27 +62,34 @@ def _answer_kb(poll_id: int, option_a: str, option_b: str):
     ]])
 
 
+async def send_poll(bot: Bot, poll) -> int:
+    """Разослать один вопрос участникам. Возвращает, скольким дошло."""
+    members = await database.draw_members(poll["event_id"])
+    text = (f"🎾 <b>{html.escape(poll['question'])}</b>\n\n"
+            f"<i>Ответить можно в течение {draws.POLL_MINUTES} минут. "
+            f"Ответ окончательный — поменять его нельзя.</i>")
+    sent = 0
+    for user_id in members:
+        try:
+            await bot.send_message(
+                user_id, text,
+                reply_markup=_answer_kb(poll["id"], poll["option_a"],
+                                        poll["option_b"]))
+            sent += 1
+        except Exception:
+            continue        # заблокировал бота — не наша забота
+        await asyncio.sleep(0.05)
+    await database.draw_poll_mark_sent(poll["id"])
+    logging.info(f"Конкурс: вопрос {poll['id']} ушёл {sent} из {len(members)}")
+    return sent
+
+
 async def dispatch_polls(bot: Bot) -> int:
-    """Разослать вопросы, которым пришло время."""
-    sent_total = 0
+    """Разослать вопросы, которым пришло время по расписанию."""
+    total = 0
     for poll in await database.draw_polls_to_send():
-        members = await database.draw_members(poll["event_id"])
-        text = (f"🎾 <b>{html.escape(poll['question'])}</b>\n\n"
-                f"<i>Ответить можно в течение {draws.POLL_MINUTES} минут. "
-                f"Ответ окончательный — поменять его нельзя.</i>")
-        for user_id in members:
-            try:
-                await bot.send_message(
-                    user_id, text,
-                    reply_markup=_answer_kb(poll["id"], poll["option_a"],
-                                            poll["option_b"]))
-                sent_total += 1
-            except Exception:
-                continue        # заблокировал бота — не наша забота
-            await asyncio.sleep(0.05)
-        await database.draw_poll_mark_sent(poll["id"])
-        logging.info(f"Конкурс: вопрос {poll['id']} ушёл {len(members)} участникам")
-    return sent_total
+        total += await send_poll(bot, poll)
+    return total
 
 
 @router.callback_query(F.data.startswith("drans_"))
