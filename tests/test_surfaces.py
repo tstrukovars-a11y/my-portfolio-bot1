@@ -68,3 +68,42 @@ def test_keys_are_lowercase():
 
 def test_the_dictionary_is_not_empty_by_accident():
     assert s.known() > 50
+
+
+# ---------------------------------------------------------------------
+# Показательные турниры
+# ---------------------------------------------------------------------
+#
+# Победа на публику и победа в основном туре значат разное, а в строке
+# «счёт 3:1» выглядят одинаково. Искажение получается незаметным — тем
+# оно и опасно.
+
+
+def test_palmyra_is_an_exhibition():
+    assert s.is_exhibition("Northern Palmyra Trophies")
+    assert s.is_exhibition("Северная Пальмира")
+
+
+def test_the_well_known_exhibitions_are_caught():
+    for name in ("Six Kings Slam", "Laver Cup", "Mubadala World Tennis "
+                 "Championship", "World Tennis League", "Kooyong Classic",
+                 "Diriyah Tennis Cup", "Hopman Cup"):
+        assert s.is_exhibition(name), name
+
+
+def test_real_tournaments_are_not_exhibitions():
+    for name in ("Australian Open", "Rolex Paris Masters", "Rio Open",
+                 "Wimbledon", "Internazionali BNL d'Italia"):
+        assert not s.is_exhibition(name), name
+
+
+def test_an_empty_name_is_not_an_exhibition():
+    assert not s.is_exhibition("")
+    assert not s.is_exhibition(None)
+
+
+def test_markers_are_lowercase():
+    """Сравнение идёт в нижнем регистре — заглавная буква сделала бы
+    метку молча мёртвой."""
+    for mark in s.EXHIBITION:
+        assert mark == mark.lower(), mark

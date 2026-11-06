@@ -1440,6 +1440,13 @@ async def _record_meeting(match, tour: str, sides, winner_side: int) -> None:
         return
 
     event = _event(match) or ""
+
+    # Показательные в историю не идут. Победа на публику и победа в
+    # основном туре значат разное, а в строке «счёт 3:1» выглядят
+    # одинаково — искажение получается незаметным.
+    if surfaces.is_exhibition(event) or await database.tournament_is_exhibition(event):
+        return
+
     surface = await database.surface_override(event) or surfaces.of(event, tour)
     if not surface and event:
         await database.surface_note_unknown(event, tour)

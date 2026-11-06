@@ -67,3 +67,33 @@ def test_the_surface_answer_reaches_matches_already_played():
 def test_surface_buttons_are_owner_only():
     import public
     assert not public.allowed("surf_clay_rome")
+
+
+# ---------------------------------------------------------------------
+# Показательные не попадают в историю
+# ---------------------------------------------------------------------
+
+
+def test_exhibitions_are_skipped_before_anything_is_written():
+    """Проверка стоит ДО запроса покрытия: у показательного турнира
+    покрытие ни на что не влияет, спрашивать о нём незачем."""
+    import inspect
+    import tennis_alerts
+    body = inspect.getsource(tennis_alerts._record_meeting)
+    assert body.index("is_exhibition") < body.index("surface_note_unknown")
+
+
+def test_marking_an_exhibition_cleans_the_history_too():
+    """Матчи могли записаться до того, как мы узнали, что турнир
+    показательный. Оставить их — хранить искажённый счёт пары и не
+    знать об этом."""
+    import inspect
+    import database
+    body = inspect.getsource(database.tournament_mark_exhibition)
+    assert "DELETE FROM" in body
+    assert "h2h_matches" in body
+
+
+def test_the_owner_can_answer_exhibition_instead_of_a_surface():
+    import inspect
+    assert "surf_exhib_" in inspect.getsource(h2h.request_surfaces)

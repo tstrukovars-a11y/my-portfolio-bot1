@@ -599,6 +599,20 @@ async def init_db():
             set_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""")
 
+        # Пометка «показательный» живёт рядом с покрытием: это знание
+        # о том же турнире. Покрытие при этом становится необязательным
+        # — у показательного его можно не указывать вовсе.
+        for statement in (
+            f"ALTER TABLE {SCHEMA}.tournament_surface "
+            f"ADD COLUMN IF NOT EXISTS exhibition BOOLEAN NOT NULL DEFAULT FALSE",
+            f"ALTER TABLE {SCHEMA}.tournament_surface "
+            f"ALTER COLUMN surface DROP NOT NULL",
+        ):
+            try:
+                await conn.execute(statement)
+            except Exception as e:
+                logging.warning(f"Миграция покрытий: {e}")
+
         # Турниры, покрытие которых неизвестно. Копятся сами, когда бот
         # встречает их в результатах: спросить у владелицы можно только
         # то, о чём знаешь, что не знаешь.
@@ -2470,6 +2484,54 @@ async def surface_override(name: str):
     except Exception as e:
         logging.warning(f"Поправка покрытия не прочиталась: {e}")
         return None
+
+
+async def tournament_is_exhibition(name: str) -> bool:
+    """Помечен ли турнир владелицей как показательный."""
+    pool = await get_pool()
+    if not pool:
+        return False
+    try:
+        async with pool.acquire() as conn:
+            return bool(await conn.fetchval(
+                f"SELECT exhibition FROM {SCHEMA}.tournament_surface "
+                f"WHERE name = $1", (name or "").strip().lower()))
+    except Exception as e:
+        logging.warning(f"Пометка о показательном не прочиталась: {e}")
+        return False
+
+
+async def tournament_mark_exhibition(name: str, tour: str = None) -> int:
+    """Пометить турнир показательным и ВЫЧИСТИТЬ его из истории встреч.
+
+    Пометка задним числом: матчи могли записаться до того, как мы
+    узнали, что турнир показательный. Оставить их значит хранить
+    искажённый счёт пары — и не знать об этом.
+    """
+    pool = await get_pool()
+    if not pool:
+        return 0
+    key = (name or "").strip().lower()
+    try:
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(
+                    f"""INSERT INTO {SCHEMA}.tournament_surface
+                        (name, tour, surface, exhibition)
+                        VALUES ($1, $2, NULL, TRUE)
+                        ON CONFLICT (name) DO UPDATE SET
+                            exhibition = TRUE, tour = EXCLUDED.tour,
+                            set_at = NOW()""",
+                    key, tour)
+                status = await conn.execute(
+                    f"DELETE FROM {SCHEMA}.h2h_matches "
+                    f"WHERE LOWER(tournament) = $1", key)
+                await conn.execute(
+                    f"DELETE FROM {SCHEMA}.surface_unknown WHERE name = $1", key)
+        return int(status.rsplit(" ", 1)[-1]) if status else 0
+    except Exception as e:
+        logging.error(f"Турнир {name} не помечен показательным: {e}")
+        return 0
 
 
 async def surface_set(name: str, surface: str, tour: str = None) -> bool:

@@ -258,6 +258,12 @@ async def request_surfaces(bot: Bot) -> int:
                                          callback_data=f"surf_grass_{name}"),
                     InlineKeyboardButton(text="🟦 Хард",
                                          callback_data=f"surf_hard_{name}"),
+                ], [
+                    # Четвёртый ответ, и он не про покрытие: у
+                    # показательного турнира покрытие ни на что не
+                    # влияет, потому что в историю встреч он не идёт.
+                    InlineKeyboardButton(text="🎭 Показательный — не считать",
+                                         callback_data=f"surf_exhib_{name}"),
                 ]]))
             sent += 1
         except Exception as e:
@@ -277,6 +283,20 @@ async def set_surface(call: CallbackQuery):
         return
 
     import surfaces
+    if kind == "exhib":
+        removed = await database.tournament_mark_exhibition(name)
+        await call.answer("Показательный — в историю не идёт")
+        tail = (f"\n\nУбрала из истории встреч матчей: {removed}."
+                if removed else "")
+        try:
+            await call.message.edit_text(
+                f"🎭 <b>{html.escape(name.title())}</b> — показательный, "
+                f"в историю встреч не идёт.{tail}")
+        except Exception:
+            await call.message.answer(
+                f"🎭 {html.escape(name.title())} — показательный.{tail}")
+        return
+
     chosen = {"clay": surfaces.CLAY, "grass": surfaces.GRASS,
               "hard": surfaces.HARD}.get(kind)
     if not chosen:
