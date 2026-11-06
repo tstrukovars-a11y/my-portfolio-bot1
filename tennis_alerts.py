@@ -1935,12 +1935,41 @@ def _votes_word(n: int) -> str:
     return {1: "проголосовавшего"}.get(n % 10, "проголосовавших")
 
 
+# Телеграм не различает, кому слать: отрицательный номер — это чат, и
+# send_message примет его молча. Если такой номер попадёт в подписки,
+# личное напоминание уедет в канал, на глазах у всех.
+#
+# Нажать «за канал» можно: у анонимного администратора и у поста,
+# отражённого в обсуждение, вместо человека приходит служебный
+# отправитель. Своей личики у него нет, и писать ему нечего.
+SERVICE_SENDERS = {136817688,    # Channel_Bot — нажатие от имени канала
+                   1087968824}   # GroupAnonymousBot — анонимный админ
+
+
+def _is_person(user_id) -> bool:
+    """Настоящий человек, которому есть куда написать лично."""
+    try:
+        user_id = int(user_id)
+    except (TypeError, ValueError):
+        return False
+    return user_id > 0 and user_id not in SERVICE_SENDERS
+
+
 @router.callback_query(F.data.startswith("tmatch_"))
 async def toggle_match(call: CallbackQuery):
     try:
         _, tour, match_id = call.data.split("_", 2)
     except ValueError:
         await call.answer()
+        return
+
+    # Нажали от имени канала или анонимно — подписывать некого: личного
+    # чата у такого отправителя нет, а напоминание ушло бы в канал.
+    if not _is_person(call.from_user.id):
+        logging.warning(f"Напоминание: нажатие не от человека ({call.from_user.id})")
+        await call.answer(
+            "Нажмите от своего имени — напоминание приходит лично.",
+            show_alert=True)
         return
 
     # Подписка проверяется здесь, а не при показе: расписание видят все,
@@ -2499,6 +2528,17 @@ async def alerts_scheduler(bot: Bot):
     вечно висящее напоминание засоряет очередь.
     """
     await asyncio.sleep(90)
+
+    # Разовая уборка при запуске: подписки на каналы могли лечь до
+    # того, как появилась проверка, и напоминание по ним уехало бы в
+    # канал на глазах у всех.
+    try:
+        dropped = await database.alerts_drop_nonhuman()
+        if dropped:
+            logging.warning(f"Убрано подписок не на человека: {dropped}")
+    except Exception as e:
+        logging.warning(f"Уборка подписок не прошла: {e}")
+
     ticks = 0
     while True:
         try:
@@ -2533,6 +2573,13 @@ async def alerts_scheduler(bot: Bot):
 
             lead = await _lead()
             for user_id, match_id, tour, title in await database.due_alerts(lead):
+                # Вторая застава. Подписка могла лечь до того, как
+                # появилась проверка при нажатии, — и личное напоминание
+                # уехало бы в канал, на глазах у всех.
+                if not _is_person(user_id):
+                    logging.warning(f"Напоминание не человеку: {user_id} — пропускаю")
+                    await database.mark_alert_sent(user_id, match_id)
+                    continue
                 head = ("Начинается" if lead <= 0
                         else f"Начнётся через {lead} {_minutes_word(lead)}")
                 note = await _court_note(tour, match_id)

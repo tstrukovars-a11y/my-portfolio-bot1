@@ -2754,6 +2754,26 @@ async def alert_row(user_id: int, match_id: str):
         return None
 
 
+async def alerts_drop_nonhuman() -> int:
+    """Убрать подписки, заведённые не на человека.
+
+    Отрицательный номер — это чат: личное напоминание по нему уехало бы
+    в канал. Такие записи могли лечь до того, как появилась проверка.
+    """
+    pool = await get_pool()
+    if not pool:
+        return 0
+    try:
+        async with pool.acquire() as conn:
+            status = await conn.execute(
+                f"DELETE FROM {SCHEMA}.match_alerts "
+                f"WHERE user_id <= 0 OR user_id IN (136817688, 1087968824)")
+        return int(status.rsplit(" ", 1)[-1]) if status else 0
+    except Exception as e:
+        logging.warning(f"Чужие подписки не убрались: {e}")
+        return 0
+
+
 async def alerts_of_user(user_id: int):
     """На какие матчи человек подписан и они ещё не закончились.
 
