@@ -341,7 +341,7 @@ async def start_filling(call: CallbackQuery, state: FSMContext):
     await state.update_data(tour=tour, match_id=match_id, title=title,
                             first=first, second=second)
     await call.message.answer(
-        f"1/4. Сколько раз они играли между собой?\n\n"
+        f"1/5. Сколько раз они играли между собой?\n\n"
         f"<i>Число. Если встреч не было — 0.</i>")
 
 
@@ -374,7 +374,7 @@ async def take_meetings(message: Message, state: FSMContext):
     first = data.get("first") or "первый"
     await state.set_state(Filling.wins_first)
     await message.answer(
-        f"2/4. Сколько из этих {meetings} выиграл: {html.escape(first)}?\n\n"
+        f"2/5. Сколько из этих {meetings} выиграл: {html.escape(first)}?\n\n"
         f"<i>Второе число посчитаю сам.</i>")
 
 
@@ -395,7 +395,7 @@ async def take_wins(message: Message, state: FSMContext):
     await state.update_data(wins_first=wins)
     await state.set_state(Filling.surfaces)
     await message.answer(
-        "3/4. На каких покрытиях играли?\n\n"
+        "3/5. На каких покрытиях играли?\n\n"
         "<i>Через запятую: хард, грунт. Пропустить — поставьте прочерк.</i>")
 
 
@@ -405,7 +405,7 @@ async def take_surfaces(message: Message, state: FSMContext):
     await state.update_data(surfaces=None if _skipped(text) else text[:120])
     await state.set_state(Filling.years)
     await message.answer(
-        "4/4. В каких годах?\n\n"
+        "4/5. В каких годах?\n\n"
         "<i>Через запятую: 2023, 2024. Пропустить — прочерк.</i>")
 
 
@@ -415,8 +415,9 @@ async def take_years(message: Message, state: FSMContext):
     await state.update_data(years=None if _skipped(text) else text[:120])
     await state.set_state(Filling.note)
     await message.answer(
-        "Хотите добавить строчку своими словами? Она встанет в конце поста.\n\n"
-        "<i>Не нужно — поставьте прочерк.</i>")
+        "5/5. Хотите добавить строчку своими словами?\n\n"
+        "<i>Она встанет в конце статистики. Не нужно — поставьте "
+        "прочерк.</i>")
 
 
 @router.message(Filling.note)

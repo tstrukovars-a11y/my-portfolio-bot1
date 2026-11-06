@@ -556,7 +556,25 @@ async def main():
         token=config.TOKEN,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML)
     )
-    dp = Dispatcher()
+    # СОСТОЯНИЯ ДИАЛОГОВ — В БАЗЕ, А НЕ В ПАМЯТИ ПРОЦЕССА.
+    #
+    # Dispatcher() без аргументов берёт хранилище в памяти. На Render
+    # процесс перезапускается при каждом деплое и засыпает в простое —
+    # и вместе с ним исчезали все незаконченные диалоги: человек
+    # отвечал на четвёртый вопрос, выходил деплой, и его следующее
+    # сообщение не подходило ни к одному шагу. Бот молчал, а выглядело
+    # это как поломка опросника.
+    #
+    # База не поднялась — работаем как раньше, в памяти: бот без
+    # диалогов лучше, чем бот, который не запустился.
+    try:
+        import fsm_storage
+        await fsm_storage.ensure_table()
+        dp = Dispatcher(storage=fsm_storage.PgStorage())
+        logging.info("Состояния диалогов: в базе")
+    except Exception as e:
+        logging.error(f"Состояния диалогов остались в памяти: {e}")
+        dp = Dispatcher()
 
     def _section_of(data: str) -> str:
         """Схлопывает callback до узнаваемого раздела: из «shopitem_women_sneakers_0_12»
