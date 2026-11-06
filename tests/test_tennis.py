@@ -142,41 +142,15 @@ def _match(round_name, names=("Ivan Petrov", "John Doe"), date="2026-09-22T10:00
             "sides": [{"athlete": {"displayName": n}} for n in names]}
 
 
-def test_final_beats_the_first_round():
-    early = _match("1st Round", date="2026-09-22T08:00Z")
-    final = _match("Final", date="2026-09-22T19:00Z")
-    assert ta._for_pick([early, final]) is final
-
-
-def test_later_stage_wins():
-    stages = [_match("Round of 16"), _match("Quarterfinals"), _match("Semifinals")]
-    assert ta._for_pick(stages)["round"] == "Semifinals"
-
-
-def test_ours_wins_at_the_same_stage(monkeypatch):
-    import players_ru
-
-    monkeypatch.setattr(players_ru, "is_nash",
-                        lambda name: "Rublev" in name)
-    plain = _match("Quarterfinals", ("John Doe", "Jane Roe"))
-    ours = _match("Quarterfinals", ("Andrey Rublev", "Jane Roe"))
-    assert ta._for_pick([plain, ours]) is ours
-
-
-def test_earlier_match_wins_only_when_all_else_is_equal():
-    """У раннего голосование успеет собраться до начала."""
-    late = _match("Final", date="2026-09-22T20:00Z")
-    early = _match("Final", date="2026-09-22T12:00Z")
-    assert ta._for_pick([late, early]) is early
-
-
-def test_unknown_stage_does_not_outrank_a_final():
-    assert ta._for_pick(
-        [_match("Exhibition"), _match("Final")])["round"] == "Final"
-
-
-def test_empty_list_asks_nothing():
-    assert ta._for_pick([]) is None
+# ВЫБОРА «МАТЧА ДНЯ» БОЛЬШЕ НЕТ, и тесты на него удалены вместе с ним.
+#
+# Бот выбирал самый заметный матч и спрашивал о нём весь канал. Это
+# оказалось неверным допущением: читатель сам решает, за кем следить, а
+# ему предлагали высказаться о чужой игре. Мнение теперь спрашивается
+# в карточке подписки — по тому матчу, который человек выбрал сам.
+#
+# Разбор названий кругов остался и проверяется ниже: он нужен и
+# карточке, и постам о событиях.
 
 
 def test_final_is_called_a_final():
@@ -1327,3 +1301,45 @@ def test_the_verdict_uses_its_own_threshold():
     body = inspect.getsource(ta._pick_verdict)
     assert "VERDICT_MIN" in body
     assert "PICK_MIN" not in body
+
+
+# =====================================================================
+# ЧИСЛО ПРОГОЛОСОВАВШИХ ВИДНО ДО НАЖАТИЯ
+# =====================================================================
+#
+# Прежний порог в пять голосов не набирался именно потому, что о нём
+# знали, но не видели, сколько осталось: каждый новый пробовал и
+# переставал. Доля без числа тоже обманчива — «100%» одинаково
+# выглядит и при одном голосе, и при сотне.
+
+
+def test_the_first_voter_is_invited_not_warned():
+    assert "первым" in ta._votes_line((0, 0))
+
+
+def test_the_count_needs_no_declension():
+    """«1 проголосовавшего» — и тавтология, и падеж не тот. Число
+    говорит само."""
+    assert ta._votes_line((1, 0)) == "Проголосовало: 1"
+    assert ta._votes_line((2, 1)) == "Проголосовало: 3"
+    assert ta._votes_line((5, 6)) == "Проголосовало: 11"
+
+
+def test_the_card_shows_the_count_next_to_the_question():
+    import inspect
+    body = inspect.getsource(ta._confirm)
+    assert "_votes_line" in body
+
+
+def test_the_channel_schedule_has_no_poll_any_more():
+    """Читатель сам решает, за кем следить. Предлагать ему высказаться
+    о матче, который выбрал бот, — неверное допущение."""
+    import inspect
+    body = inspect.getsource(ta.publish_schedule)
+    assert "_pick_row" not in body
+    assert "_pick_question" not in body
+
+
+def test_the_match_of_the_day_picker_is_gone():
+    """Мёртвый код хуже удалённого."""
+    assert not hasattr(ta, "_for_pick")
