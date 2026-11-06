@@ -133,8 +133,6 @@ def _names(match):
     return out if len(out) == 2 and all(out) else None
 
 
-# Пока голосов мало, доля врёт: один человек — это «100 % за Рублёва».
-# До этого числа показываем просто имена.
 # Раньше доли прятались, пока не наберётся пять голосов: доля от
 # одного голоса — это «100%», и в канале такое вводило в заблуждение.
 # Но голосование переехало в ЛИЧНУЮ карточку, и смысл поменялся: человек
@@ -1414,6 +1412,39 @@ async def events_command(message: Message, bot: Bot):
     await message.answer(f"🎾 {await publish_events(bot, chat, thread)}")
 
 
+async def _record_meeting(match, tour: str, sides, winner_side: int) -> None:
+    """Сложить сыгранный матч в историю пары.
+
+    Записываем в ту же минуту, что и исход: через день матч пропадёт из
+    таблички, и восстановить ни счёт, ни соперников будет неоткуда.
+
+    Покрытие берём из справочника; не знаем — оставляем пустым и
+    запоминаем турнир, чтобы спросить у владелицы. Пустое поле честнее
+    выдуманного: выдуманное выглядит как факт.
+    """
+    import surfaces
+    import tennis_h2h
+
+    names = [_side_name_ru(s) for s in sides]
+    if len(names) < 2 or not all(names):
+        return
+
+    event = _event(match) or ""
+    surface = await database.surface_override(event) or surfaces.of(event, tour)
+    if not surface and event:
+        await database.surface_note_unknown(event, tour)
+
+    first, second = tennis_h2h.pair_key(names[0], names[1])
+    when = _starts(match)
+    await database.h2h_record(
+        match_id=match["id"],
+        player_a=first, player_b=second,
+        winner=tennis_h2h.normalize(names[winner_side]),
+        score=tennis_live._score(sides[winner_side], sides[1 - winner_side]),
+        tournament=event, surface=surface, tour=tour,
+        played_on=when.date() if when else None)
+
+
 async def publish_results(bot: Bot, chat: int, thread=None) -> str:
     """Итоги вчерашнего дня — утром, пока результаты ещё новость"""
     shift = await _shift()
@@ -1442,6 +1473,7 @@ async def publish_results(bot: Bot, chat: int, thread=None) -> str:
                                 if s.get("winner")), None)
             if m.get("id") and winner_side is not None and not _cancelled(m):
                 await database.record_winner(m["id"], winner_side)
+                await _record_meeting(m, tour, sides, winner_side)
 
             line = _result_line(m)
             if line:
@@ -1972,14 +2004,29 @@ async def _confirm(bot: Bot, user_id: int, tour: str, match_id: str,
     parts = [f"🔔 <b>Напоминание включено</b>\n\n{html.escape(title)}\n"
              f"Начало в {when}. {_lead_phrase(lead)}"]
 
+    # Матч ищем ДО сборки текста: от него зависят и статистика, и
+    # вопрос прогноза. Раньше он брался ниже, а использовался выше —
+    # обёрнутый try проглатывал ошибку, и накопленная история молча не
+    # показывалась никогда.
+    match = await _find_match(tour, match_id)
+
     # Личные встречи, если владелица их заполнила. Нет — просто не
     # упоминаем: «статистика недоступна» читателю ничего не даёт.
     try:
         import tennis_h2h
         row = await database.h2h_get(match_id)
         if row:
+            # Заполненное руками главнее: владелица могла добавить то,
+            # чего в нашей истории нет и быть не может.
             first, second = tennis_h2h._names(row.get("title") or title)
             parts.append(tennis_h2h._stats_block(first, second, row))
+        elif match:
+            # Нет заполненного — показываем накопленное самим ботом.
+            names = _names(match)
+            if names and len(names) == 2:
+                auto = await tennis_h2h.auto_stats(names[0], names[1])
+                if auto:
+                    parts.append(auto)
     except Exception as e:
         logging.warning(f"Встречи в карточку {match_id} не попали: {e}")
 
@@ -1987,7 +2034,6 @@ async def _confirm(bot: Bot, user_id: int, tour: str, match_id: str,
                  "число — сколько человек собирается смотреть.</i>")
 
     rows = []
-    match = await _find_match(tour, match_id)
     picks = await _pick_row(match) if match else None
     if picks:
         counts = await database.pick_counts(match_id)

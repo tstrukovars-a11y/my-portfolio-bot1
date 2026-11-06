@@ -556,6 +556,32 @@ async def init_db():
             PRIMARY KEY (bracket_id, round_no, slot)
         )""")
 
+        # История личных встреч — та, что принадлежит нам.
+        #
+        # У источника её нет: он отдаёт сегодняшнее табло и забывает о
+        # нём через день. Поэтому каждый завершённый матч записываем
+        # сами — парой игроков, а не строкой «Шелтон — Шубладзе».
+        # Строка не даёт спросить «все матчи этой пары», а пара даёт.
+        #
+        # Имена хранятся в нижнем регистре и отсортированными: пара
+        # «Сорана — Крыстя» и «Крыстя — Сорана» должна быть одной.
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.h2h_matches (
+            match_id TEXT PRIMARY KEY,
+            player_a TEXT NOT NULL,
+            player_b TEXT NOT NULL,
+            winner TEXT,
+            score TEXT,
+            tournament TEXT,
+            surface TEXT,
+            tour TEXT,
+            played_on DATE,
+            recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+        await conn.execute(
+            f"CREATE INDEX IF NOT EXISTS h2h_matches_pair "
+            f"ON {SCHEMA}.h2h_matches (player_a, player_b)")
+
         # Покрытие турнира — поправки владелицы поверх справочника.
         # Справочник (surfaces.py) знает крупные турниры и не меняется;
         # сюда попадает то, чего в нём нет, и то, где он ошибся.
@@ -2340,6 +2366,84 @@ async def brackets_due():
     except Exception as e:
         logging.warning(f"Список сеток не пришёл: {e}")
         return []
+
+
+# ---------------------------------------------------------------------
+# История личных встреч
+# ---------------------------------------------------------------------
+
+
+async def h2h_record(match_id: str, player_a: str, player_b: str,
+                     winner: str, score: str = None, tournament: str = None,
+                     surface: str = None, tour: str = None,
+                     played_on=None) -> bool:
+    """Записать сыгранный матч в историю пары. Повторно — не перезаписываем.
+
+    Итоги выходят каждое утро и могут пройти по вчерашнему дню дважды.
+    История, которая меняется от повторного прохода, историей не
+    является.
+    """
+    pool = await get_pool()
+    if not pool:
+        return False
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"""INSERT INTO {SCHEMA}.h2h_matches
+                    (match_id, player_a, player_b, winner, score,
+                     tournament, surface, tour, played_on)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                    ON CONFLICT (match_id) DO UPDATE SET
+                        surface = COALESCE({SCHEMA}.h2h_matches.surface,
+                                           EXCLUDED.surface)""",
+                match_id, player_a, player_b, winner, score, tournament,
+                surface, tour, played_on)
+        return True
+    except Exception as e:
+        logging.warning(f"Встреча {match_id} не записалась: {e}")
+        return False
+
+
+async def h2h_pair(player_a: str, player_b: str, limit: int = 20):
+    """Все известные встречи этой пары, от свежих к старым."""
+    pool = await get_pool()
+    if not pool:
+        return []
+    first, second = sorted([player_a, player_b])
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"""SELECT winner, score, tournament, surface, played_on
+                    FROM {SCHEMA}.h2h_matches
+                    WHERE player_a = $1 AND player_b = $2
+                    ORDER BY played_on DESC NULLS LAST, recorded_at DESC
+                    LIMIT $3""",
+                first, second, limit)
+        return [dict(r) for r in rows]
+    except Exception as e:
+        logging.warning(f"История пары не прочиталась: {e}")
+        return []
+
+
+async def h2h_fill_surface(tournament: str, surface: str) -> int:
+    """Проставить покрытие всем записям турнира, где его не было.
+
+    Владелица отвечает на запрос уже после того, как матчи сыграны, —
+    без этого её ответ достался бы только будущим встречам.
+    """
+    pool = await get_pool()
+    if not pool:
+        return 0
+    try:
+        async with pool.acquire() as conn:
+            status = await conn.execute(
+                f"UPDATE {SCHEMA}.h2h_matches SET surface = $2 "
+                f"WHERE LOWER(tournament) = $1 AND surface IS NULL",
+                (tournament or "").strip().lower(), surface)
+        return int(status.rsplit(" ", 1)[-1]) if status else 0
+    except Exception as e:
+        logging.warning(f"Покрытие в истории не проставилось: {e}")
+        return 0
 
 
 # ---------------------------------------------------------------------

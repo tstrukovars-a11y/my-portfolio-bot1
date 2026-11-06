@@ -173,3 +173,74 @@ def test_text_without_a_pair_gives_nothing():
 
 def test_a_dangling_dash_is_not_a_pair():
     assert h2h._title_from("Начало — ") == ""
+
+
+# ---------------------------------------------------------------------
+# История, которую бот копит сам
+# ---------------------------------------------------------------------
+#
+# У источника истории встреч нет: он отдаёт сегодняшнее табло и забывает
+# о нём через день. Поэтому каждый завершённый матч записывается парой
+# игроков — строка «Шелтон — Шубладзе» не даёт спросить «все матчи этой
+# пары», а пара даёт.
+
+import datetime
+
+
+def test_initials_and_case_do_not_split_one_person():
+    assert h2h.normalize("Б. Шелтон") == h2h.normalize("ШЕЛТОН")
+    assert h2h.normalize("Шелтон") == "шелтон"
+
+
+def test_yo_and_ye_are_the_same_person():
+    """«Алёна» и «Алена» в источниках встречаются обе."""
+    assert h2h.normalize("Алёна") == h2h.normalize("Алена")
+
+
+def test_the_pair_is_the_same_in_both_directions():
+    assert h2h.pair_key("Шелтон", "Крыстя") == h2h.pair_key("Крыстя", "Шелтон")
+
+
+def test_an_empty_name_does_not_crash():
+    assert h2h.normalize("") == ""
+    assert h2h.normalize(None) == ""
+
+
+def _meeting(winner, surface=None, year=2025):
+    return {"winner": winner, "score": "6:4 6:3", "tournament": "Рим",
+            "surface": surface, "played_on": datetime.date(year, 5, 12)}
+
+
+def test_wins_are_counted_for_the_first_name():
+    history = [_meeting("шелтон"), _meeting("крыстя"), _meeting("шелтон")]
+    got = h2h.summarize(history, "Шелтон", "Крыстя")
+    assert got["meetings"] == 3
+    assert got["wins_first"] == 2
+
+
+def test_surfaces_are_listed_without_repeats():
+    history = [_meeting("шелтон", "грунт"), _meeting("крыстя", "грунт"),
+               _meeting("шелтон", "хард")]
+    assert h2h.summarize(history, "Шелтон", "Крыстя")["surfaces"] == "грунт, хард"
+
+
+def test_unknown_surfaces_are_simply_absent():
+    """Пустое поле честнее выдуманного: выдуманное выглядит как факт."""
+    history = [_meeting("шелтон"), _meeting("крыстя")]
+    assert h2h.summarize(history, "Шелтон", "Крыстя")["surfaces"] is None
+
+
+def test_years_are_sorted_and_unique():
+    history = [_meeting("шелтон", year=2025), _meeting("крыстя", year=2023),
+               _meeting("шелтон", year=2025)]
+    assert h2h.summarize(history, "Шелтон", "Крыстя")["years"] == "2023, 2025"
+
+
+def test_the_summary_feeds_the_same_block_as_manual_stats():
+    """Текст один и тот же, откуда бы ни пришли числа — иначе читатель
+    увидит два разных формата на соседних матчах."""
+    history = [_meeting("шелтон", "грунт")]
+    got = h2h.summarize(history, "Шелтон", "Крыстя")
+    text = h2h._stats_block("Шелтон", "Крыстя", got)
+    assert "Личные встречи: 1" in text
+    assert "впереди: Шелтон" in text

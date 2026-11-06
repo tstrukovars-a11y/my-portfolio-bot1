@@ -80,6 +80,62 @@ def _names(title: str):
 
 
 # ---------------------------------------------------------------------
+# История, которую бот копит сам
+# ---------------------------------------------------------------------
+#
+# Статистику присылает владелица — но только потому, что у источника её
+# нет. Своя история постепенно набирается сама: каждый завершённый матч
+# записывается парой игроков, с покрытием, счётом и турниром. Через
+# сезон заполнять руками придётся всё реже.
+
+
+def normalize(name: str) -> str:
+    """Фамилия в виде, пригодном для сравнения.
+
+    Нижний регистр и без инициалов: «Шелтон», «Б. Шелтон» и «ШЕЛТОН» —
+    один человек. Без этого пара не сойдётся сама с собой.
+    """
+    name = (name or "").strip()
+    # Инициал отрезаем: «Б. Шелтон» -> «Шелтон»
+    parts = [x for x in name.replace(".", ". ").split() if x]
+    parts = [x for x in parts if not (len(x.rstrip(".")) == 1)]
+    return " ".join(parts).lower().replace("ё", "е")
+
+
+def pair_key(first: str, second: str):
+    """Пара в постоянном порядке: «А против Б» и «Б против А» — одно."""
+    return tuple(sorted([normalize(first), normalize(second)]))
+
+
+def summarize(history: list, first: str, second: str) -> dict:
+    """Свести историю пары к числам для поста."""
+    a = normalize(first)
+    wins_first = sum(1 for row in history if normalize(row["winner"]) == a)
+    surfaces, years = [], []
+    for row in history:
+        if row.get("surface") and row["surface"] not in surfaces:
+            surfaces.append(row["surface"])
+        played = row.get("played_on")
+        if played and played.year not in years:
+            years.append(played.year)
+    return {
+        "meetings": len(history),
+        "wins_first": wins_first,
+        "surfaces": ", ".join(surfaces) or None,
+        "years": ", ".join(str(y) for y in sorted(years)) or None,
+        "note": None,
+    }
+
+
+async def auto_stats(first: str, second: str):
+    """Готовый блок по накопленной истории или None, если её нет."""
+    history = await database.h2h_pair(*pair_key(first, second))
+    if not history:
+        return None
+    return _stats_block(first, second, summarize(history, first, second))
+
+
+# ---------------------------------------------------------------------
 # Запрос владелице
 # ---------------------------------------------------------------------
 
