@@ -236,14 +236,28 @@ def test_a_contest_cannot_be_announced_with_blanks_left():
     assert "Сначала заполните в правилах" in body
 
 
-def test_the_rules_go_out_before_the_contest_post():
-    """Сначала правила, следом пост с кнопкой — иначе человек нажмёт
-    раньше, чем прочитает."""
+def test_the_contest_post_goes_out_before_the_rules():
+    """Объявление с призом и кнопкой первым, правила следом: пост
+    должен быть виден сразу, а правила читают под ним."""
     import inspect
     body = inspect.getsource(draws.launch)
     rules_at = body.index("send_message(chat, rules_text")
     post_at = min(body.index("send_photo(chat"), body.index("send_message(chat, body"))
-    assert rules_at < post_at
+    assert post_at < rules_at
+
+
+def test_the_post_points_to_where_the_rules_are():
+    """Иначе читатель ищет их выше и не находит."""
+    import inspect
+    assert "следующим сообщением" in inspect.getsource(draws.launch)
+
+
+def test_the_closing_post_thanks_participants_not_players():
+    """Участвовали все, а играли в сетке не все."""
+    import inspect
+    body = inspect.getsource(draws.finish_send)
+    assert "кто участвовал" in body
+    assert "кто играл" not in body
 
 
 def test_the_default_rules_are_ready_to_publish():

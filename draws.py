@@ -989,17 +989,6 @@ async def launch(call: CallbackQuery):
         await call.answer("Канал не задан: /digest chat -100…", show_alert=True)
         return
 
-    # ПРАВИЛА ПЕРВЫМ СООБЩЕНИЕМ. Человек должен прочитать их до того,
-    # как нажмёт «Участвовать», а не после. Отдельным сообщением, потому
-    # что в подпись к фотографии они не влезают: у Telegram там тысяча
-    # символов, а правил вчетверо больше.
-    try:
-        await call.bot.send_message(chat, rules_text, message_thread_id=thread,
-                                    disable_web_page_preview=True)
-    except Exception as e:
-        await call.answer(f"Правила не опубликовались: {e}", show_alert=True)
-        return
-
     prizes = await database.draw_prizes(event_id)
     lines = [f"⚡️ <b>Внимание, конкурс</b>", "",
              f"<b>{html.escape(event['title'])}</b>", ""]
@@ -1016,9 +1005,10 @@ async def launch(call: CallbackQuery):
             if place <= (event.get("prizes") or DEFAULT_PRIZES):
                 lines.append(f"{_place_word(place)} — {html.escape(caption)}")
     lines.append("")
-    lines.append("<i>Правила — в сообщении выше. Нажмите «Участвовать» — "
-                 "вопросы придут вам в личные сообщения. В канале никто не "
-                 "увидит ни ваших ответов, ни того, что вы участвуете.</i>")
+    lines.append("<i>Правила — следующим сообщением. Нажмите "
+                 "«Участвовать» — вопросы придут вам в личные сообщения. "
+                 "В канале никто не увидит ни ваших ответов, ни того, что "
+                 "вы участвуете.</i>")
 
     body = "\n".join(lines)
     markup = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
@@ -1038,10 +1028,20 @@ async def launch(call: CallbackQuery):
         await call.answer(f"Не вышло: {e}", show_alert=True)
         return
 
+    # ПРАВИЛА — СЛЕДОМ, отдельным сообщением. Отдельным потому, что в
+    # подпись к фотографии они не влезают: у Telegram там тысяча
+    # символов, а правил вчетверо больше.
+    try:
+        await call.bot.send_message(chat, rules_text, message_thread_id=thread,
+                                    disable_web_page_preview=True)
+    except Exception as e:
+        await call.answer(f"Правила не опубликовались: {e}", show_alert=True)
+        return
+
     await call.answer("Объявлено")
     await call.message.answer(
-        "🚀 Конкурс объявлен в канале: сначала правила, следом пост с "
-        "кнопкой. Вопросы уйдут участникам сами, по времени из расписания.")
+        "🚀 Конкурс объявлен в канале: сначала пост с кнопкой, следом "
+        "правила. Вопросы уйдут участникам сами, по времени из расписания.")
 
 
 @router.callback_query(F.data.startswith("drjoin_"))
@@ -1268,8 +1268,8 @@ async def finish_send(message: Message, state: FSMContext, bot: Bot):
     # туда же: иначе читатель, который не участвовал, так и не узнает,
     # чем всё кончилось, — а ради него половина этого и затевалась.
     channel_body = body + (
-        "\n\nСпасибо всем, кто играл. Следите за матчами — "
-        "следующий конкурс скоро.")
+        "\n\nСпасибо всем, кто участвовал. Следите за матчами — "
+        "следующий конкурс скоро 😉")
     posted = False
     try:
         chat, thread = await event_channel(event)
