@@ -107,3 +107,44 @@ def test_the_owner_gets_the_bracket_as_a_file_not_a_photo():
     body = inspect.getsource(runner._send_owner_sheet)
     assert "send_document" in body
     assert "send_photo" not in body
+
+
+# ---------------------------------------------------------------------
+# Галочка у выбранного ответа
+# ---------------------------------------------------------------------
+#
+# Ответ окончательный, и человек должен видеть, что именно он выбрал,
+# когда вернётся к сообщению через час. Всплывающее окошко к тому
+# времени давно закрылось.
+
+
+def test_before_answering_there_is_no_tick():
+    kb = runner._answer_kb(7, "Окунев", "Кураков")
+    assert all("✅" not in b.text for b in kb.inline_keyboard[0])
+
+
+def test_the_chosen_side_gets_the_tick():
+    kb = runner._answer_kb(7, "Окунев", "Кураков", chosen=1)
+    texts = [b.text for b in kb.inline_keyboard[0]]
+    assert texts[0] == "Окунев"
+    assert texts[1].startswith("✅")
+
+
+def test_the_tick_does_not_move_to_the_other_side():
+    kb = runner._answer_kb(7, "Окунев", "Кураков", chosen=0)
+    assert kb.inline_keyboard[0][0].text.startswith("✅")
+    assert "✅" not in kb.inline_keyboard[0][1].text
+
+
+def test_the_buttons_keep_working_after_the_tick():
+    """Данные кнопок не должны меняться: по ним считается ответ."""
+    kb = runner._answer_kb(7, "Окунев", "Кураков", chosen=0)
+    assert [b.callback_data for b in kb.inline_keyboard[0]] == [
+        "drans_7_0", "drans_7_1"]
+
+
+def test_the_handler_redraws_the_buttons():
+    import inspect
+    body = inspect.getsource(runner.take_answer)
+    assert "edit_reply_markup" in body
+    assert "chosen=side" in body

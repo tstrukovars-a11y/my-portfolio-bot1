@@ -53,12 +53,19 @@ SHOW_BRACKET_FROM = 8
 # 1. Вопрос участникам
 # ---------------------------------------------------------------------
 
-def _answer_kb(poll_id: int, option_a: str, option_b: str):
+def _answer_kb(poll_id: int, option_a: str, option_b: str, chosen=None):
+    """Кнопки ответа. chosen — на чьей стороне ставится галочка.
+
+    Галочка нужна не для красоты: ответ окончательный, и человек должен
+    видеть, что именно он выбрал, когда вернётся к сообщению через час.
+    Всплывающее окошко к тому времени давно закрылось.
+    """
+    names = (option_a, option_b)
     return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text=option_a[:28],
-                             callback_data=f"drans_{poll_id}_0"),
-        InlineKeyboardButton(text=option_b[:28],
-                             callback_data=f"drans_{poll_id}_1"),
+        InlineKeyboardButton(
+            text=("✅ " if chosen == i else "") + names[i][:26],
+            callback_data=f"drans_{poll_id}_{i}")
+        for i in (0, 1)
     ]])
 
 
@@ -117,9 +124,19 @@ async def take_answer(call: CallbackQuery):
         return
 
     poll = await database.draw_poll(poll_id)
-    chosen = (poll or {}).get("option_a" if side == 0 else "option_b", "")
+    name = (poll or {}).get("option_a" if side == 0 else "option_b", "")
     # Имя после двоеточия: склонять фамилии автоматически нельзя
-    await call.answer(f"Ваш ответ: {chosen}", show_alert=True)
+    await call.answer(f"Ваш ответ: {name}", show_alert=True)
+
+    # И галочка на самой кнопке — чтобы выбор было видно и потом, когда
+    # окошко закрылось
+    if poll:
+        try:
+            await call.message.edit_reply_markup(
+                reply_markup=_answer_kb(poll_id, poll["option_a"],
+                                        poll["option_b"], chosen=side))
+        except Exception:
+            pass        # разметка могла не измениться — это не ошибка
 
 
 # ---------------------------------------------------------------------
