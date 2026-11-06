@@ -256,7 +256,7 @@ def test_the_fill_button_is_added_only_for_the_owner():
     """Кнопка не показывается читателю вовсе — это служебное действие."""
     import inspect
     import tennis_alerts
-    body = inspect.getsource(tennis_alerts._confirm)
+    body = inspect.getsource(tennis_alerts._card)
     assert "config.is_admin(user_id)" in body
     assert body.index("config.is_admin(user_id)") < body.index("h2hfill_")
 

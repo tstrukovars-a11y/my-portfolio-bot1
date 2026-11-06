@@ -51,17 +51,23 @@ def test_reason_is_a_whole_russian_sentence():
 
 # --- прогнозы ---------------------------------------------------------
 
-def test_the_single_vote_share_is_shown_in_the_personal_card():
-    """Прежде доли прятались до пяти голосов: «100%» от одного — враньё.
-    Довод верный, но он про КАНАЛ. Голосование переехало в личную
-    карточку, и там человек хочет видеть, как шкала наполняется с его
-    собственного голоса. Для канала порог остался — VERDICT_MIN."""
-    row = ta._pick_labels("401", ["А. Рублёв", "Д. Медведев"], (1, 0))
-    assert row[0].text.endswith("100%")
+def test_before_your_own_vote_there_are_no_percentages():
+    """Процент на кнопке до своего голоса читается как «я уже нажимал»,
+    и человек проходит мимо, думая, что ответил."""
+    row = ta._pick_labels("401", ["А. Рублёв", "Д. Медведев"], (7, 3))
+    assert row[0].text == "А. Рублёв"
+    assert "%" not in row[1].text
 
 
-def test_shares_appear_and_add_up():
-    row = ta._pick_labels("401", ["А. Рублёв", "Д. Медведев"], (17, 7))
+def test_after_your_vote_the_shares_appear_with_a_tick():
+    row = ta._pick_labels("401", ["А. Рублёв", "Д. Медведев"], (7, 3), mine=0)
+    assert row[0].text.startswith("✓")
+    assert row[0].text.endswith("70%")
+    assert row[1].text.endswith("30%")
+
+
+def test_shares_add_up_once_you_have_voted():
+    row = ta._pick_labels("401", ["А. Рублёв", "Д. Медведев"], (17, 7), mine=1)
     assert row[0].text.endswith("71%")
     assert row[1].text.endswith("29%")
 
@@ -1167,72 +1173,10 @@ def test_every_loud_kind_has_a_heading():
 # подписчиков матча, а не только у того, кто нажал.
 
 
-class _FakeBot:
-    """Запоминает правки разметки вместо их отправки"""
-
-    def __init__(self):
-        self.edits = []
-
-    async def edit_message_reply_markup(self, chat_id, message_id, reply_markup):
-        self.edits.append((chat_id, message_id, reply_markup))
-
-
-def _run_refresh(monkeypatch, cards, skip=None):
-    """Прогнать обновление карточек на поддельном боте.
-
-    Паузу между правками убираем, но ОРИГИНАЛЬНЫМ sleep: ta.asyncio —
-    это сам модуль asyncio, и лямбда, зовущая внутри asyncio.sleep,
-    позвала бы саму себя. На этом весь прогон тестов уходил в
-    бесконечную рекурсию и падал по сигналу.
-    """
-    import asyncio
-    real_sleep = asyncio.sleep
-    monkeypatch.setattr(ta.database, "match_cards",
-                        lambda match_id: real_sleep(0, result=cards))
-    monkeypatch.setattr(ta.asyncio, "sleep",
-                        lambda *a, **k: real_sleep(0))
-    bot = _FakeBot()
-    # Голосов берём с запасом над PICK_MIN: ниже порога доли на кнопках
-    # не печатаются совсем, и проверять было бы нечего.
-    votes = [ta.PICK_MIN * 3, ta.PICK_MIN]
-    asyncio.run(ta._refresh_cards(bot, "m1", ["Рублёв", "Алькарас"],
-                                  votes, skip=skip))
-    return bot
-
-
-def test_every_subscriber_card_is_refreshed(monkeypatch):
-    bot = _run_refresh(monkeypatch, [(10, 100, "atp"), (11, 101, "atp")])
-    assert [chat for chat, _, _ in bot.edits] == [10, 11]
-
-
-def test_the_card_where_the_vote_was_cast_is_skipped(monkeypatch):
-    """Там разметку уже поправили на месте — второй правкой Telegram
-    ответит «ничего не изменилось»."""
-    bot = _run_refresh(monkeypatch, [(10, 100, "atp"), (11, 101, "atp")],
-                       skip=100)
-    assert [chat for chat, _, _ in bot.edits] == [11]
-
-
-def test_the_mute_button_keeps_its_tour(monkeypatch):
-    """В обработчике голоса тура нет — он берётся из подписки. Без него
-    кнопка выключения перестала бы разбираться."""
-    bot = _run_refresh(monkeypatch, [(10, 100, "wta")])
-    rows = bot.edits[0][2].inline_keyboard
-    assert rows[-1][0].callback_data == "tmute_wta_m1"
-
-
-def test_refreshed_cards_show_the_shares(monkeypatch):
-    """Три к одному — значит 75 и 25 процентов на кнопках."""
-    bot = _run_refresh(monkeypatch, [(10, 100, "atp")])
-    labels = [b.text for b in bot.edits[0][2].inline_keyboard[0]]
-    assert any("75%" in x for x in labels)
-    assert any("25%" in x for x in labels)
-
-
-def test_a_card_without_a_number_is_not_refreshed(monkeypatch):
-    """Карточки без голосования номер не запоминают — обновлять нечего."""
-    bot = _run_refresh(monkeypatch, [])
-    assert bot.edits == []
+# Прежние тесты на обновление ТОЛЬКО разметки удалены: карточка
+# обновляется целиком, и собирается она на каждого подписчика
+# отдельно — у проголосовавшего доли, у остальных голые имена.
+# Проверки нового поведения стоят выше.
 
 
 # =====================================================================
@@ -1277,13 +1221,13 @@ def test_a_missing_bot_username_falls_back_to_the_old_toast():
 # одного голоса — «100% из 1» — это насмешка, а не итог.
 
 
-def test_the_personal_scale_shows_from_the_very_first_vote():
-    labels = ta._pick_labels("m1", ["Шелтон", "Шубладзе"], [1, 0])
+def test_the_scale_shows_from_your_very_first_vote():
+    labels = ta._pick_labels("m1", ["Шелтон", "Шубладзе"], [1, 0], mine=0)
     assert any("100%" in b.text for b in labels)
 
 
 def test_the_scale_fills_as_votes_arrive():
-    labels = ta._pick_labels("m1", ["Шелтон", "Шубладзе"], [3, 1])
+    labels = ta._pick_labels("m1", ["Шелтон", "Шубладзе"], [3, 1], mine=0)
     texts = [b.text for b in labels]
     assert any("75%" in x for x in texts)
     assert any("25%" in x for x in texts)
@@ -1320,15 +1264,39 @@ def test_the_first_voter_is_invited_not_warned():
 def test_the_count_needs_no_declension():
     """«1 проголосовавшего» — и тавтология, и падеж не тот. Число
     говорит само."""
-    assert ta._votes_line((1, 0)) == "Проголосовало: 1"
-    assert ta._votes_line((2, 1)) == "Проголосовало: 3"
-    assert ta._votes_line((5, 6)) == "Проголосовало: 11"
+    assert ta._votes_line((1, 0), voted=True) == "Проголосовало: 1"
+    assert ta._votes_line((5, 6), voted=True) == "Проголосовало: 11"
+
+
+def test_someone_who_has_not_voted_is_told_so():
+    """Число зовёт нажать, но человек должен понимать, что его голоса
+    в нём ещё нет."""
+    assert "ещё не учтён" in ta._votes_line((3, 1))
+    assert "ещё не учтён" not in ta._votes_line((3, 1), voted=True)
 
 
 def test_the_card_shows_the_count_next_to_the_question():
     import inspect
-    body = inspect.getsource(ta._confirm)
+    body = inspect.getsource(ta._card)
     assert "_votes_line" in body
+
+
+def test_the_whole_card_is_rebuilt_not_just_its_buttons():
+    """Число проголосовавших живёт в ТЕКСТЕ. Правя одну разметку, мы
+    оставляли его замороженным на минуте подписки."""
+    import inspect
+    body = inspect.getsource(ta._refresh_cards)
+    assert "edit_message_text" in body
+    assert "_card(" in body
+
+
+def test_each_subscriber_sees_his_own_version():
+    """У проголосовавшего доли, у остальных — голые имена. Значит
+    карточка собирается на каждого отдельно."""
+    import inspect
+    body = inspect.getsource(ta._refresh_cards)
+    assert "for user_id" in body
+    assert body.index("for user_id") < body.index("_card(")
 
 
 def test_the_channel_schedule_has_no_poll_any_more():

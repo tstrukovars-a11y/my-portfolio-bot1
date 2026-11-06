@@ -2713,6 +2713,22 @@ async def remember_card(user_id: int, match_id: str, message_id: int) -> None:
         logging.warning(f"Карточка {user_id}/{match_id} не запомнилась: {e}")
 
 
+async def alert_row(user_id: int, match_id: str):
+    """Запись о подписке — название и время начала для пересборки карточки."""
+    pool = await get_pool()
+    if not pool:
+        return None
+    try:
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                f"SELECT title, starts_at, tour FROM {SCHEMA}.match_alerts "
+                f"WHERE user_id = $1 AND match_id = $2", user_id, match_id)
+        return dict(row) if row else None
+    except Exception as e:
+        logging.warning(f"Подписка {user_id}/{match_id} не прочиталась: {e}")
+        return None
+
+
 async def alerts_of_user(user_id: int):
     """На какие матчи человек подписан и они ещё не закончились.
 
@@ -2854,6 +2870,25 @@ async def h2h_mark_published(match_id: str) -> None:
                 match_id)
     except Exception as e:
         logging.warning(f"Отметка о публикации {match_id} не легла: {e}")
+
+
+async def pick_of(user_id: int, match_id: str):
+    """За кого проголосовал этот человек. None — ещё не голосовал.
+
+    От этого зависит, что он видит: до своего голоса процентов на
+    кнопках нет вовсе, иначе они читаются как «я уже нажимал».
+    """
+    pool = await get_pool()
+    if not pool:
+        return None
+    try:
+        async with pool.acquire() as conn:
+            return await conn.fetchval(
+                f"SELECT side FROM {SCHEMA}.match_picks "
+                f"WHERE user_id = $1 AND match_id = $2", user_id, match_id)
+    except Exception as e:
+        logging.warning(f"Голос {user_id}/{match_id} не прочитался: {e}")
+        return None
 
 
 async def pick_counts(match_id: str):

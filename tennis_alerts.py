@@ -183,34 +183,47 @@ def _pick_question(match) -> str:
     return f"А кто победит в матче {who}?" + tail
 
 
-def _pick_labels(match_id: str, names, counts) -> list:
-    """Кнопки прогноза с долями. Доля показывается с первого голоса."""
+def _pick_labels(match_id: str, names, counts, mine=None) -> list:
+    """Кнопки прогноза.
+
+    ДО СВОЕГО ГОЛОСА ПРОЦЕНТОВ НЕТ. Иначе кнопка с «62%» читается как
+    «я уже нажимал», и человек проходит мимо, думая, что ответил. Голые
+    имена — честный вид невыбранного.
+
+    После голоса — доли и галочка у своего выбора: теперь это не
+    приглашение, а результат, и его видно с первого взгляда.
+    """
     total = sum(counts)
+    voted = mine is not None
     rows = []
     for i, name in enumerate(names):
-        share = ""
-        if total >= PICK_MIN:
-            share = f" · {round(counts[i] * 100 / total)}%"
+        label = name[:22]
+        if voted:
+            share = round(counts[i] * 100 / total) if total else 0
+            mark = "✓ " if i == mine else ""
+            label = f"{mark}{name[:18]} · {share}%"
         rows.append(InlineKeyboardButton(
-            text=f"{name[:22]}{share}", callback_data=f"tpick_{match_id}_{i}"))
+            text=label, callback_data=f"tpick_{match_id}_{i}"))
     return rows
 
 
-def _votes_line(counts) -> str:
-    """Сколько человек уже ответило.
+def _votes_line(counts, voted: bool = False) -> str:
+    """Сколько человек уже ответило — ТЕКСТОМ, а не за нажатием.
 
-    Доля без числа обманчива: «100%» одинаково выглядит и при одном
-    голосе, и при сотне. Поэтому число стоит рядом и видно до нажатия —
-    прежний порог в пять голосов не набирался именно потому, что о нём
-    знали, но не видели, сколько осталось: каждый новый пробовал и
-    переставал.
+    Число должно быть видно до того, как человек нажмёт: оно и зовёт
+    нажать. Прежний порог в пять голосов не набирался именно потому,
+    что о нём знали, но не видели, сколько осталось — каждый новый
+    пробовал и переставал.
+
+    Без слова после числа: «1 проголосовавшего» — и тавтология, и
+    падеж не тот. Число говорит само.
     """
     total = sum(counts)
     if not total:
         return "Пока никто не ответил — ваш голос будет первым."
-    # Без слова после числа: «1 проголосовавшего» — и тавтология, и
-    # падеж не тот. Число говорит само.
-    return f"Проголосовало: {total}"
+    if voted:
+        return f"Проголосовало: {total}"
+    return f"Проголосовало: {total}. Ваш голос ещё не учтён."
 
 
 async def _pick_row(match):
@@ -1901,7 +1914,7 @@ async def take_pick(call: CallbackQuery):
 
     if not names:
         return
-    fresh = _pick_labels(match_id, names, counts)
+    fresh = _pick_labels(match_id, names, counts, side)
     keyboard = [fresh if r is row else r
                 for r in call.message.reply_markup.inline_keyboard]
     try:
@@ -1912,9 +1925,8 @@ async def take_pick(call: CallbackQuery):
 
     # И у остальных подписчиков этого матча: голосование живёт в личных
     # карточках, и человек должен видеть, как расклад меняется, а не
-    # только свой голос. Своё сообщение пропускаем — оно уже поправлено.
-    await _refresh_cards(call.bot, match_id, names, counts,
-                         skip=call.message.message_id if call.message else None)
+    # только свой голос. Своего пропускаем — ему уже ответили.
+    await _refresh_cards(call.bot, match_id, skip_user=call.from_user.id)
 
 
 def _votes_word(n: int) -> str:
@@ -2009,17 +2021,16 @@ async def toggle_match(call: CallbackQuery):
         await call.answer("🔕 Напоминание снято")
 
 
-async def _confirm(bot: Bot, user_id: int, tour: str, match_id: str,
-                   title: str, starts) -> bool:
-    """Личное подтверждение: статистика, прогноз, выключатель.
+async def _card(user_id: int, tour: str, match_id: str, title: str,
+                starts, match=None):
+    """Карточка матча для ОДНОГО человека: (текст, разметка, есть ли голосование).
 
-    ЗАЧЕМ ЗДЕСЬ ГОЛОСОВАНИЕ. В канале голосуют за один матч из списка —
-    тот, что выбрал бот, а человеку интересен может быть совсем другой.
-    Подписка на матч как раз и называет интересный: здесь голос уместен,
-    и здесь же есть место под статистику, которой в канале не нашлось.
+    Собирается в одном месте, потому что её и шлют, и обновляют: число
+    проголосовавших живёт в тексте, а не только на кнопках, и замирать
+    на минуте подписки оно не должно.
 
-    Доли на кнопках общие: проголосовал один подписчик — проценты
-    меняются у всех, кто подписан на ЭТОТ матч (см. _refresh_cards).
+    Вид зависит от того, голосовал ли ЭТОТ человек: до своего голоса
+    процентов нет, иначе кнопка читается как «я уже нажимал».
     """
     shift = await _shift()
     when = (starts + shift).strftime("%H:%M") if starts else "по расписанию"
@@ -2027,11 +2038,8 @@ async def _confirm(bot: Bot, user_id: int, tour: str, match_id: str,
     parts = [f"🔔 <b>Напоминание включено</b>\n\n{html.escape(title)}\n"
              f"Начало в {when}. {_lead_phrase(lead)}"]
 
-    # Матч ищем ДО сборки текста: от него зависят и статистика, и
-    # вопрос прогноза. Раньше он брался ниже, а использовался выше —
-    # обёрнутый try проглатывал ошибку, и накопленная история молча не
-    # показывалась никогда.
-    match = await _find_match(tour, match_id)
+    if match is None:
+        match = await _find_match(tour, match_id)
 
     # Личные встречи, если владелица их заполнила. Нет — просто не
     # упоминаем: «статистика недоступна» читателю ничего не даёт.
@@ -2057,17 +2065,17 @@ async def _confirm(bot: Bot, user_id: int, tour: str, match_id: str,
                  "число — сколько человек собирается смотреть.</i>")
 
     rows = []
-    picks = await _pick_row(match) if match else None
-    if picks:
+    names = _names(match) if match else None
+    if names:
         counts = await database.pick_counts(match_id)
-        parts.append(_pick_question(match) + "\n\n" + _votes_line(counts))
-        rows.append(picks)
+        mine = await database.pick_of(user_id, match_id)
+        parts.append(_pick_question(match) + "\n\n"
+                     + _votes_line(counts, voted=mine is not None))
+        rows.append(_pick_labels(match_id, names, counts, mine))
 
-    # Статистику бот просит только у матча дня — по одному на тур.
-    # Подписаться же можно на любой, и там её не оказывается. Кнопка
-    # стоит прямо здесь, в той карточке, где её отсутствие и заметно:
-    # владелица видит пустое место и тут же его заполняет. Остальным
-    # кнопка не показывается — это служебное действие.
+    # Заполнение статистики — служебное действие, кнопка только у
+    # владелицы. Обработчик проверяет это ещё раз: нажать можно и по
+    # старому сообщению.
     if config.is_admin(user_id) and not await database.h2h_get(match_id):
         rows.append([InlineKeyboardButton(
             text="✍️ Заполнить личные встречи",
@@ -2077,50 +2085,59 @@ async def _confirm(bot: Bot, user_id: int, tour: str, match_id: str,
         text="🔕 Выключить напоминание",
         callback_data=f"tmute_{tour}_{match_id}")])
 
+    return ("\n\n".join(parts),
+            InlineKeyboardMarkup(inline_keyboard=rows),
+            bool(names))
+
+
+async def _confirm(bot: Bot, user_id: int, tour: str, match_id: str,
+                   title: str, starts) -> bool:
+    """Прислать карточку. False — бот не может писать этому человеку."""
+    text, markup, has_vote = await _card(user_id, tour, match_id, title, starts)
     try:
-        sent = await bot.send_message(
-            user_id, "\n\n".join(parts),
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
-            disable_web_page_preview=True)
+        sent = await bot.send_message(user_id, text, reply_markup=markup,
+                                      disable_web_page_preview=True)
     except TelegramForbiddenError:
         return False
     except Exception as e:
         logging.warning(f"Подтверждение {user_id} не ушло: {e}")
         return False
 
-    # Номер карточки — чтобы обновить в ней доли при чужом голосе
-    if picks:
+    # Номер карточки — чтобы обновлять её при чужих голосах
+    if has_vote:
         await database.remember_card(user_id, match_id, sent.message_id)
     return True
 
 
-async def _refresh_cards(bot: Bot, match_id: str, names, counts,
-                         skip=None) -> None:
-    """Обновить доли в личных карточках всех подписчиков матча.
+async def _refresh_cards(bot: Bot, match_id: str, skip_user=None) -> None:
+    """Обновить карточки всех подписчиков матча — ЦЕЛИКОМ.
 
-    Раньше проценты менялись только там, где нажали, — остальные
-    смотрели на старые. Подписчиков у ОДНОГО матча десятки, а не
-    тысячи, поэтому обойти их всех дешевле, чем кажется; паузу между
-    правками всё равно держим, чтобы не упереться в ограничение
-    Telegram.
+    Раньше правилась только разметка, и число проголосовавших в тексте
+    замирало на минуте подписки: живым оставался лишь процент на
+    кнопке, да и тот показывался тем, кто ещё не голосовал, — читался
+    как «я уже нажимал».
 
-    Сбой здесь ничего не ломает: голос уже записан, а карточка
-    обновится при следующем.
+    Теперь у каждого свой вид: не голосовал — голые имена и число
+    ответивших в тексте; проголосовал — доли и галочка у своего
+    выбора. Поэтому карточка собирается на каждого отдельно.
+
+    Подписчиков у одного матча десятки, а не тысячи, так что обойти
+    всех дешевле, чем кажется; паузу между правками держим.
     """
     for user_id, message_id, tour in await database.match_cards(match_id):
-        if skip and message_id == skip:
-            continue    # там, где нажали, разметку уже поправили
+        if skip_user and user_id == skip_user:
+            continue        # ему уже ответили на само нажатие
         try:
-            await bot.edit_message_reply_markup(
-                chat_id=user_id, message_id=message_id,
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    _pick_labels(match_id, names, counts),
-                    [InlineKeyboardButton(
-                        text="🔕 Выключить напоминание",
-                        callback_data=f"tmute_{tour}_{match_id}")],
-                ]))
+            row = await database.alert_row(user_id, match_id)
+            text, markup, _ = await _card(
+                user_id, tour, match_id,
+                (row or {}).get("title") or "матч",
+                (row or {}).get("starts_at"))
+            await bot.edit_message_text(
+                chat_id=user_id, message_id=message_id, text=text,
+                reply_markup=markup, disable_web_page_preview=True)
         except Exception:
-            pass        # разметка могла не измениться — это не ошибка
+            pass        # текст мог не измениться — это не ошибка
         await asyncio.sleep(0.05)
 
 
