@@ -556,6 +556,12 @@ async def init_db():
             PRIMARY KEY (bracket_id, round_no, slot)
         )""")
 
+        # Пара игроков у заполненной вручную статистики. Нужна, чтобы
+        # не просить одно и то же дважды: матчи разные, а пара та же.
+        await conn.execute(
+            f"ALTER TABLE {SCHEMA}.match_h2h "
+            f"ADD COLUMN IF NOT EXISTS pair_key TEXT")
+
         # История личных встреч — та, что принадлежит нам.
         #
         # У источника её нет: он отдаёт сегодняшнее табло и забывает о
@@ -2706,9 +2712,25 @@ async def h2h_get(match_id: str):
     return dict(row) if row else None
 
 
+async def h2h_filled_pairs():
+    """Пары, по которым владелица уже всё внесла. Их не переспрашиваем."""
+    pool = await get_pool()
+    if not pool:
+        return set()
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT DISTINCT pair_key FROM {SCHEMA}.match_h2h "
+                f"WHERE pair_key IS NOT NULL")
+        return {r["pair_key"] for r in rows}
+    except Exception as e:
+        logging.warning(f"Заполненные пары не прочитались: {e}")
+        return set()
+
+
 async def h2h_save(match_id: str, tour: str, title: str, meetings: int,
                    wins_first: int, surfaces: str, years: str,
-                   note: str = None) -> bool:
+                   note: str = None, pair_key: str = None) -> bool:
     """Сохранить присланное. Повторное заполнение переписывает старое и
     снимает отметку о публикации: исправили — значит, публиковать заново."""
     pool = await get_pool()
@@ -2719,16 +2741,17 @@ async def h2h_save(match_id: str, tour: str, title: str, meetings: int,
             await conn.execute(
                 f"""INSERT INTO {SCHEMA}.match_h2h
                     (match_id, tour, title, meetings, wins_first, surfaces,
-                     years, note, published, filled_at)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, FALSE, NOW())
+                     years, note, pair_key, published, filled_at)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, FALSE, NOW())
                     ON CONFLICT (match_id) DO UPDATE SET
                         tour = EXCLUDED.tour, title = EXCLUDED.title,
                         meetings = EXCLUDED.meetings,
                         wins_first = EXCLUDED.wins_first,
                         surfaces = EXCLUDED.surfaces, years = EXCLUDED.years,
-                        note = EXCLUDED.note, published = FALSE,
-                        filled_at = NOW()""",
-                match_id, tour, title, meetings, wins_first, surfaces, years, note)
+                        note = EXCLUDED.note, pair_key = EXCLUDED.pair_key,
+                        published = FALSE, filled_at = NOW()""",
+                match_id, tour, title, meetings, wins_first, surfaces, years,
+                note, pair_key)
         return True
     except Exception as e:
         logging.error(f"Личные встречи {match_id} не сохранились: {e}")

@@ -132,7 +132,8 @@ async def auto_stats(first: str, second: str):
     history = await database.h2h_pair(*pair_key(first, second))
     if not history:
         return None
-    return _stats_block(first, second, summarize(history, first, second))
+    return _stats_block(first, second, summarize(history, first, second),
+                        partial=True)
 
 
 # ---------------------------------------------------------------------
@@ -146,6 +147,53 @@ def _ask_markup(tour: str, match_id: str) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🔄 Обновить",
                               callback_data=f"h2hgo_{tour}_{match_id}")],
     ])
+
+
+async def request_batch(bot: Bot, tour: str, matches: list) -> int:
+    """Один список вместо двадцати сообщений.
+
+    Статистики не хватает почти всегда, и просить её по каждому матчу
+    отдельным письмом — значит превратить личку в ленту уведомлений,
+    которую перестают читать. Поэтому одно сообщение на тур, кнопка на
+    матч.
+
+    ПАРЫ, КОТОРЫЕ УЖЕ ЗАПОЛНЕНЫ, не переспрашиваем — но именно пары, а
+    не матчи: те же двое могут встретиться на другом турнире, и матч
+    будет новый, а история та же.
+    """
+    if not config.ADMIN_ID or not matches:
+        return 0
+
+    done = await database.h2h_filled_pairs()
+    rows, listed = [], []
+    for match_id, title, first, second in matches:
+        if "|".join(pair_key(first, second)) in done:
+            continue
+        if await database.h2h_get(match_id):
+            continue
+        listed.append(title)
+        rows.append([InlineKeyboardButton(
+            text=f"✍️ {title[:36]}",
+            callback_data=f"h2hfill_{tour}_{match_id}")])
+        if len(rows) >= 10:      # больше кнопок под сообщением не читается
+            break
+
+    if not rows:
+        return 0
+
+    try:
+        await bot.send_message(
+            config.ADMIN_ID,
+            f"📊 <b>Нет личных встреч</b> — {tour.upper()}\n\n"
+            + "\n".join(f"• {html.escape(x)}" for x in listed)
+            + "\n\n<i>Заполнять всё не нужно: возьмите те матчи, о "
+              "которых будете писать. Пары, которые вы уже внесли, сюда "
+              "не попадают.</i>",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+        return len(rows)
+    except Exception as e:
+        logging.warning(f"Список незаполненных встреч не ушёл: {e}")
+        return 0
 
 
 async def request_missing(bot: Bot, tour: str, match_id: str,
@@ -173,6 +221,81 @@ async def request_missing(bot: Bot, tour: str, match_id: str,
     except Exception as e:
         logging.warning(f"Запрос статистики {match_id} не ушёл: {e}")
         return False
+
+
+# ---------------------------------------------------------------------
+# Покрытие незнакомых турниров
+# ---------------------------------------------------------------------
+
+async def request_surfaces(bot: Bot) -> int:
+    """Спросить покрытие у турниров, которых нет в справочнике.
+
+    Справочник знает крупные турниры и не меняется. Малые появляются и
+    меняют покрытие, и угадывать за них нельзя: выдуманный грунт в
+    истории встреч выглядит ровно как настоящий.
+    """
+    if not config.ADMIN_ID:
+        return 0
+    unknown = await database.surfaces_unknown(8)
+    if not unknown:
+        return 0
+
+    sent = 0
+    for name, tour in unknown:
+        pretty = name.title()
+        try:
+            await bot.send_message(
+                config.ADMIN_ID,
+                f"🎾 <b>Какое покрытие?</b>\n\n{html.escape(pretty)}"
+                + (f" · {tour.upper()}" if tour else "")
+                + "\n\n<i>Этого турнира нет в справочнике. Покрытие "
+                  "проставится и задним числом — всем уже сыгранным "
+                  "матчам тоже.</i>",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                    InlineKeyboardButton(text="🟫 Грунт",
+                                         callback_data=f"surf_clay_{name}"),
+                    InlineKeyboardButton(text="🟩 Трава",
+                                         callback_data=f"surf_grass_{name}"),
+                    InlineKeyboardButton(text="🟦 Хард",
+                                         callback_data=f"surf_hard_{name}"),
+                ]]))
+            sent += 1
+        except Exception as e:
+            logging.warning(f"Запрос покрытия «{name}» не ушёл: {e}")
+    return sent
+
+
+@router.callback_query(F.data.startswith("surf_"))
+async def set_surface(call: CallbackQuery):
+    if not config.is_admin(call.from_user.id):
+        await call.answer()
+        return
+    try:
+        _, kind, name = call.data.split("_", 2)
+    except ValueError:
+        await call.answer()
+        return
+
+    import surfaces
+    chosen = {"clay": surfaces.CLAY, "grass": surfaces.GRASS,
+              "hard": surfaces.HARD}.get(kind)
+    if not chosen:
+        await call.answer()
+        return
+
+    await database.surface_set(name, chosen)
+    # И задним числом: ответ, который достаётся только будущим матчам,
+    # оставил бы уже сыгранные без покрытия навсегда.
+    touched = await database.h2h_fill_surface(name, chosen)
+
+    await call.answer(f"Записала: {chosen}")
+    tail = (f"\n\nПроставила в уже сыгранных матчах: {touched}."
+            if touched else "")
+    try:
+        await call.message.edit_text(
+            f"🎾 <b>{html.escape(name.title())}</b> — {chosen}.{tail}")
+    except Exception:
+        await call.message.answer(f"✅ {html.escape(name.title())} — {chosen}.{tail}")
 
 
 # ---------------------------------------------------------------------
@@ -223,7 +346,9 @@ async def take_meetings(message: Message, state: FSMContext):
         await state.clear()
         ok = await database.h2h_save(
             data["match_id"], data["tour"], data["title"],
-            0, 0, None, None, None)
+            0, 0, None, None, None,
+            pair_key="|".join(pair_key(data.get("first") or "",
+                                       data.get("second") or "")))
         await _show_summary(message, data, ok, meetings=0, wins_first=0,
                             surfaces=None, years=None, note=None)
         return
@@ -286,7 +411,9 @@ async def take_note(message: Message, state: FSMContext):
     ok = await database.h2h_save(
         data["match_id"], data["tour"], data["title"],
         data.get("meetings") or 0, data.get("wins_first") or 0,
-        data.get("surfaces"), data.get("years"), note)
+        data.get("surfaces"), data.get("years"), note,
+        pair_key="|".join(pair_key(data.get("first") or "",
+                                   data.get("second") or "")))
 
     await _show_summary(message, data, ok,
                         meetings=data.get("meetings") or 0,
@@ -322,7 +449,7 @@ async def _show_summary(message: Message, data, ok: bool, **fields) -> None:
 # Текст поста
 # ---------------------------------------------------------------------
 
-def _stats_block(first: str, second: str, f) -> str:
+def _stats_block(first: str, second: str, f, partial: bool = False) -> str:
     """Готовый кусок про личные встречи.
 
     Имена ставятся ПОСЛЕ двоеточия, а не в середину фразы: склонять
@@ -332,12 +459,21 @@ def _stats_block(first: str, second: str, f) -> str:
     """
     meetings = f.get("meetings") or 0
     if not meetings:
-        return "Играют между собой впервые."
+        # Сказать «играют впервые» можно только о том, что заполнено
+        # руками: наша собственная история начинается с того дня, как
+        # мы начали записывать, и её пустота ничего не доказывает.
+        return "" if partial else "Играют между собой впервые."
 
     wins_first = f.get("wins_first") or 0
     wins_second = meetings - wins_first
 
-    lines = [f"Личные встречи: {meetings}"]
+    # ГЛАВНОЕ ОТЛИЧИЕ НАКОПЛЕННОГО ОТ ЗАПОЛНЕННОГО. Заполненное
+    # владелицей — это полная история пары. Накопленное нами — только
+    # то, что мы успели увидеть: вчера сыграли, сегодня в статистике
+    # одна встреча, а позавчера их было пять, и мы о них не знаем.
+    # Писать «Личные встречи: 1» значит выдать наблюдение за факт.
+    lines = [f"Мы видели встреч: {meetings}" if partial
+             else f"Личные встречи: {meetings}"]
     score = f"Счёт — {wins_first}:{wins_second}"
     if wins_first != wins_second:
         ahead = first if wins_first > wins_second else second
@@ -354,6 +490,9 @@ def _stats_block(first: str, second: str, f) -> str:
     if f.get("note"):
         lines.append("")
         lines.append(html.escape(f["note"]))
+    if partial:
+        lines.append("<i>Считаем только матчи, которые видели сами, — "
+                     "более ранние встречи сюда не вошли.</i>")
     return "\n".join(lines)
 
 
