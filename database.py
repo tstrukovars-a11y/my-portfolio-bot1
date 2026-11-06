@@ -556,6 +556,27 @@ async def init_db():
             PRIMARY KEY (bracket_id, round_no, slot)
         )""")
 
+        # Покрытие турнира — поправки владелицы поверх справочника.
+        # Справочник (surfaces.py) знает крупные турниры и не меняется;
+        # сюда попадает то, чего в нём нет, и то, где он ошибся.
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.tournament_surface (
+            name TEXT PRIMARY KEY,
+            tour TEXT,
+            surface TEXT NOT NULL,
+            set_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+
+        # Турниры, покрытие которых неизвестно. Копятся сами, когда бот
+        # встречает их в результатах: спросить у владелицы можно только
+        # то, о чём знаешь, что не знаешь.
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.surface_unknown (
+            name TEXT PRIMARY KEY,
+            tour TEXT,
+            seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+
         # Факты о матче, которые нельзя восстановить задним числом.
         #
         # Живая табличка источника держит только свежие матчи: через
@@ -2318,6 +2339,82 @@ async def brackets_due():
         return [dict(r) for r in rows]
     except Exception as e:
         logging.warning(f"Список сеток не пришёл: {e}")
+        return []
+
+
+# ---------------------------------------------------------------------
+# Покрытие турнира
+# ---------------------------------------------------------------------
+
+
+async def surface_override(name: str):
+    """Поправка владелицы для этого турнира или None."""
+    pool = await get_pool()
+    if not pool:
+        return None
+    try:
+        async with pool.acquire() as conn:
+            return await conn.fetchval(
+                f"SELECT surface FROM {SCHEMA}.tournament_surface "
+                f"WHERE name = $1", (name or "").strip().lower())
+    except Exception as e:
+        logging.warning(f"Поправка покрытия не прочиталась: {e}")
+        return None
+
+
+async def surface_set(name: str, surface: str, tour: str = None) -> bool:
+    pool = await get_pool()
+    if not pool:
+        return False
+    try:
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(
+                    f"""INSERT INTO {SCHEMA}.tournament_surface
+                        (name, tour, surface) VALUES ($1, $2, $3)
+                        ON CONFLICT (name) DO UPDATE SET
+                            surface = EXCLUDED.surface, tour = EXCLUDED.tour,
+                            set_at = NOW()""",
+                    (name or "").strip().lower(), tour, surface)
+                await conn.execute(
+                    f"DELETE FROM {SCHEMA}.surface_unknown WHERE name = $1",
+                    (name or "").strip().lower())
+        return True
+    except Exception as e:
+        logging.error(f"Покрытие {name} не сохранилось: {e}")
+        return False
+
+
+async def surface_note_unknown(name: str, tour: str = None) -> None:
+    """Запомнить турнир, покрытия которого мы не знаем."""
+    if not (name or "").strip():
+        return
+    pool = await get_pool()
+    if not pool:
+        return
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"INSERT INTO {SCHEMA}.surface_unknown (name, tour) "
+                f"VALUES ($1, $2) ON CONFLICT (name) DO NOTHING",
+                (name or "").strip().lower(), tour)
+    except Exception as e:
+        logging.warning(f"Неизвестное покрытие не записалось: {e}")
+
+
+async def surfaces_unknown(limit: int = 20):
+    """[(название, тур)] — чего мы не знаем, в порядке появления."""
+    pool = await get_pool()
+    if not pool:
+        return []
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT name, tour FROM {SCHEMA}.surface_unknown "
+                f"ORDER BY seen_at LIMIT $1", limit)
+        return [(r["name"], r["tour"]) for r in rows]
+    except Exception as e:
+        logging.warning(f"Список неизвестных покрытий не пришёл: {e}")
         return []
 
 
