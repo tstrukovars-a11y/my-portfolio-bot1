@@ -511,6 +511,12 @@ async def publish_schedule(bot: Bot, chat: int, thread=None) -> str:
         except Exception as e:
             logging.warning(f"Список незаполненных встреч не собрался: {e}")
 
+        # «Где смотреть» — отдельной кнопкой: не всем нужен колокольчик,
+        # кому-то надо просто включить трансляцию прямо сейчас.
+        rows.append([InlineKeyboardButton(
+            text="📺 Перейти к просмотрам",
+            callback_data=f"twatch_{tour}")])
+
         # Сетка — последней строкой кнопок: список матчей на сегодня
         # отвечает «что смотреть», сетка — «кто с кем дальше».
         rows.append([InlineKeyboardButton(
@@ -2116,6 +2122,59 @@ async def _refresh_cards(bot: Bot, match_id: str, names, counts,
         except Exception:
             pass        # разметка могла не измениться — это не ошибка
         await asyncio.sleep(0.05)
+
+
+@router.callback_query(F.data.startswith("twatch_"))
+async def go_watch(call: CallbackQuery):
+    """«Перейти к просмотрам» — в личку, и сразу по делу.
+
+    Если человек уже подписан на матч, он свой выбор сделал: шлём
+    ссылки на трансляцию и не переспрашиваем. Если нет — показываем
+    список сегодняшних матчей, чтобы было из чего выбрать: «где
+    смотреть» без ответа на «что смотреть» ничего не решает.
+    """
+    tour = call.data.split("_", 1)[1]
+    if tour not in tennis_live.TOURS:
+        await call.answer()
+        return
+
+    mine = [a for a in await database.alerts_of_user(call.from_user.id)
+            if a["tour"] == tour]
+
+    if mine:
+        titles = "\n".join(f"• {html.escape(a['title'] or 'матч')}"
+                            for a in mine[:8])
+        text = (f"📺 <b>Где смотреть</b>\n\n"
+                f"Вы ждёте:\n{titles}\n\nТрансляции тура:")
+        markup = InlineKeyboardMarkup(inline_keyboard=_watch_rows(tour))
+    else:
+        matches = await _today(tour)
+        picked = [m for m in matches if _notable(m)][:MAX_MATCHES]
+        rows = [[InlineKeyboardButton(
+            text=f"🔔 {_title(m)[:38]}",
+            callback_data=f"tmatch_{tour}_{m['id']}")] for m in picked]
+        rows += _watch_rows(tour)
+        text = ("📺 <b>Выберите матч для просмотра</b>\n\n"
+                "Пока вы не выбрали ни одного матча. Нажмите на тот, что "
+                "хотите посмотреть, — пришлю ссылку на трансляцию к началу "
+                "и счёт, когда он закончится."
+                if picked else
+                "📺 <b>Где смотреть</b>\n\nСегодня матчей с сильнейшими "
+                "нет, но трансляции тура идут:")
+        markup = InlineKeyboardMarkup(inline_keyboard=rows)
+
+    try:
+        await call.bot.send_message(call.from_user.id, text,
+                                    reply_markup=markup,
+                                    disable_web_page_preview=True)
+    except Exception:
+        pass
+
+    url = await _deep_link("open", call.bot)
+    if url:
+        await call.answer(url=url)
+    else:
+        await call.answer("Открыла у вас в личке.", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("tmute_"))

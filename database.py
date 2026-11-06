@@ -2713,6 +2713,29 @@ async def remember_card(user_id: int, match_id: str, message_id: int) -> None:
         logging.warning(f"Карточка {user_id}/{match_id} не запомнилась: {e}")
 
 
+async def alerts_of_user(user_id: int):
+    """На какие матчи человек подписан и они ещё не закончились.
+
+    Нужно, чтобы не спрашивать «какой матч смотрим» у того, кто уже
+    выбрал: он выбрал, когда жал колокольчик.
+    """
+    pool = await get_pool()
+    if not pool:
+        return []
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"""SELECT match_id, tour, title, starts_at
+                    FROM {SCHEMA}.match_alerts
+                    WHERE user_id = $1 AND NOT result_sent
+                    ORDER BY starts_at NULLS LAST""",
+                user_id)
+        return [dict(r) for r in rows]
+    except Exception as e:
+        logging.warning(f"Подписки {user_id} не прочитались: {e}")
+        return []
+
+
 async def card_message(user_id: int, match_id: str):
     """Номер уже присланной карточки матча или None.
 

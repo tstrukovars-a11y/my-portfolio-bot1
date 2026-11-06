@@ -47,8 +47,10 @@ import logging
 #             личку. В канале не видно ни кто нажал, ни сколько их —
 #             остальные кнопки конкурса сюда не входят намеренно, они
 #             служебные и живут только у владелицы.
+#   twatch_ — «Перейти к просмотрам»: список уходит в личку, в канале
+#             не видно ни кто нажал, ни что он смотрит.
 PUBLIC_OK = ("vote_", "pz_", "xo_", "xoi_", "tmatch_", "tmute_", "tpick_",
-             "drjoin_")
+             "drjoin_", "twatch_")
 
 # Текст окошка, когда в личку написать не удалось: человек не начинал
 # с ботом разговор, и Telegram не даёт написать первым.
@@ -251,13 +253,28 @@ async def keep_private(handler, event, data):
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
                 InlineKeyboardButton(text=label,
                                      callback_data=event.data)]]))
+        opened = True
     except Exception as e:
-        # Не писал боту — Telegram не даёт написать первым.
+        # Не писал боту — Telegram не даёт написать первым. Ссылка
+        # всё равно нужна: по ней он туда и попадёт, а кнопка придёт
+        # следующим нажатием.
         logging.info(f"Кнопка из канала: личка закрыта ({e})")
-        await event.answer(CLOSED, show_alert=True)
+        opened = False
+
+    # ОТКРЫВАЕМ БОТА, А НЕ РАССКАЗЫВАЕМ ПРО НЕГО. Раньше здесь всплывало
+    # «Открыла у вас в личке», и человек должен был сам туда пойти —
+    # половина не шла. Telegram разрешает ответить на нажатие ссылкой,
+    # и одно касание приводит его прямо в переписку.
+    #
+    # Это чинит ВСЕ кнопки сразу: и «Как это касается меня» под
+    # новостями и генетикой, и всё, что появится потом.
+    import common
+    url = await common.deep_link("open", event.bot)
+    if url:
+        await event.answer(url=url)
         return None
 
-    await event.answer(MOVED, show_alert=True)
+    await event.answer(MOVED if opened else CLOSED, show_alert=True)
     return None
 
 

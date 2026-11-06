@@ -1343,3 +1343,44 @@ def test_the_channel_schedule_has_no_poll_any_more():
 def test_the_match_of_the_day_picker_is_gone():
     """Мёртвый код хуже удалённого."""
     assert not hasattr(ta, "_for_pick")
+
+
+# =====================================================================
+# «ПЕРЕЙТИ К ПРОСМОТРАМ»
+# =====================================================================
+#
+# «Где смотреть» без ответа на «что смотреть» ничего не решает. Поэтому
+# у того, кто уже подписался, не переспрашиваем — он выбрал, когда жал
+# колокольчик. У остальных показываем список.
+
+
+def test_the_watch_button_is_allowed_in_the_channel():
+    """Список уходит в личку, в канале не видно ни кто нажал, ни что
+    он смотрит."""
+    import public
+    assert public.allowed("twatch_atp")
+
+
+def test_the_schedule_offers_a_watch_button():
+    import inspect
+    body = inspect.getsource(ta.publish_schedule)
+    assert "twatch_" in body
+    assert "Перейти к просмотрам" in body
+
+
+def test_a_subscriber_is_not_asked_what_to_watch():
+    import inspect
+    body = inspect.getsource(ta.go_watch)
+    assert "alerts_of_user" in body
+    assert "Вы ждёте" in body
+
+
+def test_someone_without_a_pick_gets_the_list():
+    import inspect
+    body = inspect.getsource(ta.go_watch)
+    assert "Выберите матч для просмотра" in body
+
+
+def test_the_watch_button_opens_the_bot_rather_than_describing_it():
+    import inspect
+    assert "call.answer(url=url)" in inspect.getsource(ta.go_watch)

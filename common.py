@@ -106,6 +106,26 @@ DEEP_LINKS = {
 }
 
 
+@router.message(F.text.regexp(r"^/start\s+open\s*$"))
+async def start_open(message: Message, state: FSMContext):
+    """Человек пришёл по кнопке из канала — и уже получил, за чем шёл.
+
+    Эта ссылка ставится только затем, чтобы ОТКРЫТЬ переписку: нужное
+    сообщение туда уже отправлено, оно последнее. Показать поверх него
+    приветствие и меню из восьми разделов значит спрятать то, ради чего
+    человек нажал.
+
+    Зарегистрирован раньше общего /start — в одном роутере выигрывает
+    тот, что выше.
+    """
+    await state.clear()
+    try:
+        import personal
+        await personal.quiet(message, message.from_user)
+    except Exception:
+        pass
+
+
 @router.message(F.text.startswith("/start"))
 async def cmd_start(message: Message, state: FSMContext, bot: Bot):
     await state.clear()
