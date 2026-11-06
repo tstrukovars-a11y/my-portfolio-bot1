@@ -137,3 +137,39 @@ def test_there_is_a_ceiling_on_meetings():
     """Защита не от злого умысла, а от опечатки: «44» вместо «4» уехало
     бы в канал как факт."""
     assert 0 < h2h.MAX_MEETINGS <= 100
+
+
+# ---------------------------------------------------------------------
+# Откуда берётся пара фамилий
+# ---------------------------------------------------------------------
+#
+# Кнопка «заполнить встречи» стоит теперь в двух разных сообщениях: в
+# запросе статистики и в карточке подписки. Разбор по номеру абзаца
+# работал только в первом.
+
+
+def test_the_pair_is_found_wherever_it_stands():
+    text = ("🔔 Напоминание включено\n\n"
+            "Шелтон — Шубладзе · Париж\n"
+            "Начало в 18:00.")
+    assert h2h._title_from(text) == "Шелтон — Шубладзе · Париж"
+
+
+def test_the_pair_is_found_in_the_stats_request():
+    text = ("📊 Статистики по этому матчу нет\n\n"
+            "Жабин — Петров\n\n"
+            "Заполните личные встречи.")
+    assert h2h._title_from(text) == "Жабин — Петров"
+
+
+def test_a_short_dash_also_counts():
+    assert h2h._title_from("Жабин - Петров") == "Жабин - Петров"
+
+
+def test_text_without_a_pair_gives_nothing():
+    assert h2h._title_from("Просто сообщение") == ""
+    assert h2h._title_from("") == ""
+
+
+def test_a_dangling_dash_is_not_a_pair():
+    assert h2h._title_from("Начало — ") == ""

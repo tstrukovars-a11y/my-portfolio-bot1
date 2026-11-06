@@ -53,6 +53,23 @@ def _skipped(text: str) -> bool:
     return (text or "").strip().lower() in SKIP
 
 
+def _title_from(text: str) -> str:
+    """Строка с парой фамилий из сообщения.
+
+    Берём первую строку, в которой есть тире между двумя словами, —
+    это и есть «Жабин — Петров». Разбор по номеру абзаца ломался, как
+    только та же кнопка появилась в другом сообщении.
+    """
+    for line in (text or "").splitlines():
+        line = line.strip()
+        for dash in (" — ", " – ", " - "):
+            if dash in line:
+                left, right = line.split(dash, 1)
+                if left.strip() and right.strip():
+                    return line
+    return ""
+
+
 def _names(title: str):
     """«Рублёв — Алькарас» -> («Рублёв», «Алькарас»)"""
     for dash in (" — ", " - ", " – "):
@@ -118,7 +135,10 @@ async def start_filling(call: CallbackQuery, state: FSMContext):
         return
     await call.answer()
 
-    title = (call.message.text or "").split("\n\n")[1] if call.message.text else ""
+    # Название матча ищем надёжнее, чем «второй абзац»: эта же кнопка
+    # теперь стоит и в карточке подписки, а там разметка другая — там
+    # второй абзац это статистика или вопрос прогноза.
+    title = _title_from(call.message.text or "")
     first, second = _names(title)
     await state.set_state(Filling.meetings)
     await state.update_data(tour=tour, match_id=match_id, title=title,

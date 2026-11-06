@@ -135,7 +135,18 @@ def _names(match):
 
 # Пока голосов мало, доля врёт: один человек — это «100 % за Рублёва».
 # До этого числа показываем просто имена.
-PICK_MIN = 5
+# Раньше доли прятались, пока не наберётся пять голосов: доля от
+# одного голоса — это «100%», и в канале такое вводило в заблуждение.
+# Но голосование переехало в ЛИЧНУЮ карточку, и смысл поменялся: человек
+# хочет видеть, как шкала наполняется с его собственного голоса, а не
+# ждать неизвестно чего. Показываем сразу и пишем, из скольких.
+PICK_MIN = 1
+
+# А вот в КАНАЛЕ порог остаётся. «Прогноз читателей: 100% из 1» —
+# насмешка, а не итог: в публичном посте доля что-то значит только
+# при толпе. Это разные места с разными задачами, и один порог на оба
+# был ошибкой: личной шкале он мешал, публичной строке — помогал.
+VERDICT_MIN = 5
 
 
 def _tops(match) -> int:
@@ -194,7 +205,7 @@ def _pick_question(match) -> str:
 
 
 def _pick_labels(match_id: str, names, counts) -> list:
-    """Кнопки прогноза с долями, когда доли уже что-то значат"""
+    """Кнопки прогноза с долями. Доля показывается с первого голоса."""
     total = sum(counts)
     rows = []
     for i, name in enumerate(names):
@@ -632,7 +643,7 @@ async def _pick_verdict(match) -> str:
         return ""
     counts = await database.pick_counts(match["id"])
     total = sum(counts)
-    if total < PICK_MIN:
+    if total < VERDICT_MIN:
         return ""
 
     sides = match.get("sides") or []
@@ -1838,10 +1849,12 @@ async def take_pick(call: CallbackQuery):
     # «Ваш выбор: Рублёв», а не «вы за Рублёва»: фамилию в винительном
     # падеже автоматически не поставить — Швёнтек и Медведев склоняются
     # по-разному, а часть имён вообще не склоняется.
-    if total < PICK_MIN:
+    if total <= 1:
+        # Первый голос — доля бессмысленна, но молчать о ней не надо:
+        # человек уже видит шкалу на кнопках и ждёт объяснения.
         await call.answer(
-            f"Ваш выбор: {mine}.\n\nПока голосов: {total}. Покажу расклад, "
-            f"когда наберётся {PICK_MIN}.", show_alert=True)
+            f"Ваш выбор: {mine}.\n\nВы проголосовали первым — "
+            f"шкала наполнится по мере ответов.", show_alert=True)
     else:
         share = round(counts[side] * 100 / total)
         await call.answer(
@@ -1996,6 +2009,17 @@ async def _confirm(bot: Bot, user_id: int, tour: str, match_id: str,
     if picks:
         parts.append(_pick_question(match))
         rows.append(picks)
+
+    # Статистику бот просит только у матча дня — по одному на тур.
+    # Подписаться же можно на любой, и там её не оказывается. Кнопка
+    # стоит прямо здесь, в той карточке, где её отсутствие и заметно:
+    # владелица видит пустое место и тут же его заполняет. Остальным
+    # кнопка не показывается — это служебное действие.
+    if config.is_admin(user_id) and not await database.h2h_get(match_id):
+        rows.append([InlineKeyboardButton(
+            text="✍️ Заполнить личные встречи",
+            callback_data=f"h2hfill_{tour}_{match_id}")])
+
     rows.append([InlineKeyboardButton(
         text="🔕 Выключить напоминание",
         callback_data=f"tmute_{tour}_{match_id}")])

@@ -51,9 +51,13 @@ def test_reason_is_a_whole_russian_sentence():
 
 # --- прогнозы ---------------------------------------------------------
 
-def test_shares_are_hidden_until_the_vote_means_something():
+def test_the_single_vote_share_is_shown_in_the_personal_card():
+    """Прежде доли прятались до пяти голосов: «100%» от одного — враньё.
+    Довод верный, но он про КАНАЛ. Голосование переехало в личную
+    карточку, и там человек хочет видеть, как шкала наполняется с его
+    собственного голоса. Для канала порог остался — VERDICT_MIN."""
     row = ta._pick_labels("401", ["А. Рублёв", "Д. Медведев"], (1, 0))
-    assert row[0].text == "А. Рублёв"          # «100 %» от одного голоса — враньё
+    assert row[0].text.endswith("100%")
 
 
 def test_shares_appear_and_add_up():
@@ -1288,3 +1292,38 @@ def test_a_missing_bot_username_falls_back_to_the_old_toast():
     import inspect
     body = inspect.getsource(ta.toggle_match)
     assert "_lead_phrase(lead)" in body
+
+
+# =====================================================================
+# ШКАЛА В ЛИЧНОЙ КАРТОЧКЕ И ПОРОГ В КАНАЛЕ — РАЗНЫЕ ВЕЩИ
+# =====================================================================
+#
+# Голосование переехало в личную карточку, и там человек хочет видеть,
+# как шкала наполняется с его собственного голоса. А в канале доля от
+# одного голоса — «100% из 1» — это насмешка, а не итог.
+
+
+def test_the_personal_scale_shows_from_the_very_first_vote():
+    labels = ta._pick_labels("m1", ["Шелтон", "Шубладзе"], [1, 0])
+    assert any("100%" in b.text for b in labels)
+
+
+def test_the_scale_fills_as_votes_arrive():
+    labels = ta._pick_labels("m1", ["Шелтон", "Шубладзе"], [3, 1])
+    texts = [b.text for b in labels]
+    assert any("75%" in x for x in texts)
+    assert any("25%" in x for x in texts)
+
+
+def test_the_channel_verdict_still_needs_a_crowd():
+    """Один порог на оба места был ошибкой: личной шкале он мешал,
+    публичной строке — помогал."""
+    assert ta.VERDICT_MIN >= 5
+    assert ta.PICK_MIN == 1
+
+
+def test_the_verdict_uses_its_own_threshold():
+    import inspect
+    body = inspect.getsource(ta._pick_verdict)
+    assert "VERDICT_MIN" in body
+    assert "PICK_MIN" not in body
