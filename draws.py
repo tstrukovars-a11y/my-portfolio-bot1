@@ -265,21 +265,20 @@ async def self_check(message: Message):
     lines.append(f"{'✅' if chat else '⚠️'} Общий канал: "
                  f"<code>{chat or 'не задан'}</code>")
 
-    lines.append("")
-    lines.append("<i>Ниже — пробная сетка. Смотрите на фамилии: если "
-                 "вместо букв квадратики, шрифта нет.</i>")
     await message.answer("\n".join(lines))
 
     try:
+        # Фамилии настоящие и подобраны по буквам: «ш», «ж», «ф» и «ю»
+        # — на них шрифты спотыкаются первыми. Выдуманные тут только
+        # путали: на картинке и так непонятно, это проверка или данные.
         rounds = [[101, 102, 103, None], [101, 103, 102, None]]
-        names = {101: "Щербакова", 102: "Жабин", 103: "Афанасьев"}
+        names = {101: "Шарапова", 102: "Южный", 103: "Сафина"}
         png = draw_image.render(rounds, names, {101: 42, 103: 17},
                                 title="Проверка шрифта")
         from aiogram.types import BufferedInputFile
         await message.answer_document(
             BufferedInputFile(png, filename="proverka.png"),
-            caption="Фамилии нарочно с «щ», «ж» и «ф» — на них ломается "
-                    "чаще всего.")
+            caption="Пробная сетка.")
     except Exception as e:
         await message.answer(f"❌ Картинка не нарисовалась: "
                              f"<code>{html.escape(str(e))}</code>")
