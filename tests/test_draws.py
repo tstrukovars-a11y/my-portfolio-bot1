@@ -390,3 +390,37 @@ def test_the_launch_buttons_are_owner_only():
     import public
     assert not public.allowed("drpolls_1")
     assert not public.allowed("drask_7")
+
+
+# ---------------------------------------------------------------------
+# Порядок сообщений призёру
+# ---------------------------------------------------------------------
+#
+# Кнопка «Написать организатору» должна быть в ПОСЛЕДНЕМ сообщении.
+# Иначе переписка уезжает вверх и теряется под фотографией: человек
+# листает вниз и не находит, куда писать.
+
+
+def test_the_venue_photo_goes_before_the_prize():
+    import inspect
+    body = inspect.getsource(draws._tell_winner)
+    assert body.index("meet_photo") < body.index("prize[\"photo\"]")
+
+
+def test_the_button_rides_on_the_last_message():
+    import inspect
+    body = inspect.getsource(draws._tell_winner)
+    assert body.index("meet_photo") < body.index("reply_markup=markup")
+
+
+def test_the_place_is_not_repeated_under_both_messages():
+    """Сказано под фотографией — повторять в карточке приза незачем."""
+    import inspect
+    body = inspect.getsource(draws._tell_winner)
+    assert 'place_line = ""' in body
+
+
+def test_without_a_photo_the_place_still_reaches_the_winner():
+    import inspect
+    body = inspect.getsource(draws._tell_winner)
+    assert "if place_line:" in body

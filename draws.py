@@ -586,26 +586,38 @@ async def _tell_winner(bot: Bot, event, place: int, user_id: int,
                  "Вы совсем немного не дошли до пьедестала — "
                  "и мы приготовили вам кое-что в утешение."]
 
-    if event.get("meet_place"):
-        lines.append("")
-        lines.append(f"📍 {html.escape(event['meet_place'])}")
+    place_line = (f"📍 {html.escape(event['meet_place'])}"
+                  if event.get("meet_place") else "")
 
     prize = prizes.get(place)
-    caption = "\n".join(lines)
     markup = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
         text="✍️ Написать организатору",
         callback_data=f"drreply_{event['id']}")]])
+
     try:
+        # СНАЧАЛА МЕСТО, ПОТОМ ПРИЗ. Порядок важнее, чем кажется:
+        # кнопка «Написать организатору» должна оказаться в ПОСЛЕДНЕМ
+        # сообщении, иначе переписка уезжает вверх и теряется под
+        # фотографией. Человек листает вниз и не находит, куда писать.
+        if event.get("meet_photo"):
+            await bot.send_photo(
+                user_id, event["meet_photo"],
+                caption="📍 <b>Вручение призов состоится здесь</b>"
+                        + (f"\n\n{html.escape(event['meet_place'])}"
+                           if event.get("meet_place") else ""))
+            place_line = ""   # уже сказано под фотографией, не повторяем
+
+        if place_line:
+            lines.append("")
+            lines.append(place_line)
+        caption = "\n".join(lines)
+
         if prize and prize.get("photo"):
             await bot.send_photo(user_id, prize["photo"], caption=caption,
                                  reply_markup=markup)
         else:
             await bot.send_message(user_id, caption, reply_markup=markup)
-        # Фотография места — отдельным сообщением: в одном с призом она
-        # потерялась бы, а искать по ней будут глазами
-        if event.get("meet_photo"):
-            await bot.send_photo(user_id, event["meet_photo"],
-                                 caption="Вот это место.")
+
         await database.draw_winner_notified(event["id"], user_id)
         return True
     except Exception as e:
