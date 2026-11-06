@@ -300,3 +300,43 @@ def test_publishing_never_reaches_for_the_global_channel_directly():
 def test_the_channel_button_is_owner_only():
     import public
     assert not public.allowed("drchan_1")
+
+
+# ---------------------------------------------------------------------
+# Команда /draws должна отвечать
+# ---------------------------------------------------------------------
+#
+# Она молчала: _list_view возвращала словарь аргументов, который надо
+# было распаковывать через **, а в команде стояла одна звёздочка —
+# словарь уехал вторым позиционным аргументом. Обработчик падал, общий
+# перехватчик глотал ошибку, и команда выглядела мёртвой.
+
+
+def test_the_list_returns_a_ready_markup_not_a_kwargs_dict():
+    """Словарь аргументов — ловушка: его распаковку легко написать
+    неверно, и ошибка видна только в бою."""
+    import asyncio
+    import inspect
+    from aiogram.types import InlineKeyboardMarkup
+
+    monkey = {}
+    source = inspect.getsource(draws._list_view)
+    assert '"reply_markup"' not in source
+    assert '"parse_mode"' not in source
+    del monkey
+
+
+def test_both_entry_points_answer_the_same_way():
+    """Команда и кнопка «К списку» показывают один экран — значит и
+    зовут его одинаково."""
+    import inspect
+    command = inspect.getsource(draws.draws_command)
+    button = inspect.getsource(draws.draws_list)
+    for body in (command, button):
+        assert "reply_markup=markup" in body
+        assert "*await _list_view()" not in body
+
+
+def test_the_command_is_exactly_slash_draws():
+    import inspect
+    assert 'F.text == "/draws"' in inspect.getsource(draws)

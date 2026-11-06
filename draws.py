@@ -287,7 +287,8 @@ async def self_check(message: Message):
 async def draws_command(message: Message):
     if not config.is_admin(message.from_user.id):
         return
-    await message.answer(*await _list_view())
+    text, markup = await _list_view()
+    await message.answer(text, reply_markup=markup, parse_mode="HTML")
 
 
 async def _list_view():
@@ -306,8 +307,11 @@ async def _list_view():
         rows = []
     rows.append([InlineKeyboardButton(text="➕ Начать конкурс",
                                       callback_data="drnew")])
-    return "\n".join(lines), {"reply_markup": InlineKeyboardMarkup(
-        inline_keyboard=rows), "parse_mode": "HTML"}
+    # Возвращаем ГОТОВУЮ разметку, а не словарь аргументов. Словарь
+    # приходилось распаковывать через **, и в одном месте я написала
+    # * — он уехал вторым позиционным аргументом, обработчик упал, а
+    # команда выглядела мёртвой. Ошибку проглотил общий перехватчик.
+    return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 @router.callback_query(F.data == "draws_list")
@@ -316,8 +320,8 @@ async def draws_list(call: CallbackQuery):
         await call.answer()
         return
     await call.answer()
-    text, kw = await _list_view()
-    await call.message.answer(text, **kw)
+    text, markup = await _list_view()
+    await call.message.answer(text, reply_markup=markup, parse_mode="HTML")
 
 
 @router.callback_query(F.data.startswith("drevent_"))
