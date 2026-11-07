@@ -1227,6 +1227,55 @@ def _no_intro(text: str) -> str:
     return text
 
 
+# Отказы модели бывают двух родов, и путать их нельзя. Сеть моргнула —
+# завтра соберётся само, беспокоить незачем. А доступ закрыт или
+# кончились деньги — не пройдёт никогда, и каждый день молчания стоит
+# выпуска.
+BLOCKED_KEY = "ai_blocked"
+BLOCKED_MARKS = ("permission", "credit", "billing", "authentication",
+                 "invalid_api_key", "quota", "403", "401")
+
+
+def _is_blocked(error) -> bool:
+    """Отказ, который сам не рассосётся."""
+    text = f"{type(error).__name__} {error}".lower()
+    return any(mark in text for mark in BLOCKED_MARKS)
+
+
+async def alert_if_blocked(bot) -> bool:
+    """Сказать владелице, что модель недоступна. Раз в сутки, не чаще.
+
+    Чаще — и предупреждение превратится в шум, который перестают
+    читать; реже — и день пройдёт впустую.
+    """
+    if not config.ADMIN_ID:
+        return False
+    raw = await database.get_setting(BLOCKED_KEY) or ""
+    if "|" not in raw:
+        return False
+    day, detail = raw.split("|", 1)
+    today = (await _local_now()).strftime("%Y-%m-%d")
+    if day != today:
+        return False
+    if (await database.get_setting("ai_blocked_told") or "") == today:
+        return False
+
+    await database.set_setting("ai_blocked_told", today)
+    try:
+        await bot.send_message(
+            config.ADMIN_ID,
+            "⚠️ <b>Модель не отвечает, и сама это не исправит</b>\n\n"
+            f"<code>{detail[:200]}</code>\n\n"
+            "Без неё выпуск выходит без сводки — одни заголовки, — а "
+            "обзор генетики не выходит вовсе.\n\n"
+            "Проверьте console.anthropic.com → Plans &amp; Billing: чаще "
+            "всего это кончившиеся средства или отозванный ключ.")
+        return True
+    except Exception as e:
+        logging.warning(f"Предупреждение о модели не ушло: {e}")
+        return False
+
+
 async def _summary(headlines: str, prompt: str, key: str, what: str) -> str:
     """Несколько строк о том, что стоит за заголовками. Пусто — не вышло.
 
@@ -1264,12 +1313,19 @@ async def _summary(headlines: str, prompt: str, key: str, what: str) -> str:
             logging.info(f"Сводка «{what}» отброшена как служебная: {text[:80]}")
             text = ""
     except Exception as e:
-        # Молчим в канале, но говорим владельцу: иначе сводка пропадёт
+        # Молчим в канале, но говорим владелице: иначе сводка пропадёт
         # незаметно и причина останется только в логах Render.
         logging.error(f"Сводка «{what}» не собралась: {type(e).__name__}: {e}")
         await database.set_setting(
             "digest_last_error",
             f"сводка «{what}»: {type(e).__name__}: {str(e)[:120]}")
+        if _is_blocked(e):
+            # Отказ, который сам не пройдёт. Запись в настройку тут не
+            # помогает: её видно только тому, кто откроет /digest, — а
+            # поводов открывать нет, пока не заметишь пропажу.
+            await database.set_setting(
+                BLOCKED_KEY, f"{(await _local_now()).strftime('%Y-%m-%d')}|"
+                             f"{type(e).__name__}: {str(e)[:200]}")
         return ""
 
     if text:
@@ -1743,6 +1799,14 @@ async def publish_slot(bot: Bot, force: str = None) -> str:
     chat, thread = await _target()
     if not chat:
         return "канал не задан"
+
+    # Если модель закрыта, сказать об этом важнее, чем выпустить ещё
+    # один урезанный пост: иначе владелица узнаёт о пропаже по самой
+    # пропаже, через день или три.
+    try:
+        await alert_if_blocked(bot)
+    except Exception as e:
+        logging.warning(f"Проверка доступа к модели не прошла: {e}")
 
     # Новости и спорт живут вне разделов дайджеста, поэтому идут отдельно.
     if slot == "morning":
