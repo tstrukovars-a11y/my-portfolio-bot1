@@ -1276,6 +1276,22 @@ async def alert_if_blocked(bot) -> bool:
         return False
 
 
+def _stock_left(published: int, total: int) -> str:
+    """Сколько в разделе осталось неопубликованного.
+
+    Отрицательного остатка не бывает — а «осталось -1» в отчёте было.
+    Прятать это за нулём нельзя: число опубликованного обогнало
+    справочник, и это сигнал, а не помеха. Значит, либо из справочника
+    что-то убрали, либо один материал вышел дважды.
+    """
+    left = (total or 0) - (published or 0)
+    if left > 0:
+        return f"осталось {left}"
+    if left == 0:
+        return "справочник закончился"
+    return f"справочник закончился, лишних публикаций: {-left}"
+
+
 async def _summary(headlines: str, prompt: str, key: str, what: str) -> str:
     """Несколько строк о том, что стоит за заголовками. Пусто — не вышло.
 
@@ -2761,9 +2777,9 @@ async def digest_command(message: Message, bot: Bot):
         lines.append(f"{'✅' if done else '⬜️'} {at} — {titles.get(slot, slot)}")
     lines.append("")
     for section, data in stats.items():
-        left = data["total"] - data["published"]
         lines.append(f"{SECTION_TITLES.get(section, section)}: "
-                     f"{data['published']} из {data['total']}, осталось {left}")
+                     f"{data['published']} из {data['total']}, "
+                     f"{_stock_left(data['published'], data['total'])}")
 
     mirror = await database.get_setting(MIRROR_KEY)
     mirror_name = await _chat_name(bot, mirror) if mirror else ""

@@ -64,3 +64,37 @@ def test_the_check_runs_before_publishing():
     пост."""
     body = inspect.getsource(digest.publish_slot)
     assert "alert_if_blocked" in body
+
+
+# ---------------------------------------------------------------------
+# Остаток в справочнике
+# ---------------------------------------------------------------------
+#
+# В отчёте светилось «49 из 48, осталось -1». Отрицательного остатка не
+# бывает, но прятать это за нулём нельзя: число опубликованного обогнало
+# справочник, и это сигнал — либо из него что-то убрали, либо материал
+# вышел дважды.
+
+
+def test_a_normal_remainder_is_a_number():
+    assert digest._stock_left(5, 30) == "осталось 25"
+
+
+def test_an_exhausted_reference_says_so():
+    assert digest._stock_left(13, 13) == "справочник закончился"
+
+
+def test_an_overrun_is_named_not_hidden():
+    got = digest._stock_left(49, 48)
+    assert "-1" not in got
+    assert "лишних публикаций: 1" in got
+
+
+def test_an_empty_reference_does_not_look_broken():
+    assert digest._stock_left(0, 0) == "справочник закончился"
+
+
+def test_nothing_ever_shows_a_minus():
+    for published in range(0, 60):
+        for total in (0, 13, 48):
+            assert "-" not in digest._stock_left(published, total)
