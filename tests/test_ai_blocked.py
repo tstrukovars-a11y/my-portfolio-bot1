@@ -84,10 +84,13 @@ def test_an_exhausted_reference_says_so():
     assert digest._stock_left(13, 13) == "справочник закончился"
 
 
-def test_an_overrun_is_named_not_hidden():
+def test_a_deleted_item_is_named_not_hidden():
+    """Дважды один материал в журнал не ляжет — там первичный ключ по
+    разделу и номеру. Значит, опубликованное удалили из справочника,
+    и «лишняя публикация» было бы неправдой."""
     got = digest._stock_left(49, 48)
     assert "-1" not in got
-    assert "лишних публикаций: 1" in got
+    assert "удалено после публикации: 1" in got
 
 
 def test_an_empty_reference_does_not_look_broken():
