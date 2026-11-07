@@ -44,6 +44,35 @@ def _key(key: StorageKey) -> str:
     return f"{key.bot_id}:{key.chat_id}:{key.user_id}:{key.destiny}"
 
 
+# ПАМЯТЬ ВПЕРЕДИ БАЗЫ — и это не ускорение ради ускорения.
+#
+# aiogram спрашивает состояние у КАЖДОГО обновления, а у большинства
+# людей его нет вовсе. Ходить за этим в базу по четыре раза на сообщение
+# нельзя: пул здесь на три соединения, и он общий с утренним сбором
+# новостей. В первое же утро после переезда состояний в базу выпуск
+# остался без новостей и без генетики — запросы не дождались
+# соединения.
+#
+# Поэтому: читаем из памяти, в базу идём только при промахе (после
+# перезапуска) и при записи. Память переживает запросы, база —
+# перезапуск; вместе они дают то, что нужно.
+_cache = {}
+CACHE_LIMIT = 5000      # примерно на столько людей хватит одного процесса
+
+
+def _remember(key: str, state=None, data=None) -> None:
+    kept = _cache.get(key) or {"state": None, "data": {}}
+    if state is not Ellipsis:
+        kept["state"] = state
+    if data is not Ellipsis:
+        kept["data"] = data
+    if key not in _cache and len(_cache) >= CACHE_LIMIT:
+        # Переполнение памяти страшнее промаха: самый старый ключ
+        # уходит, а понадобится — прочитается из базы.
+        _cache.pop(next(iter(_cache)), None)
+    _cache[key] = kept
+
+
 class PgStorage(BaseStorage):
     """Хранилище состояний в Postgres.
 
@@ -54,6 +83,7 @@ class PgStorage(BaseStorage):
 
     async def set_state(self, key: StorageKey, state=None) -> None:
         name = state.state if isinstance(state, State) else state
+        _remember(_key(key), state=name, data=Ellipsis)
         pool = await database.get_pool()
         if not pool:
             return
@@ -78,19 +108,14 @@ class PgStorage(BaseStorage):
             logging.warning(f"Состояние не сохранилось: {e}")
 
     async def get_state(self, key: StorageKey):
-        pool = await database.get_pool()
-        if not pool:
-            return None
-        try:
-            async with pool.acquire() as conn:
-                return await conn.fetchval(
-                    f"SELECT state FROM {database.SCHEMA}.{TABLE} "
-                    f"WHERE key = $1", _key(key))
-        except Exception as e:
-            logging.warning(f"Состояние не прочиталось: {e}")
-            return None
+        name = _key(key)
+        if name in _cache:
+            return _cache[name]["state"]
+        await self._load(name)
+        return _cache.get(name, {}).get("state")
 
     async def set_data(self, key: StorageKey, data: dict) -> None:
+        _remember(_key(key), state=Ellipsis, data=dict(data or {}))
         pool = await database.get_pool()
         if not pool:
             return
@@ -109,18 +134,29 @@ class PgStorage(BaseStorage):
             logging.warning(f"Данные диалога не сохранились: {e}")
 
     async def get_data(self, key: StorageKey) -> dict:
+        name = _key(key)
+        if name not in _cache:
+            await self._load(name)
+        return dict(_cache.get(name, {}).get("data") or {})
+
+    async def _load(self, name: str) -> None:
+        """Промах памяти — один поход в базу, и больше по этому ключу
+        мы туда не ходим. Промахи случаются только после перезапуска."""
         pool = await database.get_pool()
         if not pool:
-            return {}
+            _remember(name, state=None, data={})
+            return
         try:
             async with pool.acquire() as conn:
-                raw = await conn.fetchval(
-                    f"SELECT data FROM {database.SCHEMA}.{TABLE} "
-                    f"WHERE key = $1", _key(key))
-            return json.loads(raw) if raw else {}
+                row = await conn.fetchrow(
+                    f"SELECT state, data FROM {database.SCHEMA}.{TABLE} "
+                    f"WHERE key = $1", name)
+            _remember(name,
+                      state=row["state"] if row else None,
+                      data=json.loads(row["data"]) if row and row["data"] else {})
         except Exception as e:
-            logging.warning(f"Данные диалога не прочитались: {e}")
-            return {}
+            logging.warning(f"Состояние не прочиталось: {e}")
+            _remember(name, state=None, data={})
 
     async def close(self) -> None:
         """Пул закрывает сам database — здесь закрывать нечего."""
@@ -143,6 +179,9 @@ async def forget_old(days: int = 7) -> int:
                 f"DELETE FROM {database.SCHEMA}.{TABLE} "
                 f"WHERE updated_at < NOW() - ($1 || ' days')::interval",
                 str(int(days)))
+        # И из памяти тоже: иначе забытый диалог останется жить в
+        # процессе и поймает человека, хотя в базе его уже нет.
+        _cache.clear()
         return int(status.rsplit(" ", 1)[-1]) if status else 0
     except Exception as e:
         logging.warning(f"Старые состояния не убрались: {e}")

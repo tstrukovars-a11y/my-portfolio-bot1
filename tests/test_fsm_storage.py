@@ -91,3 +91,96 @@ def test_the_dispatcher_falls_back_to_memory():
     body = pathlib.Path("main.py").read_text()
     assert "Dispatcher(storage=fsm_storage.PgStorage())" in body
     assert "dp = Dispatcher()" in body
+
+
+# ---------------------------------------------------------------------
+# Память впереди базы
+# ---------------------------------------------------------------------
+#
+# aiogram спрашивает состояние у КАЖДОГО обновления, а у большинства
+# людей его нет. Пул здесь на три соединения и общий с утренним сбором
+# новостей: в первое же утро после переезда состояний в базу выпуск
+# остался без новостей и без генетики — запросы не дождались соединения.
+
+
+class _CountingPool:
+    def __init__(self):
+        self.trips = 0
+
+        class Conn:
+            async def fetchrow(_s, *a):
+                self.trips += 1
+                return None
+
+            async def execute(_s, *a):
+                self.trips += 1
+                return "OK"
+
+        class Acq:
+            async def __aenter__(_s):
+                return Conn()
+
+            async def __aexit__(_s, *a):
+                return False
+
+        self._acq = Acq
+
+    def acquire(self):
+        return self._acq()
+
+
+def _with_pool(monkeypatch):
+    pool = _CountingPool()
+    monkeypatch.setattr(fsm_storage.database, "get_pool",
+                        lambda: asyncio.sleep(0, result=pool))
+    fsm_storage._cache.clear()
+    return pool
+
+
+def test_repeated_updates_do_not_hit_the_database(monkeypatch):
+    """Главная причина утренней поломки: по четыре запроса на каждое
+    сообщение при пуле из трёх соединений."""
+    pool = _with_pool(monkeypatch)
+    storage = fsm_storage.PgStorage()
+    for _ in range(20):
+        asyncio.run(storage.get_state(KEY))
+        asyncio.run(storage.get_data(KEY))
+    assert pool.trips == 1, "промах должен быть один, после перезапуска"
+
+
+def test_a_saved_state_is_read_from_memory(monkeypatch):
+    pool = _with_pool(monkeypatch)
+    storage = fsm_storage.PgStorage()
+    asyncio.run(storage.set_state(KEY, "Filling:note"))
+    before = pool.trips
+    for _ in range(5):
+        assert asyncio.run(storage.get_state(KEY)) == "Filling:note"
+    assert pool.trips == before, "чтение из памяти не должно ходить в базу"
+
+
+def test_writing_still_reaches_the_database(monkeypatch):
+    """Память переживает запросы, база — перезапуск. Нужно и то и другое."""
+    pool = _with_pool(monkeypatch)
+    storage = fsm_storage.PgStorage()
+    asyncio.run(storage.set_state(KEY, "Filling:years"))
+    assert pool.trips >= 1
+
+
+def test_data_survives_in_memory_between_calls(monkeypatch):
+    _with_pool(monkeypatch)
+    storage = fsm_storage.PgStorage()
+    asyncio.run(storage.set_data(KEY, {"match_id": "42"}))
+    assert asyncio.run(storage.get_data(KEY)) == {"match_id": "42"}
+
+
+def test_the_cache_does_not_grow_without_bound():
+    """Переполнение памяти страшнее промаха."""
+    assert fsm_storage.CACHE_LIMIT > 0
+    body = inspect.getsource(fsm_storage._remember)
+    assert "CACHE_LIMIT" in body
+
+
+def test_forgetting_clears_memory_too():
+    """Иначе забытый диалог останется жить в процессе и поймает
+    человека, хотя в базе его уже нет."""
+    assert "_cache.clear()" in inspect.getsource(fsm_storage.forget_old)
