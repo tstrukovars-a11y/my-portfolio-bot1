@@ -1295,6 +1295,48 @@ def _stock_left(published: int, total: int) -> str:
     return f"справочник закончился, удалено после публикации: {-left}"
 
 
+@router.message(F.text.in_({"/aicheck", "/ai"}))
+async def ai_check(message: Message):
+    """Работает ли ключ модели — одним крошечным запросом.
+
+    Нужна после пополнения счёта: иначе о том, вернулся доступ или нет,
+    узнаёшь только наутро, по тому, вышла сводка или не вышла.
+    """
+    if not config.is_admin(message.from_user.id):
+        return
+
+    note = await message.answer("Проверяю ключ…")
+    try:
+        import translator
+        verdict = await translator.check_key()
+    except Exception as e:
+        verdict = f"проверка не прошла: {type(e).__name__}: {e}"
+
+    works = "рабочий" in verdict
+    if works:
+        # Доступ вернулся — снимаем тревогу, чтобы не висела.
+        await database.set_setting(BLOCKED_KEY, "")
+        await database.set_setting("ai_blocked_told", "")
+
+    lines = [("✅ " if works else "⚠️ ") + html.escape(verdict)]
+    if works:
+        lines.append("")
+        lines.append("Сводка и обзор генетики соберутся в свой час сами — "
+                     "перезапускать ничего не нужно.")
+        lines.append("")
+        lines.append("<i>Проверить прямо сейчас, не дожидаясь утра: "
+                     "<code>/digest сводка</code></i>")
+    else:
+        lines.append("")
+        lines.append("Пока так, выпуск выходит без сводки — одни "
+                     "заголовки, — а обзор генетики не выходит вовсе.")
+
+    try:
+        await note.edit_text("\n".join(lines))
+    except Exception:
+        await message.answer("\n".join(lines))
+
+
 async def _summary(headlines: str, prompt: str, key: str, what: str) -> str:
     """Несколько строк о том, что стоит за заголовками. Пусто — не вышло.
 
@@ -1349,6 +1391,12 @@ async def _summary(headlines: str, prompt: str, key: str, what: str) -> str:
 
     if text:
         await database.set_setting(key, f"{today}|{text}")
+        # Получилось — значит доступ вернулся. Снимаем тревогу сами,
+        # иначе она будет висеть до перезапуска и врать.
+        if await database.get_setting(BLOCKED_KEY):
+            await database.set_setting(BLOCKED_KEY, "")
+            await database.set_setting("ai_blocked_told", "")
+            logging.info("Доступ к модели восстановился")
     return text
 
 

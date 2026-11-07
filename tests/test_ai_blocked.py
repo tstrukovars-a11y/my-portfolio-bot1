@@ -101,3 +101,39 @@ def test_nothing_ever_shows_a_minus():
     for published in range(0, 60):
         for total in (0, 13, 48):
             assert "-" not in digest._stock_left(published, total)
+
+
+# ---------------------------------------------------------------------
+# Проверка ключа по команде
+# ---------------------------------------------------------------------
+#
+# После пополнения счёта о том, вернулся доступ или нет, иначе узнаёшь
+# только наутро — по тому, вышла сводка или не вышла.
+
+
+def test_there_is_a_command_to_check_the_key():
+    body = inspect.getsource(digest)
+    assert '"/aicheck"' in body
+
+
+def test_a_working_key_clears_the_alarm():
+    """Иначе тревога висит до перезапуска и врёт."""
+    body = inspect.getsource(digest.ai_check)
+    assert "BLOCKED_KEY" in body
+    assert "ai_blocked_told" in body
+
+
+def test_success_clears_the_alarm_by_itself():
+    """Не только по команде: сводка собралась — значит доступ вернулся."""
+    body = inspect.getsource(digest._summary)
+    assert "Доступ к модели восстановился" in body
+
+
+def test_the_check_is_owner_only():
+    body = inspect.getsource(digest.ai_check)
+    assert "config.is_admin" in body
+
+
+def test_a_failed_check_says_what_is_lost():
+    body = inspect.getsource(digest.ai_check)
+    assert "без сводки" in body
