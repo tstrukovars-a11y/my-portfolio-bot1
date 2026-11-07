@@ -137,3 +137,49 @@ def test_the_check_is_owner_only():
 def test_a_failed_check_says_what_is_lost():
     body = inspect.getsource(digest.ai_check)
     assert "без сводки" in body
+
+
+# ---------------------------------------------------------------------
+# Источники в служебном экране
+# ---------------------------------------------------------------------
+#
+# Лента отдаёт строки вида «• [заголовок](ссылка)», а разбор искал
+# строку, начинающуюся со скобки: маркер ему мешал, совпадения не было,
+# и строка уходила в запасную ветку — та приписывала второй маркер.
+# В служебном экране светилось «• •», да ещё и ссылка не становилась
+# ссылкой.
+
+LENTA = ("• [Genomic data in the All of Us Research Program](https://a.test/1)\n"
+         "• [Genomics - AbbVie](https://b.test/2)")
+
+
+def test_the_bullet_is_not_doubled():
+    assert "• •" not in digest._sources_html(LENTA)
+
+
+def test_a_marked_line_still_becomes_a_link():
+    got = digest._sources_html(LENTA)
+    assert '<a href="https://a.test/1">' in got
+    assert "Genomic data" in got
+
+
+def test_a_line_without_a_marker_also_works():
+    """Разные источники форматируют по-разному — полагаться на маркер
+    нельзя ни в ту, ни в другую сторону."""
+    got = digest._sources_html("[Заголовок](https://c.test/3)")
+    assert '<a href="https://c.test/3">' in got
+
+
+def test_a_line_without_a_link_keeps_one_bullet():
+    got = digest._sources_html("• Просто заголовок без ссылки")
+    assert got == "• Просто заголовок без ссылки"
+
+
+def test_empty_lines_are_skipped():
+    got = digest._sources_html("\n•\n   \n[Т](https://d.test/4)")
+    assert got.count("•") == 1
+
+
+def test_a_dash_marker_is_handled_too():
+    got = digest._sources_html("- [Заголовок](https://e.test/5)")
+    assert got.startswith("• <a href=")

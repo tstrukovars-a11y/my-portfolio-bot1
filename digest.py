@@ -1749,14 +1749,26 @@ def _sources_html(headlines: str) -> str:
     Лента приходит в markdown, а служебные сообщения бот шлёт в HTML:
     без перевода читатель увидел бы квадратные скобки вместо ссылок.
     """
+    # Срез по ТРЁМ НЕПУСТЫМ, а не по трём строкам: пустая строка в ленте
+    # съедала место источника, и настоящая ссылка до экрана не доходила.
     out = []
-    for line in headlines.split("\n")[:GEN_HEADLINES]:
-        match = re.match(r"\s*\[(.+?)\]\((https?://[^)]+)\)", line)
+    for line in headlines.split("\n"):
+        if len(out) >= GEN_HEADLINES:
+            break
+        # Маркер снимаем ПЕРЕД разбором. Лента отдаёт строки вида
+        # «• [заголовок](ссылка)», а разбор искал строку, начинающуюся
+        # со скобки: маркер ему мешал, совпадения не было, и строка
+        # уходила в запасную ветку — та приписывала второй маркер.
+        # В служебном экране светилось «• •».
+        line = line.strip().lstrip("•").lstrip("-").strip()
+        if not line:
+            continue
+        match = re.match(r"\[(.+?)\]\((https?://[^)]+)\)", line)
         if match:
             out.append(f'• <a href="{html.escape(match.group(2))}">'
                        f'{html.escape(match.group(1))}</a>')
-        elif line.strip():
-            out.append(f"• {html.escape(line.strip())}")
+        else:
+            out.append(f"• {html.escape(line)}")
     return "\n".join(out)
 
 
