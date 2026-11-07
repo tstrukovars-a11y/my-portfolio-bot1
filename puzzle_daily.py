@@ -57,6 +57,50 @@ def broken(puzzle) -> str:
     return ""
 
 
+async def health() -> dict:
+    """Что с банком задач: сколько всего, сколько вышло, что негодно.
+
+    Нужно потому, что отказ выпуска был невидим. Задача без верного
+    ответа молча выбрасывается из отбора, и если негодны все, слот
+    каждый день возвращает «банк задач пуст» — в лог Render, куда никто
+    не смотрит. Со стороны это выглядит как «головоломки перестали
+    выходить», без единой подсказки почему.
+    """
+    all_puzzles = await database.get_all_puzzles()
+    used = await database.published_puzzle_ids()
+    bad = []
+    for puzzle in all_puzzles:
+        why = broken(puzzle)
+        if why:
+            bad.append((puzzle["id"], why))
+    good = [p for p in all_puzzles if not broken(p)]
+    return {
+        "total": len(all_puzzles),
+        "good": len(good),
+        "published": len([p for p in good if p["id"] in used]),
+        "fresh": len([p for p in good if p["id"] not in used]),
+        "broken": bad,
+    }
+
+
+def health_line(state: dict) -> str:
+    """Одна строка для отчёта — и сразу видно, почему молчит."""
+    if not state["total"]:
+        return "🧩 Задачи: банк пуст — пополните через /puzzles"
+    if not state["good"]:
+        return (f"🧩 Задачи: {state['total']} в банке, но НИ ОДНА не годится "
+                f"к выпуску")
+    line = (f"🧩 Задачи: {state['published']} из {state['good']}, "
+            f"новых осталось {state['fresh']}")
+    if state["fresh"] == 0:
+        line += " — пойдут по второму кругу"
+    if state["broken"]:
+        line += f"\n   ⚠️ негодных: {len(state['broken'])}"
+        for puzzle_id, why in state["broken"][:3]:
+            line += f"\n   №{puzzle_id}: {why}"
+    return line
+
+
 async def _pick():
     """Задача, которой ещё не было в канале. Кончились — берём давнюю."""
     bank = [p for p in await database.get_all_puzzles() if not broken(p)]

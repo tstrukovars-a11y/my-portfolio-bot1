@@ -2064,6 +2064,11 @@ async def publish_slot(bot: Bot, force: str = None) -> str:
         result = await puzzle_daily.publish(bot, chat, thread)
         if not result.startswith(("ошибка", "банк", "у задачи")):
             await _mark_slot(slot)
+        else:
+            # Причина отказа уходила только в лог Render. Теперь она
+            # видна там же, где человек её ищет, — в /digest.
+            await database.set_setting("digest_last_error",
+                                       f"задача дня: {result}")
         return result
 
     if slot == "art":
@@ -2843,6 +2848,16 @@ async def digest_command(message: Message, bot: Bot):
         lines.append(f"{SECTION_TITLES.get(section, section)}: "
                      f"{data['published']} из {data['total']}, "
                      f"{_stock_left(data['published'], data['total'])}")
+
+    # Задачи считаются иначе: у них свой журнал выпусков, и в общий
+    # список разделов они не укладываются. А видеть их надо — отказ
+    # выпуска был невидим, и «головоломки перестали выходить»
+    # приходилось замечать на глаз.
+    try:
+        import puzzle_daily
+        lines.append(puzzle_daily.health_line(await puzzle_daily.health()))
+    except Exception as e:
+        logging.warning(f"Состояние банка задач не прочиталось: {e}")
 
     mirror = await database.get_setting(MIRROR_KEY)
     mirror_name = await _chat_name(bot, mirror) if mirror else ""
