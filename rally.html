@@ -145,6 +145,11 @@ drawLevels();
 const M = () => W * 0.07;                 // поля за боковыми линиями
 const NET = () => H / 2;
 const R_BALL = () => Math.max(6, W * 0.019);
+// Ниже этой скорости летящий мяч не гасим: иначе укороченный повисает,
+// не долетев до точки падения, и розыгрыш не кончается. Порог взят с
+// запасом над тем, по которому мяч считается вставшим (H * 0.0014),
+// чтобы после отскока правило всё-таки срабатывало.
+const FLIGHT_MIN = () => H * 0.0030;
 const R_MAN = () => Math.max(14, W * 0.055);   // игрок — круг, а не линия
 const REACH = () => R_MAN() * 1.55;            // радиус, в котором бьют
 
@@ -177,7 +182,7 @@ let fvx = 0, fvy = 0;              // сглаженная скорость па
 function serve(toMe){
   const y = toMe ? NET() - H * 0.18 : NET() + H * 0.18;
   ball = { x: W / 2, y, vx: 0, vy: 0, spin: 0, r: R_BALL(), live: false,
-           land: null, bounced: false };
+           land: null, bounced: false, age: 0 };
   serveTo = toMe;
   trail = [];
   setTimeout(() => {
@@ -189,6 +194,7 @@ function serve(toMe){
     ball.land = { x: W / 2 + ball.vx * 24,
                   y: toMe ? NET() + H * 0.22 : NET() - H * 0.22 };
     ball.bounced = false;
+    ball.age = 0;
     ball.live = true;
     lastHit = toMe ? "foe" : "me";
   }, 700);
@@ -325,6 +331,7 @@ function hitByMe(){
   ball.land = { x: ball.x + ball.vx * flight + ball.spin * flight * flight * 0.25,
                 y: reachY };
   ball.bounced = false;
+  ball.age = 0;
   lastHit = "me";
   rally += 1;
   bestRally = Math.max(bestRally, rally);
@@ -353,6 +360,7 @@ function hitByFoe(){
   // Поэтому слабый соперник иногда мажет сам, без вашей помощи.
   ball.land = { x: aim, y: H * (drop ? 0.62 : 0.92) };
   ball.bounced = false;
+  ball.age = 0;
   lastHit = "foe";
   rally += 1;
   bestRally = Math.max(bestRally, rally);
@@ -441,7 +449,18 @@ function step(){
     ball.spin *= 0.985;
     ball.x += ball.vx;
     ball.y += ball.vy;
-    if (ball.drop){ ball.vy *= 0.975; ball.vx *= 0.975; }
+    // Укороченный гаснет в полёте — но не до нуля. Затухание
+    // экспоненциальное, и оставшийся путь у мяча конечен: v/(1-0.975),
+    // то есть сорок текущих скоростей. Если до точки падения дальше,
+    // мяч до неё не долетает никогда. Он повисал посреди корта, а
+    // правило про вставший мяч ждёт отскока — и розыгрыш не кончался
+    // вовсе. Поэтому до отскока скорость ниже порога не опускаем:
+    // мяч доползает до корта и отскакивает, как в жизни. После
+    // отскока гасим до нуля — там это и должно заканчиваться очком.
+    if (ball.drop && (ball.bounced
+                      || Math.hypot(ball.vx, ball.vy) > FLIGHT_MIN())){
+      ball.vy *= 0.975; ball.vx *= 0.975;
+    }
 
     trail.push({ x: ball.x, y: ball.y });
     if (trail.length > 9) trail.shift();
@@ -513,6 +532,17 @@ function step(){
   // достаточно слегка поменять затухание или порог — и мяч «встаёт» в
   // воздухе, не коснувшись корта. Сейчас до этого не доходит по
   // числам, но держится это на совпадении, а не на правиле.
+  // Страховка от зависания. Правила выше покрывают всё, что мы знаем,
+  // но розыгрыш, который не кончается, — худшая из поломок: игра
+  // выглядит сломанной, а что делать, непонятно. Полторы тысячи кадров
+  // — это секунд двадцать пять, вдвое дольше самого длинного честного
+  // розыгрыша.
+  if (++ball.age > 1500){
+    const mine = ball.y > NET();
+    point(!mine, mine ? "Не добежали" : "Соперник не добежал");
+    return;
+  }
+
   if (ball.bounced && Math.hypot(ball.vx, ball.vy) < H * 0.0014){
     const mine = ball.y > NET();          // на чьей половине замер
     // НАЗЫВАЕМ УДАР, А НЕ ПОЛОЖЕНИЕ МЯЧА. «Мяч встал» описывает

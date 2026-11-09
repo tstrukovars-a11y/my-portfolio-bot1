@@ -113,3 +113,37 @@ def test_inline_without_bot_name_keeps_only_the_board(settings):
 def test_rally_payload_opens_the_game():
     import common
     assert common.DEEP_LINKS.get("rally") == "rally_open"
+
+
+# --- мяч не должен повисать ---------------------------------------------
+#
+# Правило «вставший мяч — проигранное очко» привязали к отскоку: мяч в
+# полёте остановиться не может. Оказалось, что в игре — может.
+# Укороченный гаснет экспоненциально, и весь оставшийся ему путь равен
+# сорока текущим скоростям. Если до точки падения дальше, мяч до неё не
+# долетает никогда: отскока нет, правило молчит, розыгрыш не кончается.
+#
+# Счётом по кадрам: укороченный соперника с задней линии не долетал ни
+# разу — висел посреди корта.
+
+def _game() -> str:
+    return open("rally.html", encoding="utf-8").read()
+
+
+def test_the_ball_keeps_enough_speed_to_land():
+    """До отскока затухание ограничено снизу — иначе мяч не долетит."""
+    source = _game()
+    assert "FLIGHT_MIN" in source, "порог минимальной скорости пропал"
+    start = source.index("if (ball.drop")
+    block = source[start:start + 260]
+    assert "ball.bounced" in block and "FLIGHT_MIN" in block, \
+        "укороченный снова гаснет до нуля ещё в полёте"
+
+
+def test_a_rally_cannot_last_forever():
+    """Страховка поверх правил: розыгрыш, который не кончается, —
+    худшая из поломок, потому что выглядит как сломанная игра."""
+    source = _game()
+    assert "ball.age" in source, "счётчик кадров розыгрыша пропал"
+    assert source.count("ball.age = 0") >= 3, \
+        "счётчик обнуляется не на каждом ударе — длинный честный розыгрыш оборвётся"
