@@ -964,13 +964,41 @@ DRAMA_PROMPT = (
 )
 
 
+PERSON_NOTE = {
+    "f": ("\n\nРечь идёт о женщине: «снялась», «проиграла», «сказала», "
+          "«была вынуждена». Мужской род здесь ошибка."),
+    "m": ("\n\nРечь идёт о мужчине: «снялся», «проиграл», «сказал», "
+          "«был вынужден»."),
+}
+
+
+def gender_of(name: str, tour: str = "") -> str:
+    """Пол игрока: по словарю имён, а незнакомое имя — по туру.
+
+    В одиночных сетках WTA играют женщины, в ATP мужчины, и этим же
+    признаком ниже выбирается «снялась» или «снялся». Для пересказа он
+    нужен ровно затем же: по-английски род не виден, по-русски без него
+    фразы не построить.
+    """
+    import players_ru
+    known = players_ru.gender(name)
+    if known:
+        return known
+    return {"wta": "f", "atp": "m"}.get((tour or "").lower(), "")
+
+
 async def _reason_ru(english: str, prompt: str = None,
-                     limit: int = None, max_tokens: int = 400) -> str:
+                     limit: int = None, max_tokens: int = 400,
+                     gender: str = "") -> str:
     """Пересказ по-русски. Пусто — значит, сказать нечего.
 
     Длину можно поднять: пересказ события укладывается в абзац, а речь
     с церемонии — нет, и обрезанная на полуслове благодарность тренеру
     хуже, чем её отсутствие.
+
+    Пол указывается отдельно: в английском источнике его может не быть
+    вовсе — «withdrew after the first set» одинаково про всех, а
+    по-русски надо выбрать род.
     """
     if not english.strip():
         return ""
@@ -984,7 +1012,7 @@ async def _reason_ru(english: str, prompt: str = None,
     try:
         answer = await client.messages.create(
             model="claude-haiku-4-5-20251001", max_tokens=max_tokens,
-            system=prompt or REASON_PROMPT,
+            system=(prompt or REASON_PROMPT) + PERSON_NOTE.get(gender or "", ""),
             messages=[{"role": "user", "content": english[:6000]}])
         text = (answer.content[0].text or "").strip().strip('"«»')
     except Exception as e:
@@ -1079,7 +1107,8 @@ async def _event_text(kind: str, match, tour: str) -> str:
             lines.append(f"Доиграли до <code>{html.escape(moment)}</code>.")
 
         reason, link = await _why_gone(tour, _side_name(who))
-        russian = await _reason_ru(reason)
+        russian = await _reason_ru(reason,
+                                   gender=gender_of(_side_name(who), tour))
         if russian:
             lines.append("")
             lines.append(html.escape(russian))
@@ -1133,7 +1162,9 @@ async def _event_text(kind: str, match, tour: str) -> str:
                      f"покидает {html.escape(where)}.")
 
     reason, link = await _why_gone(tour, _side_name(lose) if lose else "")
-    russian = await _reason_ru(reason) if reason else ""
+    russian = await _reason_ru(
+        reason, gender=gender_of(_side_name(lose) if lose else "", tour)
+    ) if reason else ""
     if russian:
         lines.append("")
         lines.append(html.escape(russian))
@@ -1347,7 +1378,8 @@ async def _news_event_text(tour: str, who: str, headline: str,
     drama = _is_drama((headline or "").lower())
     gathered, _ = await _why_gone(tour, who)
     source = gathered or f"{headline}. {description}\n\n{await _story(article_id)}"
-    recap = await _reason_ru(source, DRAMA_PROMPT if drama else None)
+    recap = await _reason_ru(source, DRAMA_PROMPT if drama else None,
+                             gender=gender_of(who, tour))
     if not recap:
         # Без пересказа остаётся английский заголовок — это не публикация
         # для русского канала, лучше промолчать.

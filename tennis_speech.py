@@ -42,6 +42,42 @@ SPEECH_PROMPT = (
     "В ответе — только перевод."
 )
 
+# Род. По-английски «I played well» звучит одинаково от всех, а
+# по-русски надо выбрать: «сыграл» или «сыграла». Без указания модель
+# выбирает мужской, и Свитолина в канале говорила о себе как мужчина.
+#
+# Речь с церемонии — не только о себе: игрок благодарит команду,
+# соперницу, семью. Поэтому правило касается слов о себе, а не всего
+# текста подряд.
+GENDER_RULE = {
+    "f": ("\n\nГоворит женщина. Все слова о себе — в женском роде: "
+          "«сыграла», «была готова», «устала», «счастлива», «рада», "
+          "«я первая». В английском рода нет, в русском он обязателен — "
+          "мужской род здесь ошибка. О других людях род — по ним самим."),
+    "m": ("\n\nГоворит мужчина. Все слова о себе — в мужском роде: "
+          "«сыграл», «был готов», «устал», «счастлив». О других людях "
+          "род — по ним самим."),
+}
+
+
+def prompt_for(gender: str) -> str:
+    """Задание переводчику с указанием рода говорящего.
+
+    Пол неизвестен — промпта не меняем: пусть модель решает по тексту,
+    чем будет уверенно ошибаться по указанию.
+    """
+    return SPEECH_PROMPT + GENDER_RULE.get(gender or "", "")
+
+
+def gender_of(name: str, tour: str = "") -> str:
+    """Пол говорящего — тем же способом, что и в сообщениях о снятиях.
+
+    Правило одно на весь бот и живёт в tennis_alerts: имя по словарю,
+    незнакомое — по туру.
+    """
+    import tennis_alerts
+    return tennis_alerts.gender_of(name, tour)
+
 
 def _surname(name: str) -> str:
     """Фамилия, по которой ищем подпись под цитатой"""
@@ -324,11 +360,11 @@ async def quotes_for(tour: str, name: str, limit: int = 2,
     return found
 
 
-async def _ru(text: str) -> str:
+async def _ru(text: str, gender: str = "") -> str:
     """Перевод речи. Длиннее обычного пересказа: речь — это абзац-два,
     и обрезанная на полуслове благодарность тренеру хуже, чем её нет."""
     import tennis_alerts
-    return await tennis_alerts._reason_ru(text, SPEECH_PROMPT,
+    return await tennis_alerts._reason_ru(text, prompt_for(gender),
                                           limit=SPEECH_MAX + 400,
                                           max_tokens=900)
 
@@ -347,8 +383,9 @@ async def block(tour: str, names: list) -> str:
         if not said:
             continue
         lines = [f"<b>{_html.escape(players_ru.ru(name))}</b>"]
+        gender = gender_of(name, tour)
         for quote in said:
-            translated = await _ru(quote)
+            translated = await _ru(quote, gender)
             lines.append(f"<i>«{_html.escape(quote)}»</i>")
             if translated:
                 lines.append(_html.escape(translated))

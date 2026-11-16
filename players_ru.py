@@ -8,6 +8,7 @@
 # Незнакомое имя остаётся латиницей. Непереведённое видно и чинится
 # добавлением строки; неверно переведённое выглядит как знание и живёт
 # годами.
+import logging
 import re
 
 _RU = {
@@ -175,6 +176,87 @@ _RU = {
     "Dane Sweeny": "Дейн Суини",
     "Tristan Schoolkate": "Тристан Скулкейт",
 }
+
+# Пол. В английском его в речи нет вовсе: «I played well» одинаково
+# звучит и от Синнера, и от Свитолиной, а по-русски нужно выбрать —
+# «сыграл» или «сыграла». Без этого признака перевод речи с церемонии
+# выходил мужским всегда.
+#
+# Пол записан ровно в одном месте — в разметке словаря выше, где строки
+# разложены по разделам «мужчины» и «женщины». Поэтому читаем её, а не
+# заводим второй список на сто имён: новое имя добавляют в словарь, во
+# второй список добавить забудут, и бот заговорит о женщине в мужском
+# роде. Разбор ограничен литералом _RU: ниже идут турниры и круги, и
+# заголовок раздела там означает другое.
+def _by_section() -> tuple:
+    """(английские имена женщин, английские имена мужчин)"""
+    import inspect
+    import sys
+    try:
+        source = inspect.getsource(sys.modules[__name__])
+    except Exception as e:  # исходник недоступен — решим по туру
+        logging.warning(f"Пол игроков не разобрался: {e}")
+        return set(), set()
+    women, men, inside, female = set(), set(), False, None
+    for line in source.splitlines():
+        stripped = line.strip()
+        if not inside:
+            inside = stripped.startswith("_RU = {")
+            continue
+        if stripped == "}":
+            break
+        if stripped.startswith("# женщины"):
+            female = True
+            continue
+        if stripped.startswith("# мужчины"):
+            female = False
+            continue
+        found = re.match(r'"([^"]+)"\s*:', stripped)
+        if found and female is not None:
+            (women if female else men).add(found.group(1).lower())
+    return women, men
+
+
+_WOMEN, _MEN = _by_section()
+
+# Те, кого в словаре действующих игроков нет: ветераны выставочных
+# турниров и тренеры. Их слова тоже переводим.
+_WOMEN_EXTRA = {"vesnina", "makarova", "myskina", "dementieva", "kournikova",
+                "chakvetadze", "petrova", "zvonareva", "kuznetsova",
+                "safina", "sharapova", "navratilova", "evert", "graf",
+                "williams", "hingis", "mauresmo"}
+
+_WOMEN_SURNAMES = {name.split()[-1] for name in _WOMEN} | _WOMEN_EXTRA
+_MEN_SURNAMES = {name.split()[-1] for name in _MEN} - _WOMEN_SURNAMES
+
+
+def gender(name: str) -> str:
+    """«f», «m» или пусто, если имя незнакомо.
+
+    Пустой ответ — не ошибка, а честное «не знаю»: решать тогда тому,
+    кто вызвал, по турниру. Соврать родом хуже, чем промолчать.
+    """
+    clean = (name or "").strip().lower()
+    if not clean:
+        return ""
+    if clean in _WOMEN:
+        return "f"
+    if clean in _MEN:
+        return "m"
+    # По фамилии — только когда имени и нет: «Svitolina», «E. Svitolina».
+    # При полном незнакомом имени фамилия подменяет человека, как Michael
+    # Zheng подменялся Чжэн Циньвэнь. Там цена ошибки была в написании, а
+    # здесь — в роде глагола.
+    words = clean.replace(".", ". ").split()
+    if len(words) > 1 and not all(len(w.rstrip(".")) <= 1 for w in words[:-1]):
+        return ""
+    surname = words[-1].rstrip(".") if words else ""
+    if surname in _WOMEN_SURNAMES:
+        return "f"
+    if surname in _MEN_SURNAMES:
+        return "m"
+    return ""
+
 
 # По фамилии — на случай, когда источник отдаёт имя иначе («I. Swiatek»,
 # «Swiatek I.»). Собирается из основного словаря, чтобы не расходиться.
