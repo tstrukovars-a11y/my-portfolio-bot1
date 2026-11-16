@@ -6888,3 +6888,187 @@ async def content_delete(section: str, item_id: int) -> bool:
     except Exception as e:
         logging.error(f"Материал не удалился: {e}")
         return False
+
+
+# =====================================================================
+# КОНКУРС: КТО ПРИВЁЛ БОЛЬШЕ ПОДПИСЧИКОВ
+# =====================================================================
+#
+# Две таблицы, и разделены они намеренно.
+#
+# В konkurs_members — те, кто сам нажал «участвую»: они знают, что их
+# имя попадёт в таблицу, и согласились на это. Отсюда берётся всё, что
+# видно людям.
+#
+# В konkurs_invites — приглашённые. Про них не хранится ничего, кроме
+# номера: ни имени, ни ссылки на профиль. Гость никуда не записывался и
+# показываться в таблицах не должен; номер нужен ровно затем, чтобы при
+# выходе из канала снять балл тому, кто его привёл. После конкурса эта
+# таблица чистится целиком.
+
+async def ensure_konkurs_tables():
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.konkurs_members (
+            user_id BIGINT PRIMARY KEY,
+            name TEXT,
+            icon TEXT,
+            link TEXT,
+            link_name TEXT,
+            phone TEXT,
+            blocked BOOLEAN DEFAULT FALSE,
+            winner BOOLEAN DEFAULT FALSE,
+            joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.konkurs_invites (
+            guest_id BIGINT PRIMARY KEY,
+            host_id BIGINT NOT NULL,
+            at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            left_at TIMESTAMP
+        )""")
+        await conn.execute(
+            f"CREATE INDEX IF NOT EXISTS konkurs_invites_host "
+            f"ON {SCHEMA}.konkurs_invites (host_id)")
+
+
+async def konkurs_join(user_id: int, name: str, icon: str,
+                       link: str, link_name: str) -> None:
+    """Записать участника. Повторное нажатие ссылку не меняет."""
+    await ensure_konkurs_tables()
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(f"""
+            INSERT INTO {SCHEMA}.konkurs_members
+                (user_id, name, icon, link, link_name)
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (user_id) DO UPDATE SET name = EXCLUDED.name
+        """, user_id, name, icon, link, link_name)
+
+
+async def konkurs_member(user_id: int):
+    await ensure_konkurs_tables()
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            f"SELECT * FROM {SCHEMA}.konkurs_members WHERE user_id = $1",
+            user_id)
+    return dict(row) if row else None
+
+
+async def konkurs_by_link(link_name: str):
+    """Участник, которому принадлежит пригласительная ссылка"""
+    await ensure_konkurs_tables()
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            f"SELECT * FROM {SCHEMA}.konkurs_members WHERE link_name = $1",
+            link_name)
+    return dict(row) if row else None
+
+
+async def konkurs_table(limit: int = 100) -> list:
+    """[(место в порядке убывания)] со счётом. Ушедшие гости не считаются."""
+    await ensure_konkurs_tables()
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(f"""
+            SELECT m.user_id, m.name, m.icon, m.blocked, m.winner,
+                   COUNT(i.guest_id) FILTER (WHERE i.left_at IS NULL) AS score
+            FROM {SCHEMA}.konkurs_members m
+            LEFT JOIN {SCHEMA}.konkurs_invites i ON i.host_id = m.user_id
+            GROUP BY m.user_id
+            ORDER BY score DESC, m.joined_at
+            LIMIT $1
+        """, limit)
+    return [dict(r) for r in rows]
+
+
+async def konkurs_guest_join(guest_id: int, host_id: int) -> bool:
+    """Гость пришёл по ссылке участника. False — если он уже чей-то.
+
+    Первый пригласивший остаётся навсегда. Иначе вышедшего и вернувшегося
+    по другой ссылке человека можно передавать между участниками, и
+    выиграет не тот, кто звал людей, а тот, кто договорился.
+    """
+    if guest_id == host_id:
+        return False
+    await ensure_konkurs_tables()
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        # Псевдоним обязателен: в ON CONFLICT ... WHERE на таблицу нельзя
+        # сослаться по схеме, только по имени или псевдониму.
+        done = await conn.execute(f"""
+            INSERT INTO {SCHEMA}.konkurs_invites AS inv (guest_id, host_id)
+            VALUES ($1, $2)
+            ON CONFLICT (guest_id) DO UPDATE
+                SET left_at = NULL
+                WHERE inv.host_id = $2
+        """, guest_id, host_id)
+    return done.endswith("1")
+
+
+async def konkurs_guest_left(guest_id: int):
+    """Гость вышел из канала. Возвращает того, у кого убавился балл."""
+    await ensure_konkurs_tables()
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetchval(f"""
+            UPDATE {SCHEMA}.konkurs_invites
+            SET left_at = CURRENT_TIMESTAMP
+            WHERE guest_id = $1 AND left_at IS NULL
+            RETURNING host_id
+        """, guest_id)
+
+
+async def konkurs_flag(user_id: int, field: str, value: bool) -> bool:
+    """Снять с конкурса или отметить победителем"""
+    if field not in ("blocked", "winner"):
+        return False
+    await ensure_konkurs_tables()
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        done = await conn.execute(
+            f"UPDATE {SCHEMA}.konkurs_members SET {field} = $2 "
+            f"WHERE user_id = $1", user_id, value)
+    return done.endswith("1")
+
+
+async def konkurs_set_phone(user_id: int, phone: str) -> bool:
+    """Телефон победителя — только тот, что человек отдал сам кнопкой"""
+    await ensure_konkurs_tables()
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        done = await conn.execute(
+            f"UPDATE {SCHEMA}.konkurs_members SET phone = $2 "
+            f"WHERE user_id = $1", user_id, phone)
+    return done.endswith("1")
+
+
+async def konkurs_counts() -> tuple:
+    """(участников, приведено сейчас)"""
+    await ensure_konkurs_tables()
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        people = await conn.fetchval(
+            f"SELECT COUNT(*) FROM {SCHEMA}.konkurs_members")
+        guests = await conn.fetchval(
+            f"SELECT COUNT(*) FROM {SCHEMA}.konkurs_invites "
+            "WHERE left_at IS NULL")
+    return int(people or 0), int(guests or 0)
+
+
+async def konkurs_forget_guests() -> int:
+    """Стереть приглашённых. Делается после раздачи призов.
+
+    Счёт к этому моменту уже сыгран, а номера людей, которые ни на что
+    не подписывались, хранить дальше незачем.
+    """
+    await ensure_konkurs_tables()
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        gone = await conn.fetchval(
+            f"SELECT COUNT(*) FROM {SCHEMA}.konkurs_invites")
+        await conn.execute(f"TRUNCATE {SCHEMA}.konkurs_invites")
+    return int(gone or 0)
