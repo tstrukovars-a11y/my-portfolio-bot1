@@ -36,6 +36,7 @@ import tennis_champion
 import tennis_highlights
 import tg_watch
 import owner
+import palmira
 import art_channel
 import art_market
 import banners
@@ -679,6 +680,7 @@ async def main():
     dp.include_router(tennis_highlights.router)
     dp.include_router(tg_watch.router)
     dp.include_router(owner.router)
+    dp.include_router(palmira.router)
     dp.include_router(weather.router)
     dp.include_router(book_find.router)
     dp.include_router(invite_card.router)

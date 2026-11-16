@@ -54,6 +54,7 @@ def menu_kb() -> InlineKeyboardMarkup:
         ("📋 Что выйдет сегодня", "own_today"),
         ("📣 Опубликовать сейчас", "own_pub"),
         ("🎾 Теннис", "own_tennis"),
+        ("🏛 Пальмира: кого объявили", "pal_home"),
         ("📂 Материалы: править и удалять", "admin_content"),
         ("🖼 Картины", "admin_art"),
         ("📚 Книги", "admin_books"),

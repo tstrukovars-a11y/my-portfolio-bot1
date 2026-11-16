@@ -130,7 +130,7 @@ async def check(bot: Bot) -> str:
     if not config.ADMIN_ID:
         return "владелец не задан"
     seen = await _seen()
-    sent, fresh = 0, []
+    sent, fresh, caught = 0, [], []
     first_run = not seen
 
     for name in await watched():
@@ -140,6 +140,15 @@ async def check(bot: Bot) -> str:
             if key in seen:
                 continue
             fresh.append(key)
+            # Имена теннисистов из чужого поста — в очередь на
+            # подтверждение. Сами по себе они никуда не публикуются:
+            # решение принимается в кабинете.
+            if not first_run and is_important(text):
+                try:
+                    import palmira
+                    caught += await palmira.catch(text, f"@{name}/{num}")
+                except Exception as e:
+                    logging.warning(f"Пальмира: имена из {key} — {e}")
             # Первый обход запоминает ленту молча: иначе при включении
             # прилетит сразу двадцать старых постов.
             if first_run or sent >= PER_RUN:
@@ -154,6 +163,16 @@ async def check(bot: Bot) -> str:
 
     if fresh:
         await _remember(fresh)
+    if caught:
+        try:
+            await bot.send_message(
+                config.ADMIN_ID,
+                "🏛 <b>Новые имена на подтверждении</b>\n\n"
+                + "\n".join(f"• {html.escape(x)}" for x in caught)
+                + "\n\nАнонс покажу целиком: /пальмира",
+                disable_web_page_preview=True)
+        except Exception as e:
+            logging.warning(f"Пальмира: имена не ушли — {e}")
     if first_run:
         return f"лента запомнена: {len(fresh)} постов, слежу дальше"
     return f"новых постов: {sent}" if sent else "нового нет"
