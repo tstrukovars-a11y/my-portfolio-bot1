@@ -222,16 +222,46 @@ def draft(name: str) -> str:
     return "\n".join(lines)
 
 
+async def schedule_lines() -> list:
+    """Расписание матчей — из того же места, где его ведёт конкурс.
+
+    Заводить его второй раз тут нельзя: расписание уже введено в
+    карточке конкурса, по нему участникам уходят вопросы. Две копии
+    разойдутся в первый же перенос матча, и в канале будет висеть
+    неверное время.
+    """
+    events = await database.draw_events_list(limit=5)
+    live = next((e for e in events if e.get("status") == "open"), None)
+    if not live:
+        return []
+
+    polls = await database.draw_polls_of_event(live["id"])
+    if not polls:
+        return []
+
+    lines = ["", "🎾 <b>Расписание</b>"]
+    for poll in polls:
+        when = poll.get("opens_at")
+        clock = when.strftime("%H:%M") if hasattr(when, "strftime") else ""
+        pair = f"{html.escape(poll.get('option_a') or '')} — " \
+               f"{html.escape(poll.get('option_b') or '')}"
+        lines.append(f"{clock} · {pair}" if clock else pair)
+    return lines
+
+
 async def list_text() -> str:
-    """Пост со списком заявленных"""
+    """Пост со списком заявленных и расписанием"""
     rows = await roster()
     lines = [f"📜 <b>Кто уже заявлен</b>",
-             f"«{TOURNAMENT}» · {WHEN}", ""]
+             f"«{TOURNAMENT}» · {WHEN}",
+             f"{WHERE}", ""]
     if not rows:
         lines.append("<i>пока никого</i>")
     else:
         for i, row in enumerate(rows, 1):
             lines.append(f"{i}. {html.escape(row.get('name', ''))}")
+
+    lines += await schedule_lines()
     lines += ["", "Список пополняется — обновляю этот пост."]
     return "\n".join(lines)
 
