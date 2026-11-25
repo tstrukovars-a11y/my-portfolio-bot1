@@ -152,6 +152,7 @@ class Adding(StatesGroup):
     waiting_name = State()
     waiting_text = State()
     fixing_name = State()
+    waiting_highlight = State()
 
 
 # ───────────────────────── хранение ─────────────────────────
@@ -407,6 +408,7 @@ async def home_kb() -> InlineKeyboardMarkup:
         ("📜 Список заявленных", "pal_list"),
         ("✍️ Добавить имя вручную", "pal_new"),
         ("📣 Выложить список в канал", "pal_post"),
+        ("📹 Хайлайт в канал", "pal_hl"),
     ])
     rows.append([InlineKeyboardButton(text="⇦ Назад", callback_data="own_menu")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -716,6 +718,127 @@ async def list_remove(call: CallbackQuery):
         f"🗑 {html.escape(gone.get('name', ''))} — убрано из списка.\n"
         "Пост в канале обновится кнопкой «Выложить список».",
         reply_markup=await home_kb())
+
+
+# ───────────────────────── хайлайты ─────────────────────────
+#
+# Три дня подряд в канал идут моменты с корта. Делать это пересылкой
+# из чужого канала нельзя — «Акцент» не лента перепечаток, — а
+# набирать подпись руками каждый раз значит писать по-разному: то с
+# названием турнира, то без, то с точкой, то без неё.
+#
+# Поэтому так: присылаете видео с подписью, бот показывает, как это
+# будет выглядеть, и после подтверждения выкладывает. Оформление
+# одинаковое у всех трёх дней, а решение всё равно за человеком: пост
+# в канал уходит один раз и правится плохо.
+
+MEDIA_SENDERS = {
+    "video": "send_video",
+    "animation": "send_animation",
+    "photo": "send_photo",
+    "video_note": "send_video",
+}
+
+
+def _media_of(message: Message):
+    """(вид, file_id) присланного — или (None, None)."""
+    if message.video:
+        return "video", message.video.file_id
+    if message.animation:
+        return "animation", message.animation.file_id
+    if message.photo:
+        return "photo", message.photo[-1].file_id
+    return None, None
+
+
+def highlight_caption(note: str) -> str:
+    """Подпись к моменту: турнир сверху, слова владелицы следом."""
+    lines = [f"🎾 <b>{html.escape(TOURNAMENT)}</b>"]
+    if note:
+        lines += ["", note]
+    return "\n".join(lines)
+
+
+@router.callback_query(F.data == "pal_hl")
+async def highlight_ask(call: CallbackQuery, state: FSMContext):
+    if not await _allowed(call):
+        return
+    await call.answer()
+    await state.set_state(Adding.waiting_highlight)
+    await call.message.answer(
+        "📹 <b>Момент с корта</b>\n\n"
+        "Пришлите видео или фотографию — подпись прямо к ней, одной "
+        "строкой. Название турнира добавлю сама, писать его не нужно.\n\n"
+        "<i>Покажу, как это будет выглядеть, и спрошу перед отправкой.</i>")
+
+
+@router.message(Adding.waiting_highlight)
+async def highlight_take(message: Message, state: FSMContext):
+    if not config.is_admin(message.from_user.id):
+        return
+
+    kind, file_id = _media_of(message)
+    if not kind:
+        await message.answer(
+            "Нужно видео или фотография. Пришлите их файлом или как "
+            "обычно — из галереи.")
+        return
+
+    try:
+        note = message.html_text
+    except (TypeError, AttributeError):
+        note = html.escape(message.caption or "")
+
+    await state.clear()
+    caption = highlight_caption((note or "").strip())
+
+    sender = getattr(message.bot, MEDIA_SENDERS[kind])
+    await sender(message.chat.id, file_id, caption=caption,
+                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                     InlineKeyboardButton(text="📣 В канал",
+                                          callback_data=f"palhl_go_{kind}"),
+                     InlineKeyboardButton(text="Отмена",
+                                          callback_data="pal_home"),
+                 ]]))
+    await database.set_setting("palmira_hl", json.dumps(
+        {"kind": kind, "file_id": file_id, "caption": caption},
+        ensure_ascii=False))
+
+
+@router.callback_query(F.data.startswith("palhl_go_"))
+async def highlight_publish(call: CallbackQuery, bot: Bot):
+    if not await _allowed(call):
+        return
+    raw = await database.get_setting("palmira_hl")
+    if not raw:
+        await call.answer("Момент потерялся — пришлите заново", show_alert=True)
+        return
+    try:
+        pending = json.loads(raw)
+    except Exception:
+        await call.answer("Момент потерялся — пришлите заново", show_alert=True)
+        return
+
+    import digest
+    chat, thread = await digest._target()
+    if not chat:
+        await call.answer("Канал не задан", show_alert=True)
+        return
+
+    await call.answer("Публикую…")
+    sender = getattr(bot, MEDIA_SENDERS.get(pending["kind"], "send_video"))
+    try:
+        await sender(chat, pending["file_id"], caption=pending["caption"],
+                     message_thread_id=thread)
+    except Exception as e:
+        logging.error(f"Пальмира: хайлайт не вышел — {e}")
+        await call.message.answer(f"🏛 Не вышло: {html.escape(str(e))}",
+                                  reply_markup=await home_kb())
+        return
+
+    await database.set_setting("palmira_hl", "")
+    await call.message.answer("🏛 Момент в канале.",
+                              reply_markup=await home_kb())
 
 
 @router.callback_query(F.data == "pal_post")
