@@ -439,7 +439,7 @@ def _text(kind, match, tour, monkeypatch, reason="", link=""):
     async def why(t, name):
         return reason, link
 
-    async def ru(english):
+    async def ru(english, prompt=None, gender=""):
         return "Снялся из-за травмы колена." if english else ""
 
     monkeypatch.setattr(ta, "_why_gone", why)
@@ -593,7 +593,7 @@ def test_an_event_without_a_recap_is_not_published(monkeypatch):
     чем выдать читателю строку, которую он не прочтёт."""
     import asyncio
 
-    async def nothing(english, prompt=None):
+    async def nothing(english, prompt=None, gender=""):
         return ""
 
     async def gathered(tour, name):
@@ -609,7 +609,7 @@ def test_an_event_without_a_recap_is_not_published(monkeypatch):
 def test_the_recap_reaches_the_channel(monkeypatch):
     import asyncio
 
-    async def recap(english, prompt=None):
+    async def recap(english, prompt=None, gender=""):
         return ("Медведев дисквалифицирован в полуфинале.\n"
                 "Мяч попал зрителю в лицо.\n"
                 "Он извинился перед пострадавшим.")

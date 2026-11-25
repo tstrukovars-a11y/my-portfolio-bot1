@@ -3868,6 +3868,10 @@ PERSONAL_TABLES = (
     "match_alerts", "match_picks", "lang_progress", "ai_limits",
     "user_answers", "puzzle_answers", "rally_scores", "tennis_scores",
     "race_scores",
+    # Участники конкурса: там имя и телефон. Таблицу завели позже
+    # остальных и сюда внести забыли — человек, попросивший себя
+    # удалить, оставался бы в ней вместе с номером.
+    "konkurs_members",
 )
 
 # Тут человек записан не под именем user_id. Пары «таблица — колонка»

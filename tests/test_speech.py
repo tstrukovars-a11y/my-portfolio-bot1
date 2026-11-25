@@ -58,7 +58,7 @@ def test_the_block_carries_the_original_and_the_translation(monkeypatch):
     async def said(tour, name, limit=2, others=()):
         return ["It was the longest week of my season."]
 
-    async def ru(text):
+    async def ru(text, gender=""):
         return "Это была самая длинная неделя сезона."
 
     monkeypatch.setattr(ts, "quotes_for", said)
@@ -76,7 +76,7 @@ def test_the_original_stays_even_without_a_translation(monkeypatch):
     async def said(tour, name, limit=2, others=()):
         return ["No regrets at all."]
 
-    async def silent(text):
+    async def silent(text, gender=""):
         return ""
 
     monkeypatch.setattr(ts, "quotes_for", said)

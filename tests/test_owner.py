@@ -71,7 +71,10 @@ def test_every_button_leads_somewhere_known():
     known = {"own_today", "own_pub", "own_tennis", "own_set", "own_menu",
              "go_home",
              "admin_content", "admin_art", "admin_books", "admin_plan",
-             "planstock", "admin_panel"}
+             "planstock", "admin_panel",
+             # Экраны конкурса и Пальмиры — их обработчики лежат в
+             # konkurs.py и palmira.py, и оба роутера включены в main.
+             "konk_home", "pal_home"}
     marks = [b.callback_data for row in owner.menu_kb().inline_keyboard
              for b in row]
     assert set(marks) <= known, f"некуда вести: {set(marks) - known}"

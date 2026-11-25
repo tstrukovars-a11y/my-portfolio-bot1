@@ -980,7 +980,6 @@ def gender_of(name: str, tour: str = "") -> str:
     нужен ровно затем же: по-английски род не виден, по-русски без него
     фразы не построить.
     """
-    import players_ru
     known = players_ru.gender(name)
     if known:
         return known
