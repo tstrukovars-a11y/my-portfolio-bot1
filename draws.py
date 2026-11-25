@@ -914,7 +914,17 @@ async def schedule_ask(call: CallbackQuery, state: FSMContext):
 async def schedule_save(message: Message, state: FSMContext):
     data = await state.get_data()
     event_id = data["event_id"]
-    good, bad = parse_schedule(message.text or "")
+    event = await database.draw_event(event_id=event_id)
+
+    # День берём из мероприятия, а не из сегодняшнего числа. Расписание
+    # заводят заранее: введённое за два дня до турнира получило бы
+    # сегодняшнюю дату, и вопросы либо ушли бы в ту же минуту, либо не
+    # ушли бы вовсе. Узнали бы об этом в день матчей.
+    day = (event or {}).get("event_date")
+    if hasattr(day, "date"):
+        day = day.date()
+
+    good, bad = parse_schedule(message.text or "", day=day)
 
     if not good:
         await message.answer(
@@ -935,11 +945,14 @@ async def schedule_save(message: Message, state: FSMContext):
             created += 1
 
     lines = [f"✅ Заведено матчей: {created}."]
+    if good:
+        # Дату показываем сразу: если мероприятие заведено не на тот
+        # день, это единственное место, где ошибку ещё можно поймать.
+        lines.append(f"Все на {good[0][0].strftime('%d.%m.%Y')}.")
     if bad:
         lines.append("")
         lines.append("<b>Не разобрала эти строки:</b>")
         lines += [f"<code>{html.escape(x)}</code>" for x in bad[:8]]
-    event = await database.draw_event(event_id=event_id)
     await message.answer("\n".join(lines),
                          reply_markup=_panel_kb(event) if event else None,
                          parse_mode="HTML")
