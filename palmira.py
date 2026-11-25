@@ -38,6 +38,7 @@ WHERE = "КСК «Арена», Санкт-Петербург"
 ROSTER_KEY = "palmira_roster"      # подтверждённые, JSON
 QUEUE_KEY = "palmira_queue"        # ждут решения, JSON
 LIST_MSG_KEY = "palmira_list_msg"  # id поста со списком в канале
+SEEN_KEY = "palmira_seen"          # кого уже предлагали — чтобы не дважды
 
 # Объявленные на сегодня. Попадают не в список, а в очередь на
 # подтверждение: пусть первый же заход в кабинет пройдёт тем же путём,
@@ -143,14 +144,32 @@ async def roster() -> list:
 
 
 async def queue() -> list:
-    """Очередь на подтверждение. Первое обращение кладёт объявленных."""
+    """Очередь на подтверждение.
+
+    Имена из заготовки доезжают не только в первый раз. Состав
+    объявляют по частям, иногда за день до турнира, — а раньше
+    заготовка подставлялась ровно однажды, при самом первом
+    обращении. Дописанное в неё после этого не попадало в очередь
+    никогда, и в канал ушёл список из шести человек вместо десяти.
+
+    Повторно никого не предлагаем: тех, кто уже в списке, в очереди
+    или был из неё убран, помним отдельно. Иначе убранное имя
+    возвращалось бы при каждом заходе в кабинет.
+    """
     raw = await database.get_setting(QUEUE_KEY)
-    if raw is None:
-        seeded = [{"name": n, "src": "объявлено организаторами",
-                   "found": date.today().isoformat()} for n in SEED]
-        await _save(QUEUE_KEY, seeded)
-        return seeded
-    return await _load(QUEUE_KEY)
+    rows = await _load(QUEUE_KEY) if raw is not None else []
+
+    seen = {_norm(x) for x in await _load(SEEN_KEY)}
+    seen |= {_norm(r.get("name")) for r in rows}
+    seen |= {_norm(r.get("name")) for r in await roster()}
+
+    fresh = [n for n in SEED if _norm(n) not in seen]
+    if fresh or raw is None:
+        rows = rows + [{"name": n, "src": "объявлено организаторами",
+                        "found": date.today().isoformat()} for n in fresh]
+        await _save(QUEUE_KEY, rows)
+        await _save(SEEN_KEY, sorted(seen | {_norm(n) for n in fresh}))
+    return rows
 
 
 async def known(name: str) -> bool:
@@ -297,7 +316,8 @@ async def list_text() -> str:
             lines += ["", TBA_NOTE]
 
     lines += await schedule_lines()
-    lines += ["", "Список пополняется — обновляю этот пост."]
+    lines += ["", "После публикации пост будет обновлён.",
+              "Следите за анонсом и примите участие в розыгрыше."]
     return "\n".join(lines)
 
 
