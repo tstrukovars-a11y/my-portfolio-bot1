@@ -180,6 +180,22 @@ async def _panel_text(event) -> str:
     lines = [f"🎁 <b>{html.escape(event['title'])}</b>",
              f"<code>{html.escape(event['slug'])}</code> · {event['status']}"]
     lines.append("")
+
+    # Куда уйдёт объявление — первой строкой, до призов и мест. После
+    # репетиции у мероприятия остаётся свой закрытый канал, и по
+    # карточке этого было не видно: разница между «вышло в „Акценте“» и
+    # «вышло в пустой репетиционный канал» обнаруживалась уже после
+    # нажатия.
+    own = event.get("channel_id")
+    if own:
+        lines.append(f"📢 Канал: свой, <code>{own}</code> — не «Акцент»")
+    else:
+        lines.append("📢 Канал: общий, «Акцент»")
+
+    if event.get("event_date"):
+        lines.append(f"📅 День: {event['event_date']}")
+
+    lines.append("")
     lines.append(f"Призы заведены: {len(prizes)}")
     lines.append(f"Призёров определено: {len(winners)}")
     if event.get("meet_place"):
