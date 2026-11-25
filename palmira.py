@@ -44,8 +44,16 @@ LIST_MSG_KEY = "palmira_list_msg"  # id поста со списком в кан
 # которым пойдут все следующие.
 SEED = ["Александр Бублик", "Елена Веснина", "Диана Шнайдер",
         "Карен Хачанов", "Анастасия Потапова", "Юлия Путинцева",
-        "Камилла Рахимова", "Анастасия Пушкарева",
+        "Камилла Рахимова", "Анна Пушкарева",
         "Янко Типсаревич", "Томми Пол"]
+
+# Турнир командный, и двое приехали не играть. Назвать капитана
+# участником матчей — ошибка, которую заметят первыми те, кто купил
+# билет ради него: в расписании его фамилии нет ни разу.
+ROLES = {
+    "елена веснина": "капитан команды",
+    "янко типсаревич": "капитан команды",
+}
 
 # Кого стоит узнавать в чужих постах сверх словаря действующих игроков:
 # на выставочный турнир приезжают и те, кто давно не в рейтинге.
@@ -229,7 +237,9 @@ async def catch(text: str, src: str = "") -> list:
 def draft(name: str) -> str:
     """Анонс одного участника"""
     fact = FACTS.get(_norm(name), "")
-    lines = [f"🎾 <b>{html.escape(name)}</b> — на «{TOURNAMENT_IN}»", ""]
+    role = ROLES.get(_norm(name), "")
+    where = f"{role} на «{TOURNAMENT_IN}»" if role else f"на «{TOURNAMENT_IN}»"
+    lines = [f"🎾 <b>{html.escape(name)}</b> — {where}", ""]
     if fact:
         lines += [html.escape(fact), ""]
     lines += [f"{WHEN}, {WHERE}.", "",
@@ -274,7 +284,10 @@ async def list_text() -> str:
         lines.append("<i>пока никого</i>")
     else:
         for i, row in enumerate(rows, 1):
-            lines.append(f"{i}. {html.escape(row.get('name', ''))}")
+            name = row.get("name", "")
+            role = ROLES.get(_norm(name), "")
+            lines.append(f"{i}. {html.escape(name)}"
+                         + (f" — {role}" if role else ""))
 
     lines += await schedule_lines()
     lines += ["", "Список пополняется — обновляю этот пост."]
