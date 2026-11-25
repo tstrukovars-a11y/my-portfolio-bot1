@@ -86,6 +86,7 @@ ASK = ("✍️ <b>Имя участника</b>\n\n"
 class Adding(StatesGroup):
     waiting_name = State()
     waiting_text = State()
+    fixing_name = State()
 
 
 # ───────────────────────── хранение ─────────────────────────
@@ -391,6 +392,7 @@ def card_kb(i: int) -> InlineKeyboardMarkup:
     rows = _rows([
         ("✅ Опубликовать анонс", f"pal_go_{i}"),
         ("➕ Только в список, без анонса", f"pal_add_{i}"),
+        ("✏️ Исправить имя", f"pal_name_{i}"),
         ("✍️ Править текст", f"pal_edit_{i}"),
         ("🗑 Убрать из очереди", f"pal_no_{i}"),
     ])
@@ -486,6 +488,61 @@ async def card_drop(call: CallbackQuery):
                               "очереди.", reply_markup=await home_kb())
 
 
+# Имя бот берёт из чужого поста и ошибается: рядом с фамилией может
+# стоять лишнее слово, второй игрок или кусок рекламы. До сих пор
+# выбор был между «опубликовать неверно» и «выбросить» — а человек-то
+# заявлен, и место в списке ему полагается.
+@router.callback_query(F.data.startswith("pal_name_"))
+async def card_rename(call: CallbackQuery, state: FSMContext):
+    if not await _allowed(call):
+        return
+    i = int(call.data.rsplit("_", 1)[1])
+    row, _ = await _entry(i)
+    if not row:
+        await call.answer("Уже обработано")
+        return
+    await call.answer()
+    await state.set_state(Adding.fixing_name)
+    await state.update_data(pal_index=i)
+    await call.message.answer(
+        f"✏️ Сейчас: <b>{html.escape(row.get('name', ''))}</b>\n\n"
+        "Пришлите имя как надо — одного человека, без лишних слов.")
+
+
+@router.message(Adding.fixing_name)
+async def save_name(message: Message, state: FSMContext):
+    if not config.is_admin(message.from_user.id):
+        return
+    data = await state.get_data()
+    await state.clear()
+    i = int(data.get("pal_index", -1))
+    row, rows = await _entry(i)
+    if not row:
+        await message.answer("Имя уже обработано.",
+                             reply_markup=await home_kb())
+        return
+
+    fixed = (message.text or "").strip()
+    if not fixed:
+        await message.answer("Пустое имя не приму.",
+                             reply_markup=await home_kb())
+        return
+
+    was = rows[i].get("name", "")
+    rows[i]["name"] = fixed
+    # Текст анонса переписываем заново — но только если его не правили
+    # руками. Иначе исправление фамилии стёрло бы готовый текст, и
+    # человек потерял бы работу, которую уже сделал.
+    if not rows[i].get("edited"):
+        rows[i]["text"] = draft(fixed)
+    await _save(QUEUE_KEY, rows)
+
+    await message.answer(
+        f"✏️ <b>{html.escape(was)}</b> → <b>{html.escape(fixed)}</b>\n\n"
+        + rows[i].get("text", ""),
+        reply_markup=card_kb(i))
+
+
 @router.callback_query(F.data.startswith("pal_edit_"))
 async def card_edit(call: CallbackQuery, state: FSMContext):
     if not await _allowed(call):
@@ -516,6 +573,9 @@ async def save_text(message: Message, state: FSMContext):
                              reply_markup=await home_kb())
         return
     rows[i]["text"] = (message.html_text or message.text or "").strip()
+    # Помечаем, что текст написан руками: исправление имени после этого
+    # не должно его затирать.
+    rows[i]["edited"] = True
     await _save(QUEUE_KEY, rows)
     await message.answer(f"<i>Откуда: {html.escape(rows[i].get('src') or '—')}"
                          f"</i>\n\n{rows[i]['text']}",
