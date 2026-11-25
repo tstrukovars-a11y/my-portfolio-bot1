@@ -49,7 +49,8 @@ def test_the_owner_screens_never_open_in_a_group():
     """Служебное не «доступно только ей», а не появляется в общем чате
     вовсе. Держится это тем, что ничего из owner.py не внесено в список
     разрешённого."""
-    for mark in ("own_menu", "own_pub", "ownpub_", "ownt_", "own_set"):
+    for mark in ("own_menu", "own_pub", "ownpub_", "ownt_", "own_set",
+                 "own_pause", "ownoff_"):
         assert not any(mark.startswith(ok) or ok.startswith(mark)
                        for ok in public.PUBLIC_OK), \
             f"{mark} пролез в общий чат"
@@ -63,6 +64,34 @@ def test_the_publish_screen_is_built_from_the_schedule():
              for b in row]
     for _, slot, _ in digest.SCHEDULE:
         assert f"ownpub_{slot}" in marks, f"слот {slot} потерялся"
+
+
+def test_the_pause_screen_is_reachable():
+    """Кнопка, которой нет на экране, существует только для того, кто
+    помнит команду. Пауза нужна в разгар события, а не на досуге."""
+    marks = [b.callback_data for row in owner.pub_kb().inline_keyboard
+             for b in row]
+    assert "own_pause" in marks
+
+
+def test_the_pause_screen_marks_what_is_silent(monkeypatch):
+    """Состояние написано на самой кнопке. Подпись, живущая отдельно,
+    разошлась бы с кнопкой на первом же промахе."""
+    import digest
+
+    async def paused():
+        return {"genetics"}
+
+    monkeypatch.setattr(digest, "paused_slots", paused)
+    rows = run(owner.pause_kb()).inline_keyboard
+    marked = {b.callback_data for row in rows for b in row
+              if b.text.startswith("⏸")}
+    assert marked == {"ownoff_genetics"}, marked
+
+    slots = {b.callback_data for row in rows for b in row
+             if b.callback_data.startswith("ownoff_")}
+    assert slots == {f"ownoff_{s}" for _, s, _ in digest.SCHEDULE}, \
+        "раздел нельзя убрать из сетки, если его нет на экране"
 
 
 def test_every_button_leads_somewhere_known():

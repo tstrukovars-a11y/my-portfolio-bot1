@@ -60,11 +60,17 @@ async def fetch_series(days: str = "1mo") -> dict:
     return series or _cache["series"]
 
 
-def sparkline(values: list, width: int = 20) -> str:
+def sparkline(values: list, width: int = 12) -> str:
     """Мини-график столбиками — он читается прямо в сообщении.
 
     Картинку Telegram показал бы крупнее, но её надо рисовать, хранить и
     ждать; столбики приходят вместе с текстом.
+
+    Двенадцать, а не двадцать: знака ▇ в текстовом шрифте нет, система
+    подставляет моноширинный, и при увеличенном шрифте двадцать столбиков
+    в строку не влезали. Telegram разрывал их по любому месту, и вторая
+    строка читалась как отдельный график от своего нуля. Подробнее — в
+    том же месте fx_rates.py.
     """
     if len(values) > width:
         step = len(values) / width
@@ -142,10 +148,13 @@ def morning_block(series: dict) -> str:
             continue
         day, month = moves(closes)
         lines.append(
-            f"*{meta['ru']}*: {closes[-1]:,.0f}".replace(",", " ")
-            + f" {arrow(day)} {abs(day):.2f}% за сутки, {month:+.1f}% за месяц\n"
+            f"*{meta['ru']} {closes[-1]:,.0f}*".replace(",", " ")
+            + f"\n{arrow(day)}{abs(day):.2f}% · {month:+.1f}%\n"
             + sparkline(closes))
-    return "📈 *Индексы*\n\n" + "\n\n".join(lines) if lines else ""
+    # Единицы названы один раз в шапке: длинная строка при увеличенном
+    # шрифте переносится и уводит за собой график. То же в fx_rates.py.
+    return ("📈 *Индексы*\n_сутки · месяц_\n\n" + "\n\n".join(lines)
+            if lines else "")
 
 
 # ---------------------------------------------------------------------

@@ -103,7 +103,9 @@ def test_morning_block_names_all_three():
 def test_morning_block_uses_markdown():
     """Выпуск собирается одним сообщением: HTML в нём уронил бы всё."""
     block = indices.morning_block({"^GSPC": RISING})
-    assert "*S&P 500*" in block
+    # Название и число под одной звёздочкой: это одна величина, и
+    # разрывать её жирным посреди — лишний знак там, где места нет.
+    assert "*S&P 500 105*" in block
     assert "<b>" not in block
 
 

@@ -1082,6 +1082,49 @@ async def _local_now():
     return datetime.now(timezone.utc) + timedelta(hours=offset)
 
 
+# =====================================================================
+# ПАУЗА РАЗДЕЛА
+# =====================================================================
+#
+# Когда в канале идёт большое событие — турнир на три дня, — остальная
+# сетка ему мешает. Генетика и путешествия между репортажами с корта не
+# читаются: они не плохие, они не про то, зачем человек сейчас открыл
+# канал.
+#
+# Выключать правкой SCHEDULE нельзя. Закомментированный раздел не
+# возвращается сам, и через месяц никто не вспомнит, почему его нет, —
+# так разделы и пропадают навсегда. Пауза живёт в настройке, видна в
+# /digest и снимается той же кнопкой, которой поставлена.
+#
+# Пауза — про сетку, а не про запрет. Кнопка «Опубликовать сейчас»
+# выпускает раздел и на паузе: владелица нажала сама, значит хочет.
+PAUSE_KEY = "digest_paused"
+
+
+async def paused_slots() -> set:
+    """Разделы, которые сейчас не выходят по расписанию."""
+    raw = await database.get_setting(PAUSE_KEY) or ""
+    return {s for s in (x.strip() for x in raw.split(",")) if s}
+
+
+async def set_paused(slots) -> set:
+    """Записать список целиком. Неизвестные имена отбрасываем: иначе
+    опечатка молча осталась бы в настройке и выглядела как пауза."""
+    known = {s for _, s, _ in SCHEDULE}
+    keep = sorted(s for s in slots if s in known)
+    await database.set_setting(PAUSE_KEY, ",".join(keep))
+    return set(keep)
+
+
+async def toggle_pause(slot: str) -> bool:
+    """Переключить паузу раздела. Возвращает True, если теперь молчит."""
+    now = await paused_slots()
+    off = slot not in now
+    now.add(slot) if off else now.discard(slot)
+    await set_paused(now)
+    return off
+
+
 async def _due_slot():
     """Слот, которому пора выйти сегодня, либо None.
 
@@ -1097,8 +1140,13 @@ async def _due_slot():
     day = sorted(((_slot_at(at, slot, now), slot, greeting)
                   for at, slot, greeting in SCHEDULE), key=lambda x: x[0])
 
+    off = await paused_slots()
     ready = None
     for (hh, mm), slot, greeting in day:
+        # Раздел на паузе не просто молчит, а выбывает из перебора: иначе
+        # он остался бы «невышедшим» и забирал бы очередь у следующих.
+        if slot in off:
+            continue
         if (now.hour, now.minute) < (hh, mm):
             continue
         if await database.get_setting(f"digest_slot_{slot}") == today:
@@ -1914,17 +1962,23 @@ async def publish_slot(bot: Bot, force: str = None) -> str:
         # внутри поста не может быть своей клавиатуры — поэтому у
         # экономики кнопка «как это касается меня» была, а у генетики
         # нет, хотя вопрос там острее.
+        # Пауза раздела снимает и этот пост. Он выходит мимо сетки, своим
+        # путём, и выключение слота его бы не остановило: в канале было бы
+        # тихо в 13:00 и шумно в 08:00, то есть ровно то, чего не хотели.
+        gen_off = "genetics" in await paused_slots()
         try:
-            genetics = await _genetics_post()
-            # Отмеченное владелица получает отдельно и лично.
+            genetics = "" if gen_off else await _genetics_post()
+            # Отмеченное владелица получает отдельно и лично — и на паузе
+            # тоже: пауза про шум в канале, а не про её почту.
             await gen_alert(bot)
             # Разбор генетики собирается к утру сам, но людям его
             # по-прежнему открывает владелица: это медицина, и очередь
             # «сначала она, потом люди» в tree.py заведена намеренно.
             # Молчит, если разбор уже опубликован.
             try:
-                import tree
-                await tree.prepare(bot, "g")
+                if not gen_off:
+                    import tree
+                    await tree.prepare(bot, "g")
             except Exception as e:
                 logging.warning(f"Черновик разбора генетики не собрался: {e}")
         except Exception as e:
@@ -2539,6 +2593,39 @@ async def digest_command(message: Message, bot: Bot):
         await message.answer(f"📤 {await _try_slot(bot)}")
         return
 
+    if command in ("пауза", "пуск"):
+        # «/digest пауза генетика путешествия» — на время турнира.
+        # Имена те же, что у слотов, плюс русские: вводить latin-слово
+        # «genetics» в разговоре про генетику противоестественно.
+        want = (parts[2] if len(parts) > 2 else "").lower().split()
+        names = {**{s: s for _, s, _ in SCHEDULE},
+                 "генетика": "genetics", "путешествия": "travel",
+                 "утро": "morning", "книги": "books", "задача": "puzzle",
+                 "картина": "art", "спорт": "sport", "ужин": "dinner",
+                 "теннис": "tennis", "итоги": "results"}
+        picked = {names[w] for w in want if w in names}
+        unknown = [w for w in want if w not in names]
+        if not picked:
+            await message.answer(
+                "Формат: <code>/digest пауза генетика путешествия</code>\n"
+                "Разделы: " + ", ".join(sorted(k for k in names if k.isalpha()
+                                               and not k.isascii())))
+            return
+        now_off = await paused_slots()
+        now_off = (now_off | picked) if command == "пауза" else (now_off - picked)
+        await set_paused(now_off)
+        titles = ", ".join(SLOT_TITLES.get(s, s) for s in sorted(picked))
+        tail = f"\n\nНе знаю таких: {html.escape(', '.join(unknown))}" if unknown else ""
+        if command == "пауза":
+            await message.answer(
+                f"⏸ По расписанию не выходит: {titles}\n\n"
+                "Кнопкой «Опубликовать сейчас» выпустится всё равно — "
+                "пауза про сетку, а не про запрет.\n"
+                f"Вернуть: <code>/digest пуск {' '.join(want)}</code>{tail}")
+        else:
+            await message.answer(f"▶️ Снова по расписанию: {titles}{tail}")
+        return
+
     if command == "tz" and len(parts) > 2:
         await database.set_setting(TZ_KEY, parts[2].strip())
         now = await _local_now()
@@ -2887,10 +2974,16 @@ async def digest_command(message: Message, bot: Bot):
     # Вопрос «почему вчера не было картины» должен иметь ответ здесь.
     now = await _local_now()
     today = now.strftime("%Y-%m-%d")
-    done, waiting, ahead = [], [], []
+    off = await paused_slots()
+    done, waiting, ahead, holds = [], [], [], []
     for at, slot, _ in sorted(SCHEDULE, key=lambda x: x[0]):
         name = SLOT_TITLES.get(slot, slot)
-        if await database.get_setting(f"digest_slot_{slot}") == today:
+        # Поставленный на паузу раздел нельзя считать пропавшим: иначе
+        # экран каждый день кричит о сбое, которого нет, и перестаёт
+        # значить что-либо вообще.
+        if slot in off:
+            holds.append(name)
+        elif await database.get_setting(f"digest_slot_{slot}") == today:
             done.append(name)
         elif (now.hour, now.minute) >= tuple(int(x) for x in at.split(":")):
             waiting.append(f"{at} {name}")
@@ -2898,7 +2991,10 @@ async def digest_command(message: Message, bot: Bot):
             ahead.append(f"{at} {name}")
 
     lines.append(f"\n<b>Сегодня, {now.strftime('%d.%m %H:%M')}</b>")
-    lines.append(f"Вышло: {len(done)} из {len(SCHEDULE)}")
+    lines.append(f"Вышло: {len(done)} из {len(SCHEDULE) - len(holds)}")
+    if holds:
+        lines.append("⏸ <b>На паузе:</b> "
+                     + ", ".join(html.escape(x) for x in holds))
     if waiting:
         # Главное в этом экране: слот, чьё время прошло, а поста нет.
         lines.append("⚠️ <b>Время прошло, а выпуска нет:</b>\n  "
@@ -2910,7 +3006,9 @@ async def digest_command(message: Message, bot: Bot):
     error = await database.get_setting("digest_last_error")
     if error:
         lines.append(f"\n⚠️ Последний сбой: <code>{html.escape(error)}</code>")
-    lines.append("\n<code>/digest slot</code> — выпустить то, что по времени\n"
+    lines.append("\n<code>/digest пауза генетика путешествия</code> — убрать из сетки\n"
+                 "<code>/digest пуск генетика</code> — вернуть\n"
+                 "<code>/digest slot</code> — выпустить то, что по времени\n"
                  "<code>/digest tz 3</code> — часовой пояс читателя\n"
                  "<code>/digest country Россия</code> — чьи новости утром\n"
                  "<code>/digest генетика</code> — обзор генетики\n"

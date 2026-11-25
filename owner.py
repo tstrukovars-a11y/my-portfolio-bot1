@@ -76,7 +76,28 @@ def pub_kb() -> InlineKeyboardMarkup:
         title = digest.SLOT_TITLES.get(slot, slot)
         pairs.append((title, f"ownpub_{slot}"))
     rows = _rows(pairs)
+    rows.append([InlineKeyboardButton(text="⏸ Убрать разделы из сетки",
+                                      callback_data="own_pause")])
     rows.append([InlineKeyboardButton(text="⇦ Назад", callback_data="own_menu")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def pause_kb() -> InlineKeyboardMarkup:
+    """Разделы с отметкой паузы. Нажатие переключает.
+
+    Состояние написано на самой кнопке, а не рядом в тексте: экран
+    переcобирается после каждого нажатия, и подпись, живущая отдельно от
+    кнопки, разошлась бы с ней на первом же промахе.
+    """
+    import digest
+    off = await digest.paused_slots()
+    pairs = []
+    for _, slot, _ in digest.SCHEDULE:
+        title = digest.SLOT_TITLES.get(slot, slot)
+        mark = "⏸ " if slot in off else ""
+        pairs.append((f"{mark}{title}", f"ownoff_{slot}"))
+    rows = _rows(pairs)
+    rows.append([InlineKeyboardButton(text="⇦ Назад", callback_data="own_pub")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -197,6 +218,46 @@ async def open_pub(call: CallbackQuery):
         return
     await call.answer()
     await call.message.answer(PUB_HEAD, reply_markup=pub_kb())
+
+
+PAUSE_HEAD = ("⏸ <b>Убрать разделы из сетки</b>\n\n"
+              "Отмеченные не выходят сами. Это не удаление: кнопка "
+              "«Опубликовать сейчас» выпустит такой раздел всё равно, "
+              "и вернуть его в сетку — то же нажатие.\n\n"
+              "Нужно, когда в канале идёт большое событие и остальное "
+              "ему мешает.")
+
+
+@router.callback_query(F.data == "own_pause")
+async def open_pause(call: CallbackQuery):
+    if not await _allowed(call):
+        return
+    await call.answer()
+    await call.message.answer(PAUSE_HEAD, reply_markup=await pause_kb())
+
+
+@router.callback_query(F.data.startswith("ownoff_"))
+async def flip_pause(call: CallbackQuery):
+    """Переключить паузу раздела."""
+    if not await _allowed(call):
+        return
+    slot = call.data[len("ownoff_"):]
+    import digest
+    if slot not in [s for _, s, _ in digest.SCHEDULE]:
+        await call.answer()
+        return
+    off = await digest.toggle_pause(slot)
+    title = digest.SLOT_TITLES.get(slot, slot)
+    await call.answer("Убрано из сетки" if off else "Вернула в сетку")
+    # Правим ту же клавиатуру, а не шлём новую: иначе после пяти
+    # переключений экран пять раз лежит в переписке, и какой из них
+    # сейчас верный — неясно.
+    try:
+        await call.message.edit_reply_markup(reply_markup=await pause_kb())
+    except Exception as e:
+        logging.warning(f"Экран паузы не перерисовался: {e}")
+        await call.message.answer(PAUSE_HEAD, reply_markup=await pause_kb())
+    logging.info(f"Раздел {title}: {'пауза' if off else 'в сетке'}")
 
 
 @router.callback_query(F.data.startswith("ownpub_"))

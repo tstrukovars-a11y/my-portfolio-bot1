@@ -266,11 +266,18 @@ def test_summaries_do_not_share_a_slot():
 
 
 def test_rates_heading_has_no_time_of_day():
+    """Блок выходит утром, но заголовок об этом молчать обязан: тот же
+    текст показывается по кнопке в любой час."""
+    import re
+
     import fx_rates
 
     assert "утром" not in fx_rates.morning_block.__doc__.split("\n")[0].lower()
     source = open(fx_rates.__file__, encoding="utf-8").read()
-    assert '"💱 *Курсы*' in source
+    head = re.search(r'"💱 \*([^*]+)\*', source)
+    assert head, "заголовок блока курсов не найден"
+    assert not any(word in head.group(1).lower()
+                   for word in ("утр", "вечер", "сегодня", "ночь"))
 
 
 # --- вступление, которого не просили ----------------------------------
