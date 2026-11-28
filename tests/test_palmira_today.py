@@ -142,3 +142,74 @@ def test_подпись_к_ссылке_начинается_с_турнира()
     caption = palmira.highlight_caption("Запись первого дня")
     assert caption.startswith("🎾")
     assert palmira.TOURNAMENT in caption
+
+
+# --- куда уходят посты --------------------------------------------------
+
+class _Chat:
+    def __init__(self, title=None, username=None):
+        self.title = title
+        self.username = username
+
+
+class _Bot:
+    def __init__(self, chat=None, fail=False):
+        self._chat = chat
+        self._fail = fail
+
+    async def get_chat(self, chat_id):
+        if self._fail:
+            raise RuntimeError("нет доступа")
+        return self._chat
+
+
+def test_адрес_называется_именем_канала(settings, monkeypatch):
+    """Отчёт «список опубликован» без адреса подтверждает только, что код
+    отработал. Человек читает его как «пост вышел» — и узнаёт правду из
+    пустого канала."""
+    import digest
+
+    async def target():
+        return (-100500, None)
+
+    monkeypatch.setattr(digest, "_target", target)
+    text = run(palmira.where_text(_Bot(_Chat(title="Акцент"))))
+    assert "Акцент" in text
+
+
+def test_без_канала_так_и_сказано(settings, monkeypatch):
+    import digest
+
+    async def target():
+        return (None, None)
+
+    monkeypatch.setattr(digest, "_target", target)
+    assert "не задан" in run(palmira.where_text(_Bot()))
+
+
+def test_если_имя_не_прочиталось_остаётся_номер(settings, monkeypatch):
+    """Молчать нельзя и тут: номер хуже имени, но лучше пустоты."""
+    import digest
+
+    async def target():
+        return (-100500, None)
+
+    monkeypatch.setattr(digest, "_target", target)
+    assert "100500" in run(palmira.where_text(_Bot(fail=True)))
+
+
+def test_адрес_виден_в_кабинете_до_нажатия(settings, monkeypatch):
+    """После нажатия узнавать поздно: пост уже ушёл."""
+    import digest
+
+    async def target():
+        return (-100500, None)
+
+    async def nothing():
+        return []
+
+    monkeypatch.setattr(digest, "_target", target)
+    monkeypatch.setattr(palmira, "queue", nothing)
+    monkeypatch.setattr(palmira, "roster", nothing)
+    text = run(palmira.home_text(_Bot(_Chat(title="Акцент"))))
+    assert "Публикую в" in text and "Акцент" in text

@@ -409,6 +409,28 @@ async def publish_one(bot: Bot, name: str, text: str = "") -> str:
     return f"анонс вышел: {name}"
 
 
+async def where_text(bot: Bot) -> str:
+    """Куда уходят посты — словами, а не номером чата.
+
+    Эта строка появилась по делу. Бот отвечал «список опубликован» и
+    молчал о том, куда именно, а адрес оставался с тестового канала —
+    и каждое нажатие рапортовало успех, пока «Акцент» стоял пустой.
+    Отчёт, не называющий места, подтверждает только то, что код
+    отработал, а человек читает его как «пост вышел».
+    """
+    import digest
+    chat, _ = await digest._target()
+    if not chat:
+        return "канал не задан"
+    try:
+        about = await bot.get_chat(chat)
+    except Exception as e:
+        logging.warning(f"Пальмира: имя канала не прочиталось — {e}")
+        return f"<code>{chat}</code>"
+    name = about.title or (f"@{about.username}" if about.username else str(chat))
+    return f"«{html.escape(name)}»"
+
+
 async def publish_list(bot: Bot) -> str:
     """Список заявленных: править свой пост, а не выкладывать новый"""
     import digest
@@ -422,11 +444,11 @@ async def publish_list(bot: Bot) -> str:
             await bot.edit_message_text(chat_id=chat, message_id=int(saved),
                                         text=text,
                                         disable_web_page_preview=True)
-            return "список обновлён"
+            return f"список обновлён в {await where_text(bot)}"
         except Exception as e:
             # Пост удалили или текст не изменился — ниже решим по месту.
             if "not modified" in str(e).lower():
-                return "список и так верный"
+                return f"список и так верный — {await where_text(bot)}"
             logging.warning(f"Пальмира: список не правится — {e}")
     try:
         sent = await bot.send_message(chat, text, message_thread_id=thread,
@@ -435,13 +457,16 @@ async def publish_list(bot: Bot) -> str:
         logging.error(f"Пальмира: список не вышел — {e}")
         return f"ошибка: {e}"
     await database.set_setting(LIST_MSG_KEY, str(sent.message_id))
-    return "список опубликован"
+    return f"список опубликован в {await where_text(bot)}"
 
 
 # ───────────────────────── кабинет ─────────────────────────
 
 HOME = ("🏛 <b>{t}</b>\n{when}\n{where}\n\n"
-        "Заявлено: <b>{n}</b>\nЖдут решения: <b>{q}</b>")
+        "Заявлено: <b>{n}</b>\nЖдут решения: <b>{q}</b>\n"
+        # Адрес стоит до нажатия, а не в отчёте после: иначе о том, что
+        # посты уходили в тестовый канал, узнаёшь из пустого «Акцента».
+        "Публикую в: {channel}")
 
 
 def _rows(pairs) -> list:
@@ -462,9 +487,10 @@ async def home_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-async def home_text() -> str:
+async def home_text(bot: Bot) -> str:
     return HOME.format(t=TOURNAMENT, when=WHEN, where=WHERE,
-                       n=len(await roster()), q=len(await queue()))
+                       n=len(await roster()), q=len(await queue()),
+                       channel=await where_text(bot))
 
 
 async def _allowed(call: CallbackQuery) -> bool:
@@ -475,14 +501,16 @@ async def _allowed(call: CallbackQuery) -> bool:
 
 
 async def _home(call: CallbackQuery):
-    await call.message.answer(await home_text(), reply_markup=await home_kb())
+    await call.message.answer(await home_text(call.bot),
+                              reply_markup=await home_kb())
 
 
 @router.message(F.text.regexp(r"^/(пальмира|palmira)\b"))
 async def palmira_command(message: Message):
     if not config.is_admin(message.from_user.id):
         return
-    await message.answer(await home_text(), reply_markup=await home_kb())
+    await message.answer(await home_text(message.bot),
+                         reply_markup=await home_kb())
 
 
 @router.callback_query(F.data == "pal_home")
