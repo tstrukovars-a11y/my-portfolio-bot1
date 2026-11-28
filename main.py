@@ -19,6 +19,7 @@ import finance
 import digest
 import growth
 import public
+import repetitor
 import ping
 import content_edit
 import race
@@ -663,6 +664,7 @@ async def main():
     dp.include_router(admin.router)
     dp.include_router(payments.router)
     dp.include_router(fx_rates.router)
+    dp.include_router(repetitor.router)
     dp.include_router(digest.router)
     dp.include_router(growth.router)
     dp.include_router(race.router)
