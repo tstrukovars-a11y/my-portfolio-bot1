@@ -46,7 +46,9 @@ SEEN_KEY = "palmira_seen"          # кого уже предлагали — ч
 SEED = ["Александр Бублик", "Елена Веснина", "Диана Шнайдер",
         "Карен Хачанов", "Анастасия Потапова", "Юлия Путинцева",
         "Камилла Рахимова", "Анна Пушкарева",
-        "Янко Типсаревич", "Томми Пол"]
+        "Янко Типсаревич", "Томми Пол",
+        # Названы афишей второго дня: до неё стояли как «Б.О.Д».
+        "Корентен Мутэ", "Дэниел Эванс", "Адриан Маннарино"]
 
 # Турнир командный, и двое приехали не играть. Назвать капитана
 # участником матчей — ошибка, которую заметят первыми те, кто купил
@@ -56,10 +58,15 @@ ROLES = {
     "янко типсаревич": "капитан команды",
 }
 
-# Двоих организаторы пока не называют. Промолчать об этом нельзя: в
-# расписании их матчи уже стоят под «Б.О.Д», и читатель, сосчитав
-# фамилии, решит, что список неполон по нашей небрежности.
-TBA_NOTE = "Два имени пока не раскрыты."
+# Часть пар организаторы называют в день матча. Промолчать об этом
+# нельзя: в расписании такие встречи стоят под «Б.О.Д», и читатель,
+# сосчитав фамилии, решит, что список неполон по нашей небрежности.
+#
+# Числа в этой фразе больше нет. Было «два имени пока не раскрыты» — и
+# на второй день афиша назвала сразу троих, а пост в канале продолжал
+# обещать двоих. Счёт, который надо править руками, рано или поздно
+# врёт; формулировка без счёта верна в любой день турнира.
+TBA_NOTE = "Часть пар организаторы называют в день матча."
 
 # Программа целиком, как на афишах организаторов.
 #
@@ -76,15 +83,19 @@ PROGRAMME = [
         "19:15 — Бублик — Б.О.Д",
         "Автограф-сессии и пресс-конференции",
     ]),
+    # День второй переписан по афише организаторов от 28 ноября. Она
+    # разошлась с предварительной в трёх местах: «Б.О.Д» раскрылись
+    # (Мутэ, Эванс, Маннарино), парный сдвинулся с 19:00 на 18:15, а
+    # чествования в расписании дня не оказалось вовсе. Афиша сильнее
+    # наших догадок: по ней люди приходят к корту.
     ("28 ноября, суббота", [
-        "12:30 — чествование юбилейного турнира",
-        "12:35 — Рахимова — Шнайдер",
-        "14:00 — Б.О.Д — Хачанов",
+        "12:30 — Рахимова — Шнайдер",
+        "14:00 — Мутэ — Хачанов",
         "15:20 — турнир одного розыгрыша",
         "16:00 — Потапова — Путинцева",
-        "17:30 — Бублик / Б.О.Д — Хачанов / Б.О.Д",
-        "19:00 — Потапова / Рахимова — Пушкарева / Путинцева",
-        "Опен-корт, автограф-сессии и пресс-конференции",
+        "17:30 — Бублик / Мутэ — Эванс / Маннарино",
+        "18:15 — Рахимова / Потапова — Путинцева / Пушкарева",
+        "Автограф-сессии, опен-корт и пресс-конференции",
     ]),
     ("29 ноября, воскресенье", [
         "12:00 — Рахимова — Пушкарева",
@@ -322,6 +333,42 @@ def programme_lines() -> list:
     return lines
 
 
+def day_number(title: str) -> int:
+    """Число из заголовка дня: «28 ноября, суббота» → 28."""
+    match = re.match(r"\s*(\d{1,2})", title)
+    return int(match.group(1)) if match else 0
+
+
+async def today_programme():
+    """(заголовок, строки) сегодняшнего дня турнира, либо None.
+
+    День берём по часам читателя, а не сервера: Render живёт по UTC, и
+    в три часа ночи по Москве «сегодня» у него ещё вчерашнее — то есть
+    в канал ушло бы расписание прошедшего дня.
+    """
+    import digest
+    now = await digest._local_now()
+    for title, rows in PROGRAMME:
+        if day_number(title) == now.day:
+            return title, rows
+    return None
+
+
+def today_text(title: str, rows: list) -> str:
+    """Расписание одного дня. Без списка заявленных и без трёх дней
+    сразу: человек открывает его утром, чтобы понять, к какому часу
+    ехать, а не чтобы изучать турнир целиком."""
+    lines = [f"🎾 <b>{html.escape(TOURNAMENT)}</b>",
+             f"{html.escape(title)} · {html.escape(WHERE)}", ""]
+    lines += [html.escape(row) for row in rows]
+    # Сноска объясняет «Б.О.Д». В дне, где раскрыты все пары, она
+    # объясняет то, чего на экране нет, — и читатель ищет глазами
+    # несуществующее.
+    if PROGRAMME_FOOTNOTE and any("Б.О.Д" in row for row in rows):
+        lines += ["", f"<i>{html.escape(PROGRAMME_FOOTNOTE)}</i>"]
+    return "\n".join(lines)
+
+
 async def list_text() -> str:
     """Пост со списком заявленных и расписанием"""
     rows = await roster()
@@ -408,6 +455,7 @@ async def home_kb() -> InlineKeyboardMarkup:
         ("📜 Список заявленных", "pal_list"),
         ("✍️ Добавить имя вручную", "pal_new"),
         ("📣 Выложить список в канал", "pal_post"),
+        ("📅 Расписание на сегодня", "pal_today"),
         ("📹 Хайлайт в канал", "pal_hl"),
     ])
     rows.append([InlineKeyboardButton(text="⇦ Назад", callback_data="own_menu")])
@@ -739,6 +787,23 @@ MEDIA_SENDERS = {
     "video_note": "send_video",
 }
 
+LINK = re.compile(r"https?://\S+")
+
+
+def _link_in(message) -> str:
+    """Ссылка в сообщении, если она там есть.
+
+    Нужна не ради удобства. Записи трансляций выкладывает не канал, а
+    организаторы, и перекладывать чужое видео к себе — ровно то, чего
+    «Акцент» не делает (правило живёт в tg_watch.py). Ссылка с нашими
+    словами — другое дело: смотрят у источника, а пересказываем своё.
+
+    Голый текст по-прежнему не момент с корта и в канал не уходит.
+    """
+    text = getattr(message, "text", None) or getattr(message, "caption", "") or ""
+    found = LINK.search(text)
+    return found.group(0) if found else ""
+
 
 def _media_of(message: Message):
     """(вид, file_id) присланного — или (None, None)."""
@@ -757,6 +822,60 @@ def highlight_caption(note: str) -> str:
     if note:
         lines += ["", note]
     return "\n".join(lines)
+
+
+@router.callback_query(F.data == "pal_today")
+async def today_preview(call: CallbackQuery):
+    """Расписание сегодняшнего дня — показать перед отправкой.
+
+    Показываем, а не шлём сразу: афиша меняется до последнего часа, и
+    пост с чужим временем хуже, чем его отсутствие — по нему люди
+    приедут не к тому матчу.
+    """
+    if not await _allowed(call):
+        return
+    await call.answer()
+    day = await today_programme()
+    if not day:
+        await call.message.answer(
+            "Сегодня в программе турнира дня нет — он идёт "
+            f"{html.escape(WHEN)}.")
+        return
+    text = today_text(*day)
+    await call.message.answer(
+        text, disable_web_page_preview=True,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="📣 В канал", callback_data="paltd_go"),
+            InlineKeyboardButton(text="Отмена", callback_data="pal_home"),
+        ]]))
+
+
+@router.callback_query(F.data == "paltd_go")
+async def today_publish(call: CallbackQuery, bot: Bot):
+    if not await _allowed(call):
+        return
+    day = await today_programme()
+    if not day:
+        await call.answer("День кончился", show_alert=True)
+        return
+
+    import digest
+    chat, thread = await digest._target()
+    if not chat:
+        await call.answer("Канал не задан", show_alert=True)
+        return
+
+    await call.answer("Публикую…")
+    try:
+        await bot.send_message(chat, today_text(*day),
+                               message_thread_id=thread,
+                               disable_web_page_preview=True)
+    except Exception as e:
+        logging.error(f"Пальмира: расписание дня не вышло: {e}")
+        await call.message.answer(f"Не вышло: {html.escape(str(e)[:160])}")
+        return
+    await call.message.answer("✅ Расписание в канале.",
+                              reply_markup=await home_kb())
 
 
 @router.callback_query(F.data == "pal_hl")
@@ -778,10 +897,11 @@ async def highlight_take(message: Message, state: FSMContext):
         return
 
     kind, file_id = _media_of(message)
-    if not kind:
+    link = _link_in(message)
+    if not kind and not link:
         await message.answer(
-            "Нужно видео или фотография. Пришлите их файлом или как "
-            "обычно — из галереи.")
+            "Нужно видео, фотография или ссылка на запись. Пришлите "
+            "файлом, из галереи — или ссылкой со своими словами.")
         return
 
     try:
@@ -792,16 +912,23 @@ async def highlight_take(message: Message, state: FSMContext):
     await state.clear()
     caption = highlight_caption((note or "").strip())
 
-    sender = getattr(message.bot, MEDIA_SENDERS[kind])
-    await sender(message.chat.id, file_id, caption=caption,
-                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                     InlineKeyboardButton(text="📣 В канал",
-                                          callback_data=f"palhl_go_{kind}"),
-                     InlineKeyboardButton(text="Отмена",
-                                          callback_data="pal_home"),
-                 ]]))
+    keys = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="📣 В канал",
+                             callback_data=f"palhl_go_{kind or 'link'}"),
+        InlineKeyboardButton(text="Отмена", callback_data="pal_home"),
+    ]])
+
+    if kind:
+        sender = getattr(message.bot, MEDIA_SENDERS[kind])
+        await sender(message.chat.id, file_id, caption=caption,
+                     reply_markup=keys)
+    else:
+        # Ссылка идёт с открытой карточкой: без неё пост выглядит голой
+        # строкой, и смотреть запись никто не пойдёт.
+        await message.answer(caption, reply_markup=keys,
+                             disable_web_page_preview=False)
     await database.set_setting("palmira_hl", json.dumps(
-        {"kind": kind, "file_id": file_id, "caption": caption},
+        {"kind": kind or "link", "file_id": file_id, "caption": caption},
         ensure_ascii=False))
 
 
@@ -826,10 +953,16 @@ async def highlight_publish(call: CallbackQuery, bot: Bot):
         return
 
     await call.answer("Публикую…")
-    sender = getattr(bot, MEDIA_SENDERS.get(pending["kind"], "send_video"))
     try:
-        await sender(chat, pending["file_id"], caption=pending["caption"],
-                     message_thread_id=thread)
+        if pending["kind"] == "link":
+            await bot.send_message(chat, pending["caption"],
+                                   message_thread_id=thread,
+                                   disable_web_page_preview=False)
+        else:
+            sender = getattr(bot, MEDIA_SENDERS.get(pending["kind"],
+                                                    "send_video"))
+            await sender(chat, pending["file_id"], caption=pending["caption"],
+                         message_thread_id=thread)
     except Exception as e:
         logging.error(f"Пальмира: хайлайт не вышел — {e}")
         await call.message.answer(f"🏛 Не вышло: {html.escape(str(e))}",
